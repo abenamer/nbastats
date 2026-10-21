@@ -5,6 +5,14 @@ okf_version: "0.2"
 
 This bundle describes the application, its models, and its operation. The text follows ASD-STE100 Simplified Technical English. Each concept is one file with YAML front matter. Links between concepts are bundle-relative.
 
+# Standard
+
+This project follows the [REAS engineering standard](https://github.com/abenamer/reas).
+
+* [Self-audit](self-audit.md) - Evidence and limits of REAS compliance.
+* [Project terminology](terminology.md) - Project-specific technical terms.
+* [STE review](ste-review.md) - Status and procedure of the Simplified Technical English review.
+
 # Concepts
 
 * [Application overview](concepts/application.md) - What the application does and how its parts fit together.
@@ -32,6 +40,12 @@ This bundle describes the application, its models, and its operation. The text f
 * [HTTP API](reference/api.md) - Pages and JSON endpoints.
 * [Database schema](reference/schema.md) - Tables, keys and derived data.
 * [Simulation jobs](reference/jobs.md) - Job lifecycle, versions and retry rules.
+
+# Decisions
+
+* [ADR 0001 — Ports at three boundaries](decisions/0001-ports-at-three-boundaries.md) - Six ports, one store adapter, one composition root.
+* [ADR 0002 — Runtime enums for persisted lifecycles](decisions/0002-runtime-enums-over-typestate.md) - Why no typestate.
+* [ADR 0003 — Bundle the dataset](decisions/0003-bundled-dataset.md) - Why the game log ships in the image.
 
 # History
 

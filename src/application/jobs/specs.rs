@@ -15,6 +15,7 @@ use crate::domain::playoffs::season::{self, SeasonForecast, SeasonParams};
 use crate::domain::simulation::alpha::{self, AlphaParams, AlphaResult};
 use crate::domain::simulation::dynasty::DynastyReport;
 use crate::domain::simulation::progress::Progress;
+use crate::domain::validation::{invalid, ValidationError};
 
 use super::{JobContext, JobError, JobSpec, Limits};
 
@@ -29,7 +30,7 @@ impl JobSpec for AlphaJob {
     const MODEL_VERSION: &'static str = alpha::MODEL_VERSION;
     type Output = AlphaResult;
 
-    fn validate(&self, limits: &Limits) -> Result<(), String> {
+    fn validate(&self, limits: &Limits) -> Result<(), ValidationError> {
         self.0.validate(limits.max_iterations)
     }
     fn seed(&self) -> Option<i64> {
@@ -84,12 +85,12 @@ impl JobSpec for PlayoffJob {
     const MODEL_VERSION: &'static str = crate::domain::playoffs::MODEL_VERSION;
     type Output = PlayoffOutput;
 
-    fn validate(&self, limits: &Limits) -> Result<(), String> {
+    fn validate(&self, limits: &Limits) -> Result<(), ValidationError> {
         if self.iterations == 0 || self.iterations > limits.max_iterations {
-            return Err(format!(
-                "iterations must be between 1 and {}",
-                limits.max_iterations
-            ));
+            return invalid(
+                "iterations",
+                format!("iterations must be between 1 and {}", limits.max_iterations),
+            );
         }
         self.model.validate()?;
         if self.elo_overrides.len() > 16
@@ -98,7 +99,10 @@ impl JobSpec for PlayoffJob {
                 .values()
                 .any(|e| !(800.0..=2500.0).contains(e))
         {
-            return Err("Elo overrides must be between 800 and 2500".into());
+            return invalid(
+                "elo_overrides",
+                "at most 16 overrides, each between 800 and 2500",
+            );
         }
         Ok(())
     }
@@ -174,7 +178,7 @@ impl JobSpec for SeasonJob {
     const MODEL_VERSION: &'static str = crate::domain::playoffs::SEASON_MODEL_VERSION;
     type Output = SeasonForecast;
 
-    fn validate(&self, limits: &Limits) -> Result<(), String> {
+    fn validate(&self, limits: &Limits) -> Result<(), ValidationError> {
         self.0.validate(limits.max_iterations)
     }
     fn seed(&self) -> Option<i64> {
@@ -207,7 +211,7 @@ impl JobSpec for BacktestJob {
     const MODEL_VERSION: &'static str = backtesting::MODEL_VERSION;
     type Output = BacktestResult;
 
-    fn validate(&self, _: &Limits) -> Result<(), String> {
+    fn validate(&self, _: &Limits) -> Result<(), ValidationError> {
         self.0.validate()
     }
     async fn execute(self, ctx: JobContext) -> Result<BacktestResult, JobError> {
@@ -289,7 +293,7 @@ impl JobSpec for DynastyJob {
     const MODEL_VERSION: &'static str = crate::domain::simulation::dynasty::MODEL_VERSION;
     type Output = DynastyReport;
 
-    fn validate(&self, _: &Limits) -> Result<(), String> {
+    fn validate(&self, _: &Limits) -> Result<(), ValidationError> {
         self.0.validate()
     }
     async fn execute(self, ctx: JobContext) -> Result<DynastyReport, JobError> {

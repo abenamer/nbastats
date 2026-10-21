@@ -9,6 +9,7 @@ use crate::domain::simulation::alpha::{self, AlphaParams};
 use crate::domain::simulation::dynasty::{compare, DynastyReport, DynastySeason, MODEL_VERSION};
 use crate::domain::simulation::exact;
 use crate::domain::simulation::progress::Silent;
+use crate::domain::validation::{invalid, ValidationError};
 
 use super::ports::{AnalysisStore, GameLog, StoreError};
 use super::state::{App, SeasonLoadError};
@@ -30,15 +31,15 @@ fn default_alpha() -> f64 {
 }
 
 impl DynastyRequest {
-    pub fn validate(&self) -> Result<(), String> {
+    pub fn validate(&self) -> Result<(), ValidationError> {
         if self.to_season < self.from_season {
-            return Err("the season range ends before it starts".into());
+            return invalid("from_season", "the season range ends before it starts");
         }
         if !(0.0..=1000.0).contains(&self.alpha) {
-            return Err("alpha must be between 0 and 1000".into());
+            return invalid("alpha", "alpha must be between 0 and 1000");
         }
         if self.franchise.len() > 8 || !self.franchise.chars().all(|c| c.is_ascii_alphanumeric()) {
-            return Err("invalid franchise key".into());
+            return invalid("franchise", "invalid franchise key");
         }
         self.model.validate()
     }

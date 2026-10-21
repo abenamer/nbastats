@@ -20,6 +20,7 @@ use crate::domain::models::{Conference, Game, GameType, PlayoffResult, Team};
 use crate::domain::simulation::progress::{ChunkTracker, Progress};
 use crate::domain::simulation::rng::{chunk_rng, chunks};
 use crate::domain::simulation::stats;
+use crate::domain::validation::{invalid, ValidationError};
 
 use super::bracket::{
     play_bracket, Bracket, BracketTeam, EloModel, PlayoffFormat, RoundCounts, SLOTS, SLOT_SEEDS,
@@ -59,23 +60,29 @@ fn default_scale() -> f64 {
 }
 
 impl SeasonParams {
-    pub fn validate(&self, max_iterations: u64) -> Result<(), String> {
+    pub fn validate(&self, max_iterations: u64) -> Result<(), ValidationError> {
         if self.iterations == 0 || self.iterations > max_iterations {
-            return Err(format!("iterations must be between 1 and {max_iterations}"));
+            return invalid(
+                "iterations",
+                format!("iterations must be between 1 and {max_iterations}"),
+            );
         }
         if !(0.0..=400.0).contains(&self.home_advantage) {
-            return Err("home advantage must be between 0 and 400 Elo points".into());
+            return invalid(
+                "home_advantage",
+                "home advantage must be between 0 and 400 Elo points",
+            );
         }
         for k in [self.regular_season_k, self.playoff_k]
             .into_iter()
             .flatten()
         {
             if !(0.0..=100.0).contains(&k) {
-                return Err("K-factors must be between 0 and 100".into());
+                return invalid("regular_season_k", "K-factors must be between 0 and 100");
             }
         }
         if !(0.1..=3.0).contains(&self.playoff_scale) {
-            return Err("playoff scale must be between 0.1 and 3".into());
+            return invalid("playoff_scale", "playoff scale must be between 0.1 and 3");
         }
         Ok(())
     }

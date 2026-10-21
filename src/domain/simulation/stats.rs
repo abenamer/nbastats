@@ -8,7 +8,7 @@ pub fn gini(values: &[f64]) -> f64 {
         return 0.0;
     }
     let mut v: Vec<f64> = values.to_vec();
-    v.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    v.sort_by(f64::total_cmp);
     let total: f64 = v.iter().sum();
     if total <= 0.0 {
         return 0.0;
@@ -37,7 +37,7 @@ pub fn top_k_share(values: &[f64], k: usize) -> f64 {
         return 0.0;
     }
     let mut v: Vec<f64> = values.to_vec();
-    v.sort_by(|a, b| b.partial_cmp(a).unwrap());
+    v.sort_by(|a, b| b.total_cmp(a));
     v.iter().take(k).sum::<f64>() / total
 }
 

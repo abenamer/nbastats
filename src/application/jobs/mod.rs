@@ -21,6 +21,7 @@ use uuid::Uuid;
 use crate::config::APP_VERSION;
 use crate::domain::models::{JobEvent, JobKind, JobStatus, SimulationJob};
 use crate::domain::simulation::progress::Progress;
+use crate::domain::validation::ValidationError;
 
 use super::ports::{JobOutcome, JobStore, NewJob, StoreError};
 use super::state::App;
@@ -69,7 +70,7 @@ impl Progress for ProgressHandle {
 #[derive(Debug, thiserror::Error)]
 pub enum JobError {
     #[error("invalid parameters: {0}")]
-    Invalid(String),
+    Invalid(#[from] ValidationError),
     #[error("stored parameters do not match the job kind: {0}")]
     Params(String),
     #[error(transparent)]
@@ -89,7 +90,7 @@ pub trait JobSpec: Serialize + DeserializeOwned + Send + Sync + 'static {
     const MODEL_VERSION: &'static str;
     type Output: Serialize + Send;
 
-    fn validate(&self, limits: &Limits) -> Result<(), String>;
+    fn validate(&self, limits: &Limits) -> Result<(), ValidationError>;
 
     fn seed(&self) -> Option<i64> {
         None
@@ -113,7 +114,7 @@ pub trait Submit: JobSpec {
         Self: Sized,
     {
         async move {
-            self.validate(limits).map_err(JobError::Invalid)?;
+            self.validate(limits)?;
             let params =
                 serde_json::to_value(&self).map_err(|e| JobError::Params(e.to_string()))?;
             let job = store

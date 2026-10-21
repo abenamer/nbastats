@@ -10,6 +10,7 @@ use crate::application::imports::ImportError;
 use crate::application::jobs::JobError;
 use crate::application::ports::StoreError;
 use crate::application::state::SeasonLoadError;
+use crate::domain::validation::ValidationError;
 
 #[derive(Debug)]
 pub enum ApiError {
@@ -25,6 +26,12 @@ impl ApiError {
     }
     pub fn not_found(msg: impl Into<String>) -> Self {
         ApiError::NotFound(msg.into())
+    }
+}
+
+impl From<ValidationError> for ApiError {
+    fn from(e: ValidationError) -> Self {
+        ApiError::BadRequest(e.to_string())
     }
 }
 
@@ -49,7 +56,8 @@ impl From<SeasonLoadError> for ApiError {
 impl From<JobError> for ApiError {
     fn from(e: JobError) -> Self {
         match e {
-            JobError::Invalid(m) | JobError::Params(m) => ApiError::BadRequest(m),
+            JobError::Invalid(v) => v.into(),
+            JobError::Params(m) => ApiError::BadRequest(m),
             JobError::Store(s) => s.into(),
             JobError::Execution(m) => ApiError::Internal(m),
         }

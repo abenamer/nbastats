@@ -23,14 +23,14 @@ The application is a research tool for NBA championship probabilities. It runs o
 
 # Components
 
-| Component | Location | Function |
-|-----------|----------|----------|
-| Web server | `src/web` | Serves the pages and the JSON API on port 3000. |
-| Engines | `src/simulation`, `src/playoffs`, `src/backtesting` | Pure functions. They do not touch the database. |
-| Domain model | `src/models`, `src/reference` | Enumerated states and static reference data. |
-| Import pipeline | `src/imports` | Parses CSV files and writes games into PostgreSQL. |
-| Job runner | `src/jobs` | Runs simulations in the background and records progress. |
-| Database layer | `src/db`, `migrations` | Connection pool, migrations and queries. |
+The code follows the REAS ports-and-adapters layout. The path of an operation is visible: inbound adapter → use case → port → concrete adapter.
+
+| Layer | Location | Content |
+|-------|----------|---------|
+| Domain | `src/domain` | Identifier newtypes, models and state machines, reference data, Elo mathematics, Engines A, B and C, backtesting. No Axum, SQLx or HTTP. |
+| Application | `src/application` | Ports (`ports.rs`), use cases (imports, jobs, dashboard, dynasty) and shared state (`state.rs`). |
+| Adapters | `src/adapters` | `postgres::PostgresStore` (store ports), `dataset::HttpDatasetSource` (download port), `http` (Axum router, API, pages), `csv` (parsers). |
+| Composition root | `src/main.rs` | Creates the adapters, wires `App`, starts the runner and the server. |
 
 See the [Elo rating model](/concepts/elo-model.md), the [alpha lottery engine](/concepts/alpha-engine.md), the [playoff simulator](/concepts/playoff-engine.md) and the [season forecast engine](/concepts/season-engine.md).
 
@@ -51,6 +51,7 @@ See the [Elo rating model](/concepts/elo-model.md), the [alpha lottery engine](/
 # Design rules
 
 * Domain logic is separate from infrastructure. The engines are generic over a progress sink and a strength model. The compiler removes the abstraction cost.
+* Identifiers are newtypes: `TeamId`, `FranchiseId` and a validated `SeasonYear`.
 * Every lifecycle is an enum with explicit transitions. Examples: job status, playoff result, series state, play-in stage.
 * Monte Carlo runs are deterministic. The same seed and configuration give the same result on any number of threads.
 * The application never invents Elo ratings. Seasons without data are shown as missing.

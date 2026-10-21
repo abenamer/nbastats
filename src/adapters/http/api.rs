@@ -296,7 +296,7 @@ pub async fn season_bracket(
         scale: q.scale,
         k: None,
     };
-    model.validate().map_err(ApiError::bad_request)?;
+    model.validate()?;
     let data = app.season_data(season).await?;
     match &data.reconstruction {
         Ok(r) => {
@@ -351,7 +351,7 @@ pub async fn dynasty(
             k: None,
         },
     };
-    req.validate().map_err(ApiError::bad_request)?;
+    req.validate()?;
     if q.threshold == 0 || q.threshold > 100 {
         return Err(ApiError::bad_request("threshold must be 1-100"));
     }

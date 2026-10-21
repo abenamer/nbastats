@@ -66,8 +66,12 @@ def validate(root: Path, bundle_dir: str = "docs", require_rules: bool = False) 
         meta, body, err = split_frontmatter(content)
         if err:
             errors.append(f"{rel}: {err}")
-        if path.is_relative_to(bundle):
-            if path.name == "index.md":
+        in_bundle = path.is_relative_to(bundle)
+        if in_bundle:
+            if path.name == "log.md":
+                if meta is not None:
+                    errors.append(f"{rel}: Log file must not contain frontmatter")
+            elif path.name == "index.md":
                 if path.parent == bundle:
                     if meta is None or set(meta) != {"okf_version"} or str(meta.get("okf_version")) != "0.2":
                         errors.append(f"{rel}: Bundle index must contain only okf_version: '0.2'")
@@ -104,7 +108,9 @@ def validate(root: Path, bundle_dir: str = "docs", require_rules: bool = False) 
             if parsed.scheme or parsed.netloc or not parsed.path:
                 continue
             target = unquote(parsed.path)
-            actual = ((root / target.lstrip("/")) if target.startswith("/") else (path.parent / target)).resolve()
+            # OKF: a link that starts with "/" is relative to the bundle root (not the repository).
+            base = bundle if in_bundle else root
+            actual = ((base / target.lstrip("/")) if target.startswith("/") else (path.parent / target)).resolve()
             if not actual.is_relative_to(root):
                 errors.append(f"{rel}: Link leaves repository: {uri}")
             elif not actual.exists():

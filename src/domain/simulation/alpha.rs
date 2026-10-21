@@ -13,6 +13,7 @@ use super::exact;
 use super::progress::{ChunkTracker, Progress};
 use super::rng::{chunk_rng, chunks};
 use super::stats;
+use crate::domain::validation::{invalid, ValidationError};
 
 pub const MODEL_VERSION: &str = "alpha-lottery-1.0";
 
@@ -49,43 +50,58 @@ impl AlphaParams {
         }
     }
 
-    pub fn validate(&self, max_iterations: u64) -> Result<(), String> {
+    pub fn validate(&self, max_iterations: u64) -> Result<(), ValidationError> {
         let n = self.franchises.len();
         if n == 0 || n > 500 {
-            return Err("number of franchises must be between 1 and 500".into());
+            return invalid(
+                "franchises",
+                "number of franchises must be between 1 and 500",
+            );
         }
         if self.alphas.len() != n {
-            return Err("alphas must have one entry per franchise".into());
+            return invalid("franchises", "alphas must have one entry per franchise");
         }
         if self.alphas.iter().any(|a| !a.is_finite() || *a < 0.0) {
-            return Err("alphas must be finite and non-negative".into());
+            return invalid("alphas", "alphas must be finite and non-negative");
         }
         if self.alphas.iter().sum::<f64>() <= 0.0 {
-            return Err("at least one alpha must be positive".into());
+            return invalid("alphas", "at least one alpha must be positive");
         }
         if self.seasons == 0 || self.seasons > 500 {
-            return Err("seasons must be between 1 and 500".into());
+            return invalid("seasons", "seasons must be between 1 and 500");
         }
         if self.iterations == 0 || self.iterations > max_iterations {
-            return Err(format!("iterations must be between 1 and {max_iterations}"));
+            return invalid(
+                "iterations",
+                format!("iterations must be between 1 and {max_iterations}"),
+            );
         }
         if self.threshold == 0 || self.threshold > self.seasons {
-            return Err("threshold K must be between 1 and the number of seasons".into());
+            return invalid(
+                "seasons",
+                "threshold K must be between 1 and the number of seasons",
+            );
         }
         if self.target_index >= n {
-            return Err("target franchise index out of range".into());
+            return invalid("franchises", "target franchise index out of range");
         }
         if let Some(s) = &self.schedule {
             if s.len() != self.seasons {
-                return Err("schedule must have one row per season".into());
+                return invalid("seasons", "schedule must have one row per season");
             }
             for row in s {
                 if row.len() != n {
-                    return Err("each schedule row must have one alpha per franchise".into());
+                    return invalid(
+                        "franchises",
+                        "each schedule row must have one alpha per franchise",
+                    );
                 }
                 if row.iter().any(|a| !a.is_finite() || *a < 0.0) || row.iter().sum::<f64>() <= 0.0
                 {
-                    return Err("schedule rows must be non-negative with a positive sum".into());
+                    return invalid(
+                        "schedule",
+                        "schedule rows must be non-negative with a positive sum",
+                    );
                 }
             }
         }
@@ -227,7 +243,7 @@ fn cumulative(probs: &[Vec<f64>]) -> Vec<Vec<f64>> {
 }
 
 fn sample(cdf: &[f64], u: f64) -> usize {
-    match cdf.binary_search_by(|c| c.partial_cmp(&u).unwrap()) {
+    match cdf.binary_search_by(|c| c.total_cmp(&u)) {
         Ok(i) => (i + 1).min(cdf.len() - 1),
         Err(i) => i.min(cdf.len() - 1),
     }

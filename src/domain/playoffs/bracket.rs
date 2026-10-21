@@ -19,6 +19,7 @@ use crate::domain::models::{Conference, PlayoffResult, Round};
 use crate::domain::simulation::progress::{ChunkTracker, Progress};
 use crate::domain::simulation::rng::{chunk_rng, chunks};
 use crate::domain::simulation::stats;
+use crate::domain::validation::{invalid, ValidationError};
 
 pub const SLOT_SEEDS: [u8; 8] = [1, 8, 4, 5, 2, 7, 3, 6];
 pub const SLOTS: usize = 16;
@@ -583,7 +584,7 @@ impl ModelSpec {
         }
     }
 
-    pub fn validate(&self) -> Result<(), String> {
+    pub fn validate(&self) -> Result<(), ValidationError> {
         match self {
             ModelSpec::Elo {
                 home_advantage,
@@ -591,19 +592,25 @@ impl ModelSpec {
                 k,
             } => {
                 if !(0.0..=400.0).contains(home_advantage) {
-                    return Err("home advantage must be between 0 and 400 Elo points".into());
+                    return invalid(
+                        "home_advantage",
+                        "home advantage must be between 0 and 400 Elo points",
+                    );
                 }
                 if !(0.1..=3.0).contains(scale) {
-                    return Err("Elo scale must be between 0.1 and 3".into());
+                    return invalid("scale", "Elo scale must be between 0.1 and 3");
                 }
                 if let Some(k) = k {
                     if !(0.0..=100.0).contains(k) {
-                        return Err("K-factor must be between 0 and 100".into());
+                        return invalid("k", "K-factor must be between 0 and 100");
                     }
                 }
             }
             ModelSpec::Seed { p_better } if !(0.5..=1.0).contains(p_better) => {
-                return Err("seed model probability must be between 0.5 and 1".into());
+                return invalid(
+                    "p_better",
+                    "seed model probability must be between 0.5 and 1",
+                );
             }
             _ => {}
         }

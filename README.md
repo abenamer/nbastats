@@ -11,7 +11,7 @@ The application answers these questions:
 5. How well does Elo predict playoff results and champions?
 6. Is a dynasty such as the Golden State Warriors statistically unusual when you use season-specific team strength?
 
-The full documentation is an [Open Knowledge Format bundle](docs/index.md). The text follows ASD-STE100 Simplified Technical English.
+The project follows the [REAS engineering standard](https://github.com/abenamer/reas). The documentation is an [Open Knowledge Format bundle](docs/index.md) that targets ASD-STE100 Simplified Technical English. Full STE compliance is not verified; see the [self-audit](docs/self-audit.md).
 
 ## Quick start
 
@@ -97,28 +97,29 @@ See [Develop and test](docs/runbooks/develop.md).
 
 ## Project layout
 
-    Cargo.toml  Dockerfile  compose.yaml  .env.example
-    migrations/        SQL migrations (SQLx)
+    Cargo.toml  Dockerfile  compose.yaml  .env.example  CLAUDE.md  AGENTS.md
+    migrations/            SQL migrations (SQLx)
     src/
-      main.rs          CLI: serve, migrate, import, refresh, healthcheck
-      app.rs           shared state and season cache
-      config/          environment configuration
-      models/          domain types and state machines
-      reference.rs     franchise lineage, alignments, curated champions
-      elo/             Elo mathematics
-      simulation/      Engine A, exact occupancy, statistics, progress, RNG, dynasty
-      playoffs/        bracket model, reconstruction, standings, seeding, Engine C
-      backtesting/     scoring rules and rolling tuning
-      imports/         CSV parsers and import pipeline
-      jobs/            job runner and job specifications
-      services/        dashboard and dynasty assembly
-      web/             router, API, pages
-    templates/         Askama templates
-    static/            CSS, JavaScript, bundled Chart.js (no internet needed at runtime)
-    data/              bundled dataset
-    scripts/           backup, restore, verify
-    tests/             PostgreSQL integration tests
-    docs/              OKF knowledge bundle
+      main.rs              composition root and CLI: serve, migrate, import, refresh, healthcheck
+      config.rs            environment configuration
+      domain/              pure: ids, models and state machines, reference data, elo, simulation (Engine A),
+                           playoffs (Engines B and C), backtesting, validation
+      application/         ports, use cases (imports, jobs, dashboard, dynasty), shared state
+      adapters/            postgres (PostgresStore), http (Axum), csv (parsers), dataset (download)
+    templates/             Askama templates
+    static/                CSS, JavaScript, bundled Chart.js (no internet needed at runtime)
+    data/                  bundled dataset
+    scripts/               backup, restore, verify, documentation checker
+    tests/                 PostgreSQL integration tests and documentation checker tests
+    docs/                  OKF knowledge bundle (concepts, runbooks, reference, decisions, self-audit)
+
+## Checks
+
+    cargo fmt --all -- --check
+    cargo clippy --all-targets -- -D warnings
+    cargo test                                   # integration tests need DATABASE_URL
+    python scripts/check_docs.py
+    python -m unittest discover -s tests/docs -t .
 
 ## Licence
 

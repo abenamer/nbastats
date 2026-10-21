@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use crate::domain::ids::{SeasonYear, TeamId};
 use crate::domain::models::PlayoffResult;
 use crate::domain::playoffs::bracket::{Bracket, ModelSpec};
+use crate::domain::validation::{invalid, ValidationError};
 
 pub const MODEL_VERSION: &str = "backtest-1.0";
 
@@ -55,14 +56,15 @@ fn default_tuning() -> Option<TuningGrid> {
 }
 
 impl BacktestParams {
-    pub fn validate(&self) -> Result<(), String> {
+    pub fn validate(&self) -> Result<(), ValidationError> {
         if self.from_season.end_year() < 1984 || self.to_season < self.from_season {
-            return Err(
-                "season range must start in 1983-84 or later and end after it starts".into(),
+            return invalid(
+                "from_season",
+                "season range must start in 1983-84 or later and end after it starts",
             );
         }
         if self.models.is_empty() || self.models.len() > 12 {
-            return Err("between 1 and 12 models are allowed".into());
+            return invalid("models", "between 1 and 12 models are allowed");
         }
         for m in &self.models {
             m.validate()?;
@@ -72,7 +74,7 @@ impl BacktestParams {
                 || t.scales.is_empty()
                 || t.home_advantages.len() * t.scales.len() > 400
             {
-                return Err("tuning grid must have between 1 and 400 points".into());
+                return invalid("tuning", "tuning grid must have between 1 and 400 points");
             }
         }
         Ok(())
@@ -164,7 +166,7 @@ fn score_season(rows: &[TeamForecastRow]) -> SeasonScore {
         .expect("complete season has a champion");
     let fav = rows
         .iter()
-        .max_by(|a, b| a.probs[3].partial_cmp(&b.probs[3]).unwrap())
+        .max_by(|a, b| a.probs[3].total_cmp(&b.probs[3]))
         .expect("16 teams");
     let probs: Vec<f64> = rows.iter().map(|r| r.probs[3]).collect();
     let outcomes: Vec<bool> = rows.iter().map(|r| r.champion).collect();
@@ -270,7 +272,7 @@ pub fn run(
         if let Some((pi, _)) = losses.iter().enumerate().min_by(|a, b| {
             let sa: f64 = a.1.iter().sum();
             let sb: f64 = b.1.iter().sum();
-            sa.partial_cmp(&sb).unwrap()
+            sa.total_cmp(&sb)
         }) {
             let mean = losses[pi].iter().sum::<f64>() / inputs.len().max(1) as f64;
             in_sample_best = Some((points[pi].0, points[pi].1, mean));
@@ -286,7 +288,7 @@ pub fn run(
                 .min_by(|&a, &b| {
                     let sa: f64 = losses[a][..t].iter().sum();
                     let sb: f64 = losses[b][..t].iter().sum();
-                    sa.partial_cmp(&sb).unwrap()
+                    sa.total_cmp(&sb)
                 })
                 .expect("non-empty grid");
             let (h, s) = points[best];
