@@ -3,6 +3,8 @@
 //! * `http` – inbound: Axum router, JSON API and server-rendered pages.
 //! * `csv` – inbound data format parsers for the Elo game logs.
 //! * `dataset` – outbound: HTTP download of the source dataset.
+//! * `balldontlie` – outbound: game results and schedule from the BALLDONTLIE API.
+pub mod balldontlie;
 pub mod csv;
 pub mod dataset;
 pub mod http;

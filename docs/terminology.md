@@ -32,6 +32,7 @@ These are project-specific technical terms. They are not a reproduction of the A
 | Job | A stored simulation request with parameters, seed, versions, progress and result. |
 | Play-in | The games that decide seeds 7 and 8 (2020-21 and later), or the 8 seed (2019-20). |
 | Port | A trait in `application::ports` that the application requires from the outside world. |
+| Results source | The `ResultsSource` port: game results and schedule of a season without Elo data. The adapter is `BalldontlieSource`. |
 | Projection | A placeholder season: the previous season's matchups one year later, no scores, reverted ratings. |
 | Scenario | A named, completed job that you can reopen and compare. |
 | Season | An NBA season named by its end year. `SeasonYear(2004)` is 2003-04. |

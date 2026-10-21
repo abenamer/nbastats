@@ -14,7 +14,7 @@ use crate::application::continuation::{self, ContinuationUseCaseError};
 use crate::application::imports::{self, Provenance};
 use crate::application::jobs::specs::{AlphaJob, BacktestJob, PlayoffJob, SeasonJob};
 use crate::application::jobs::{self, Limits, Submit};
-use crate::application::ports::{AnalysisStore, GameLog, ImportLog, JobStore};
+use crate::application::ports::{AnalysisStore, GameLog, ImportLog, JobStore, ResultsSource};
 use crate::application::{dashboard, dynasty};
 use crate::config::APP_VERSION;
 use crate::domain::backtesting::BacktestParams;
@@ -664,6 +664,23 @@ pub async fn project_season(
     Ok(Json(json!(outcome)))
 }
 
+/// Pull a season's results from BALLDONTLIE and compute the Elo.
+pub async fn sync_results(
+    State(app): State<AppState>,
+    Json(body): Json<ProjectBody>,
+) -> ApiResult<Value> {
+    let Some(source) = app.results.as_ref() else {
+        return Err(ApiError::bad_request(
+            "results sync is not configured: set BALLDONTLIE_API_KEY and restart",
+        ));
+    };
+    let outcome = continuation::sync_results(&app.store, source, body.season)
+        .await
+        .map_err(continuation_error)?;
+    app.invalidate_cache();
+    Ok(Json(json!(outcome)))
+}
+
 /// Results or schedule CSV for a season beyond the dataset; the application computes the Elo.
 pub async fn upload_results(
     State(app): State<AppState>,
@@ -751,5 +768,10 @@ pub async fn coverage(State(app): State<AppState>) -> ApiResult<Value> {
         "source_url": app.config.data_source_url,
         "next_season": next_season,
         "results_example": continuation::results_example(),
+        "results_source": app.results.as_ref().map(|r| json!({
+            "name": r.name(),
+            "base_url": r.base_url(),
+            "requests_per_minute": r.requests_per_minute(),
+        })),
     })))
 }

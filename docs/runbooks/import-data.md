@@ -40,6 +40,19 @@ The archive ends with 2024-25. For a later season, the application computes the 
 
 The application inserts the previous season's regular-season matchups one year later, with no scores, and the reverted ratings of the previous season. The Season Forecast page can then forecast that season.
 
+## Sync results from BALLDONTLIE
+
+1. Create a free account at `https://www.balldontlie.io` and copy the API key.
+2. Set `BALLDONTLIE_API_KEY` in `.env`. Set `BALLDONTLIE_REQUESTS_PER_MINUTE` to your plan's quota (free: 5).
+3. Restart the application: `docker compose up -d`.
+4. On the Data page, enter the season end year and click **Sync results from BALLDONTLIE**.
+
+The application fetches every game of the season (results and schedule) and recomputes the Elo. On the free tier a full season takes about three minutes. Run the sync again after each game day; each run replaces the computed games of that season.
+
+Command line alternative, for a scheduled task:
+
+    docker compose exec nba-app nba-elo-simulator sync-results 2026
+
 ## Import results and the schedule
 
 1. Prepare a CSV file with this header: `date,home,away,home_score,away_score,neutral,playoff`.

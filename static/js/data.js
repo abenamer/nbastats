@@ -8,6 +8,9 @@
     const c = await getJSON('/api/data/coverage');
     document.getElementById('sourceUrl').textContent = c.source_url;
     if (c.next_season && !document.getElementById('nextSeason').value) document.getElementById('nextSeason').value = c.next_season;
+    const sync = document.getElementById('sync');
+    if (c.results_source) { sync.disabled = false; sync.title = `${c.results_source.name} · ${c.results_source.base_url} · ${c.results_source.requests_per_minute} requests/min`; }
+    else { sync.disabled = true; document.getElementById('syncHint').textContent = 'Not configured: set BALLDONTLIE_API_KEY in .env and restart the application to sync results from the BALLDONTLIE API.'; }
     document.getElementById('coverage').innerHTML = table([
       { label: 'Season', value: 'label', left: true }, { label: 'Teams', value: 'teams' }, { label: 'Games', value: 'games' }, { label: 'Play-in', value: 'play_in_games' }, { label: 'Playoff games', value: 'playoff_games' },
       { label: 'Regular season end', value: r => r.regular_season_end || '–', left: true }, { label: 'Playoffs', value: r => r.playoffs_start ? `${r.playoffs_start} → ${r.playoffs_end}` : '–', left: true },
@@ -42,6 +45,12 @@
     const season = parseInt(document.getElementById('nextSeason').value);
     const btn = document.getElementById('project'); btn.disabled = true; document.getElementById('importResult').textContent = `Projecting ${season - 1}-${String(season % 100).padStart(2, '0')}…`;
     try { const r = await postJSON('/api/data/project', { season }); document.getElementById('importResult').textContent = JSON.stringify(r, null, 2); await refreshAll(); }
+    catch (e) { document.getElementById('importResult').textContent = e.message; } finally { btn.disabled = false; }
+  });
+  document.getElementById('sync').addEventListener('click', async () => {
+    const season = parseInt(document.getElementById('nextSeason').value);
+    const btn = document.getElementById('sync'); btn.disabled = true; document.getElementById('importResult').textContent = `Fetching ${season - 1}-${String(season % 100).padStart(2, '0')} from BALLDONTLIE and computing Elo… this can take a few minutes on the free tier.`;
+    try { const r = await postJSON('/api/data/sync', { season }); document.getElementById('importResult').textContent = JSON.stringify(r, null, 2); await refreshAll(); }
     catch (e) { document.getElementById('importResult').textContent = e.message; } finally { btn.disabled = false; }
   });
   document.getElementById('resultsForm').addEventListener('submit', async e => {

@@ -2,6 +2,8 @@
 //!
 //! * `import_results`: rate a season's game results (or schedule) from the previous season's
 //!   final ratings with FiveThirtyEight's formulas and store them as computed Elo.
+//! * `sync_results`: the same, with the results pulled from a `ResultsSource` adapter
+//!   (BALLDONTLIE) instead of an uploaded file.
 //! * `project_season`: build a preseason projection of a season with no data at all: reverted
 //!   ratings on a synthetic schedule that repeats the previous season's regular-season
 //!   matchups. Nothing is invented about results; the schedule is marked as a projection.
@@ -19,7 +21,10 @@ use crate::domain::ids::{SeasonYear, TeamId};
 use crate::domain::models::{EloSource, Game, GameType};
 
 use super::imports::{self, derived, ImportOutcome};
-use super::ports::{GameStore, ImportLog, ImportStart, ImportStats, NewGame, StoreError};
+use super::ports::{
+    GameStore, ImportLog, ImportStart, ImportStats, NewGame, ResultRecord, ResultsSource,
+    SourceError, StoreError,
+};
 
 #[derive(Debug, thiserror::Error)]
 pub enum ContinuationUseCaseError {
@@ -33,6 +38,8 @@ pub enum ContinuationUseCaseError {
     OutOfRange(i32),
     #[error(transparent)]
     Parse(#[from] csv::ParseError),
+    #[error(transparent)]
+    Source(#[from] SourceError),
     #[error(transparent)]
     Rating(#[from] ContinuationError),
     #[error(transparent)]
@@ -77,20 +84,68 @@ async fn guard_not_imported<S: GameStore>(
     Ok(())
 }
 
+/// Where computed games came from, for the import log.
+#[derive(Debug, Clone, Copy)]
+struct Origin<'a> {
+    source: &'a str,
+    source_url: Option<&'a str>,
+    file_name: Option<&'a str>,
+    format: &'a str,
+}
+
+/// Resolve team codes to identifiers. Unknown codes are collected and reported together.
+fn resolve_games(
+    teams: &HashMap<String, crate::domain::models::Team>,
+    rows: &[ResultRecord],
+) -> Result<Vec<ResultGame>, ContinuationUseCaseError> {
+    let mut unknown: Vec<String> = Vec::new();
+    let mut games = Vec::with_capacity(rows.len());
+    for r in rows {
+        match (teams.get(&r.home_code), teams.get(&r.away_code)) {
+            (Some(h), Some(a)) => games.push(ResultGame {
+                date: r.date,
+                home: h.id,
+                away: a.id,
+                neutral: r.neutral,
+                playoff: r.playoff,
+                home_score: r.home_score,
+                away_score: r.away_score,
+            }),
+            _ => {
+                for c in [&r.home_code, &r.away_code] {
+                    if !teams.contains_key(c) && !unknown.contains(c) {
+                        unknown.push(c.clone());
+                    }
+                }
+            }
+        }
+    }
+    if unknown.is_empty() {
+        Ok(games)
+    } else {
+        Err(ContinuationUseCaseError::UnknownTeams(unknown.join(", ")))
+    }
+}
+
 async fn store_rated<S: GameStore + ImportLog>(
     store: &S,
     season: SeasonYear,
     games: Vec<ResultGame>,
     start: &HashMap<TeamId, f64>,
-    provenance: (&str, Option<&str>, &str),
+    origin: Origin<'_>,
     sha: &str,
 ) -> Result<ImportOutcome, ContinuationUseCaseError> {
-    let (source, file_name, format) = provenance;
+    let Origin {
+        source,
+        source_url,
+        file_name,
+        format,
+    } = origin;
     let rated = rate_games(start, &games)?;
     let import_id = store
         .start_import(&ImportStart {
             source,
-            source_url: None,
+            source_url,
             file_name,
             sha256: sha,
             format,
@@ -179,45 +234,69 @@ pub async fn import_results<S: GameStore + ImportLog>(
     guard_not_imported(store, season).await?;
     let report = csv::parse_results(bytes)?;
     let teams = store.team_code_map().await?;
-    let mut unknown: Vec<String> = Vec::new();
-    let mut games = Vec::with_capacity(report.games.len());
-    for r in &report.games {
-        match (teams.get(&r.home), teams.get(&r.away)) {
-            (Some(h), Some(a)) => games.push(ResultGame {
-                date: r.date,
-                home: h.id,
-                away: a.id,
-                neutral: r.neutral,
-                playoff: r.playoff,
-                home_score: r.home_score,
-                away_score: r.away_score,
-            }),
-            _ => {
-                for c in [&r.home, &r.away] {
-                    if !teams.contains_key(c) && !unknown.contains(c) {
-                        unknown.push(c.clone());
-                    }
-                }
-            }
-        }
-    }
-    if !unknown.is_empty() {
-        return Err(ContinuationUseCaseError::UnknownTeams(unknown.join(", ")));
-    }
+    let records: Vec<ResultRecord> = report.games.iter().map(ResultRecord::from).collect();
+    let games = resolve_games(&teams, &records)?;
     let start = start_ratings(store, season).await?;
     let sha = imports::sha256_hex(bytes);
-    let mut outcome = store_rated(
-        store,
-        season,
-        games,
-        &start,
-        ("results", file_name, "results"),
-        &sha,
-    )
-    .await?;
+    let origin = Origin {
+        source: "results",
+        source_url: None,
+        file_name,
+        format: "results",
+    };
+    let mut outcome = store_rated(store, season, games, &start, origin, &sha).await?;
     outcome.rows_read = report.rows_read;
     outcome.rows_rejected = report.rows_rejected;
     outcome.notes.extend(report.rejections);
+    Ok(outcome)
+}
+
+impl From<&ResultRow> for ResultRecord {
+    fn from(r: &ResultRow) -> Self {
+        Self {
+            date: r.date,
+            home_code: r.home.clone(),
+            away_code: r.away.clone(),
+            neutral: r.neutral,
+            playoff: r.playoff,
+            home_score: r.home_score,
+            away_score: r.away_score,
+        }
+    }
+}
+
+/// Pull `season` from a results source (BALLDONTLIE) and compute its Elo. Every call
+/// replaces the computed games of that season, so a daily sync keeps the ratings current.
+pub async fn sync_results<S: GameStore + ImportLog, R: ResultsSource>(
+    store: &S,
+    source: &R,
+    season: SeasonYear,
+) -> Result<ImportOutcome, ContinuationUseCaseError> {
+    guard_not_imported(store, season).await?;
+    let fetch = source.season_results(season).await?;
+    info!(
+        season = %season,
+        games = fetch.records.len(),
+        requests = fetch.requests,
+        source = source.name(),
+        "fetched season results"
+    );
+    let teams = store.team_code_map().await?;
+    let games = resolve_games(&teams, &fetch.records)?;
+    let start = start_ratings(store, season).await?;
+    let sha = imports::sha256_hex(format!("{:?}", fetch.records).as_bytes());
+    let origin = Origin {
+        source: source.name(),
+        source_url: Some(&fetch.source_url),
+        file_name: None,
+        format: "results",
+    };
+    let mut outcome = store_rated(store, season, games, &start, origin, &sha).await?;
+    outcome.notes.push(format!(
+        "{} games fetched with {} requests",
+        fetch.records.len(),
+        fetch.requests
+    ));
     Ok(outcome)
 }
 
@@ -250,15 +329,13 @@ pub async fn project_season<S: GameStore + ImportLog>(
         })
         .collect();
     let sha = imports::sha256_hex(format!("projection:{season}:{}", prev_games.len()).as_bytes());
-    store_rated(
-        store,
-        season,
-        schedule,
-        &start,
-        ("projection", None, "projection"),
-        &sha,
-    )
-    .await
+    let origin = Origin {
+        source: "projection",
+        source_url: None,
+        file_name: None,
+        format: "projection",
+    };
+    store_rated(store, season, schedule, &start, origin, &sha).await
 }
 
 fn shift_one_year(d: NaiveDate) -> NaiveDate {

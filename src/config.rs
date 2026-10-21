@@ -21,6 +21,11 @@ pub struct Config {
     pub worker_threads: Option<usize>,
     /// Host names accepted in the `Host` header; `*` accepts any.
     pub allowed_hosts: Vec<String>,
+    /// BALLDONTLIE API key; when unset, the results sync is unavailable.
+    pub balldontlie_api_key: Option<String>,
+    pub balldontlie_base_url: String,
+    /// Request pacing for the BALLDONTLIE quota (the free tier allows 5 per minute).
+    pub balldontlie_requests_per_minute: u32,
 }
 
 impl Config {
@@ -65,6 +70,19 @@ impl Config {
             .map(|h| h.trim().to_ascii_lowercase())
             .filter(|h| !h.is_empty())
             .collect();
+        let balldontlie_api_key = env::var("BALLDONTLIE_API_KEY")
+            .ok()
+            .map(|k| k.trim().to_string())
+            .filter(|k| !k.is_empty());
+        let balldontlie_base_url = env::var("BALLDONTLIE_BASE_URL")
+            .ok()
+            .filter(|u| !u.trim().is_empty())
+            .unwrap_or_else(|| "https://api.balldontlie.io/v1".to_string());
+        let balldontlie_requests_per_minute = env::var("BALLDONTLIE_REQUESTS_PER_MINUTE")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .filter(|&n: &u32| n > 0)
+            .unwrap_or(5);
         Ok(Self {
             database_url,
             bind_addr,
@@ -78,6 +96,9 @@ impl Config {
             max_work_units,
             worker_threads,
             allowed_hosts,
+            balldontlie_api_key,
+            balldontlie_base_url,
+            balldontlie_requests_per_minute,
         })
     }
 
@@ -135,6 +156,9 @@ mod tests {
             max_work_units: 1,
             worker_threads: None,
             allowed_hosts: hosts.split(',').map(str::to_string).collect(),
+            balldontlie_api_key: None,
+            balldontlie_base_url: String::new(),
+            balldontlie_requests_per_minute: 5,
         }
     }
 

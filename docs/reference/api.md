@@ -36,11 +36,12 @@ sources:
 | `GET /api/dashboard?from=2004&to=2025` | Title distribution and concentration. |
 | `GET /api/dynasty?franchise=GSW&from=2015&to=2022&alpha=3` | Dynasty report and concentration comparison. |
 | `GET /api/data/imports` | Import history. |
-| `GET /api/data/coverage` | Season coverage, missing seasons, the next season without data and an example of the results layout. |
+| `GET /api/data/coverage` | Season coverage, missing seasons, the next season without data, an example of the results layout and the configured results source (`null` when none). |
 | `POST /api/data/refresh` | Download and import the source. Body: `{"force": false}`. |
 | `POST /api/data/upload` | Multipart upload. Fields: `file`, `force`. |
 | `POST /api/data/project` | Preseason projection with computed Elo. Body: `{"season": 2026}`. Refused when the season has imported games. |
 | `POST /api/data/results` | Multipart upload in the results layout with computed Elo. Fields: `file`, `season`. |
+| `POST /api/data/sync` | Fetch a season from BALLDONTLIE and compute its Elo. Body: `{"season": 2026}`. Status 400 when `BALLDONTLIE_API_KEY` is not set. |
 
 # Jobs
 

@@ -16,6 +16,10 @@
     <button id="project" class="primary">Project preseason (synthetic schedule)</button>
     <span class="muted small">Repeats the previous season's regular-season matchups one year later with no results, so the Season Forecast page can run a preseason forecast.</span>
   </div>
+  <div class="row">
+    <button id="sync">Sync results from BALLDONTLIE</button>
+    <span id="syncHint" class="muted small">Fetches every game of that season (results and schedule) from the BALLDONTLIE API and recomputes the Elo. On the free tier (5 requests per minute) a full season takes about three minutes.</span>
+  </div>
   <form id="resultsForm" class="row"><input type="file" id="resultsFile" accept=".csv,.gz"><button type="submit">Upload results / schedule CSV for that season</button></form>
   <p class="muted small">CSV layout: <code>date,home,away,home_score,away_score,neutral,playoff</code>. Leave the scores empty for games not yet played. Team codes as in the Elo Explorer (OKC, GSW, …). Uploading again replaces the computed games of that season.</p>
 </section>

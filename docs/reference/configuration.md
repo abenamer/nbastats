@@ -23,6 +23,9 @@ sources:
 | `MAX_ITERATIONS` | `5000000` | Upper limit for Monte Carlo iterations in one job. |
 | `MAX_WORK_UNITS` | `4000000000` | Upper limit for the estimated work of one job (iterations × per-iteration work). |
 | `ALLOWED_HOSTS` | `localhost,127.0.0.1,[::1]` | Host names accepted in the `Host` header. `*` accepts any. |
+| `BALLDONTLIE_API_KEY` | none | API key for the results sync. When unset, the sync is unavailable. |
+| `BALLDONTLIE_BASE_URL` | `https://api.balldontlie.io/v1` | Base URL of the BALLDONTLIE API. |
+| `BALLDONTLIE_REQUESTS_PER_MINUTE` | `5` | Request pacing for the plan's quota. |
 | `DB_MAX_CONNECTIONS` | `8` | Connection pool size. |
 | `DB_CONNECT_TIMEOUT_SECS` | `120` | How long the start waits for PostgreSQL. |
 | `SIM_THREADS` | number of CPUs | Rayon thread count. |

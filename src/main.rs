@@ -8,14 +8,16 @@ use clap::{Parser, Subcommand};
 use tracing::{error, info, warn};
 use tracing_subscriber::EnvFilter;
 
+use nba_elo_simulator::adapters::balldontlie::{BalldontlieConfig, BalldontlieSource};
 use nba_elo_simulator::adapters::dataset::HttpDatasetSource;
 use nba_elo_simulator::adapters::http;
 use nba_elo_simulator::adapters::postgres::PostgresStore;
-use nba_elo_simulator::application::imports;
 use nba_elo_simulator::application::jobs;
 use nba_elo_simulator::application::ports::{GameLog, GameStore, ImportLog, JobStore};
 use nba_elo_simulator::application::state::App;
+use nba_elo_simulator::application::{continuation, imports};
 use nba_elo_simulator::config::{Config, APP_VERSION};
+use nba_elo_simulator::domain::ids::SeasonYear;
 
 #[derive(Parser)]
 #[command(name = "nba-elo-simulator", version = APP_VERSION, about = "NBA Elo championship simulator")]
@@ -41,6 +43,11 @@ enum Command {
     Refresh {
         #[arg(long)]
         force: bool,
+    },
+    /// Fetch a season's results from BALLDONTLIE and compute its Elo (needs BALLDONTLIE_API_KEY)
+    SyncResults {
+        /// Season end year, for example 2026 for 2025-26
+        season: i32,
     },
     /// Container health check: GET /healthz on the bound address (exit 0 when healthy)
     Healthcheck,
@@ -90,6 +97,15 @@ async fn main() -> anyhow::Result<()> {
     store.sync_reference().await?;
     info!("migrations applied and reference data synced");
     let source = HttpDatasetSource::new()?;
+    // Composition root: the adapter is built here from plain configuration values.
+    let results = match &config.balldontlie_api_key {
+        Some(key) => Some(BalldontlieSource::new(BalldontlieConfig {
+            api_key: key.clone(),
+            base_url: config.balldontlie_base_url.clone(),
+            requests_per_minute: config.balldontlie_requests_per_minute,
+        })?),
+        None => None,
+    };
 
     match cli.command.unwrap_or(Command::Serve) {
         Command::Migrate => Ok(()),
@@ -110,7 +126,18 @@ async fn main() -> anyhow::Result<()> {
             println!("{}", serde_json::to_string_pretty(&outcome)?);
             Ok(())
         }
-        Command::Serve => serve(config, store, source).await,
+        Command::SyncResults { season } => {
+            let season = SeasonYear::try_new(season)?;
+            let results = results.ok_or_else(|| {
+                anyhow::anyhow!(
+                    "BALLDONTLIE_API_KEY must be set to sync results (see .env.example)"
+                )
+            })?;
+            let outcome = continuation::sync_results(&store, &results, season).await?;
+            println!("{}", serde_json::to_string_pretty(&outcome)?);
+            Ok(())
+        }
+        Command::Serve => serve(config, store, source, results).await,
         Command::Healthcheck => unreachable!("handled before connecting"),
     }
 }
@@ -119,6 +146,7 @@ async fn serve(
     config: Config,
     store: PostgresStore,
     source: HttpDatasetSource,
+    results: Option<BalldontlieSource>,
 ) -> anyhow::Result<()> {
     std::fs::create_dir_all(&config.data_dir)?;
     let interrupted = store.mark_running_jobs_interrupted().await?;
@@ -150,7 +178,10 @@ async fn serve(
     }
 
     // --- wiring ---
-    let app = Arc::new(App::new(config.clone(), store.clone(), source));
+    if results.is_some() {
+        info!("BALLDONTLIE results sync available");
+    }
+    let app = Arc::new(App::new(config.clone(), store.clone(), source, results));
     let runner = tokio::spawn(jobs::runner(app.clone()));
     let router = http::router(app.clone());
     let listener = tokio::net::TcpListener::bind(&config.bind_addr).await?;

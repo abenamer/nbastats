@@ -7,7 +7,8 @@ mod common;
 use chrono::NaiveDate;
 use nba_elo_simulator::application::imports::{self, Provenance};
 use nba_elo_simulator::application::ports::{
-    AnalysisStore, GameLog, GameStore, ImportLog, JobOutcome, JobStore, NewJob,
+    AnalysisStore, GameLog, GameStore, ImportLog, JobOutcome, JobStore, NewJob, ResultRecord,
+    ResultsFetch, ResultsSource, SourceError,
 };
 use nba_elo_simulator::domain::ids::SeasonYear;
 use nba_elo_simulator::domain::models::{
@@ -392,4 +393,72 @@ async fn computed_elo_continues_from_the_previous_season(pool: PgPool) {
     let ts = store.team_seasons(s2017).await.unwrap();
     let gsw_ts = ts.iter().find(|t| t.code == "GSW").unwrap();
     assert_eq!((gsw_ts.wins, gsw_ts.losses), (1, 1));
+
+    // A results source (the BALLDONTLIE adapter in production) feeds the same path.
+    let source = FakeResults {
+        records: vec![
+            record("2016-10-25", "GSW", "SAS", Some((100, 129))),
+            record("2016-10-28", "GSW", "NOP", Some((122, 114))),
+            record("2016-10-30", "DAL", "GSW", Some((95, 100))),
+            record("2016-11-01", "GSW", "BRK", None),
+        ],
+    };
+    let outcome = continuation::sync_results(&store, &source, s2017)
+        .await
+        .unwrap();
+    assert_eq!(outcome.games_inserted, 4);
+    assert!(outcome
+        .notes
+        .iter()
+        .any(|n| n.contains("4 games fetched with 1 requests")));
+    let games = store.season_games(s2017).await.unwrap();
+    assert_eq!(games.len(), 4);
+    assert!(games.iter().all(|g| g.elo_source == EloSource::Computed));
+    assert!(games[2].is_played() && !games[3].is_played());
+    assert_eq!(games[3].elo_of(gsw).0, games[2].elo_of(gsw).1);
+    let ts = store.team_seasons(s2017).await.unwrap();
+    let gsw_ts = ts.iter().find(|t| t.code == "GSW").unwrap();
+    assert_eq!((gsw_ts.wins, gsw_ts.losses), (2, 1));
+    let last_import = store.imports(1).await.unwrap().remove(0);
+    assert_eq!(last_import.source, "fake-results");
+    assert_eq!(last_import.source_url.as_deref(), Some("fake://games"));
+    // Unknown codes stop the sync before anything is written.
+    let bad = FakeResults {
+        records: vec![record("2016-10-25", "GSW", "XXX", None)],
+    };
+    let err = continuation::sync_results(&store, &bad, s2017).await;
+    assert!(matches!(
+        err,
+        Err(continuation::ContinuationUseCaseError::UnknownTeams(c)) if c == "XXX"
+    ));
+    assert_eq!(store.season_games(s2017).await.unwrap().len(), 4);
+}
+
+struct FakeResults {
+    records: Vec<ResultRecord>,
+}
+
+impl ResultsSource for FakeResults {
+    fn name(&self) -> &'static str {
+        "fake-results"
+    }
+    async fn season_results(&self, _season: SeasonYear) -> Result<ResultsFetch, SourceError> {
+        Ok(ResultsFetch {
+            records: self.records.clone(),
+            source_url: "fake://games".to_string(),
+            requests: 1,
+        })
+    }
+}
+
+fn record(date: &str, home: &str, away: &str, score: Option<(i32, i32)>) -> ResultRecord {
+    ResultRecord {
+        date: NaiveDate::parse_from_str(date, "%Y-%m-%d").unwrap(),
+        home_code: home.to_string(),
+        away_code: away.to_string(),
+        neutral: false,
+        playoff: false,
+        home_score: score.map(|s| s.0),
+        away_score: score.map(|s| s.1),
+    }
 }

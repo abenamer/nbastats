@@ -52,6 +52,7 @@ pub fn router(app: State) -> Router {
         .route("/data/upload", post(api::upload))
         .route("/data/results", post(api::upload_results))
         .route("/data/project", post(api::project_season))
+        .route("/data/sync", post(api::sync_results))
         .route("/data/coverage", get(api::coverage));
 
     Router::new()

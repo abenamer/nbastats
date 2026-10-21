@@ -10,6 +10,7 @@ use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
+use crate::adapters::balldontlie::BalldontlieSource;
 use crate::adapters::dataset::HttpDatasetSource;
 use crate::adapters::postgres::PostgresStore;
 use crate::config::Config;
@@ -47,6 +48,8 @@ pub struct App {
     /// The store adapter. Use cases access it through the port traits.
     pub store: PostgresStore,
     pub source: HttpDatasetSource,
+    /// Results source for seasons beyond the dataset; `None` until an API key is configured.
+    pub results: Option<BalldontlieSource>,
     pub started_at: chrono::DateTime<chrono::Utc>,
     /// Wakes the job runner when a job is queued.
     pub job_notify: Notify,
@@ -59,11 +62,17 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(config: Config, store: PostgresStore, source: HttpDatasetSource) -> Self {
+    pub fn new(
+        config: Config,
+        store: PostgresStore,
+        source: HttpDatasetSource,
+        results: Option<BalldontlieSource>,
+    ) -> Self {
         Self {
             config,
             store,
             source,
+            results,
             started_at: chrono::Utc::now(),
             job_notify: Notify::new(),
             cancel_flags: std::sync::Mutex::new(HashMap::new()),

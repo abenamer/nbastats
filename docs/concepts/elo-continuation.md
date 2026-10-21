@@ -31,10 +31,11 @@ The application verified these formulas against rows of the archive. They reprod
 
 A game without a result does not change the ratings. The application records the ratings before the game, so the forecast engines can use the schedule.
 
-# Two ways to add a season
+# Three ways to add a season
 
 | Method | Input | Result |
 |--------|-------|--------|
+| Results sync | The BALLDONTLIE API (an API key in `BALLDONTLIE_API_KEY`). The application fetches every game of the season. | The ratings follow the results. The season is marked `computed`. The import log records the source URL. |
 | Results import | A CSV file in the results layout with the played games, and optionally the games that are not played yet. | The ratings follow the results. The season is marked `computed`. |
 | Preseason projection | None. | The previous season's regular-season matchups, one year later, with no scores. All ratings are the reverted ratings of the previous season. |
 
@@ -47,6 +48,7 @@ A projection is a placeholder. Its schedule is not the real schedule. Use it to 
 * A later archive import replaces `computed` games of the same key with `imported` games. A `computed` game never replaces an `imported` game.
 * The application needs the previous season in the store. It takes the final rating of each team from the last game of that season.
 * Team codes must exist in the reference table. Unknown codes stop the import with a message.
+* The BALLDONTLIE adapter maps three abbreviations to the dataset's codes: BKN to BRK, CHA to CHO, PHX to PHO. A game counts as played only when its status is `Final`. The adapter paces its requests to the plan's quota and waits when the API answers with status 429.
 
 # Limits
 

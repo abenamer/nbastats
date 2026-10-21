@@ -346,3 +346,52 @@ pub enum DownloadError {
 pub trait DatasetSource: Send + Sync {
     async fn download(&self, url: &str) -> Result<Vec<u8>, DownloadError>;
 }
+
+// ---------------------------------------------------------------------------------------
+// Results source (game results and schedule of a season without Elo data)
+// ---------------------------------------------------------------------------------------
+
+/// One game as a results source reports it: team codes in the dataset's convention (BRK,
+/// CHO, PHO, ...), scores only when the game is final.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResultRecord {
+    pub date: NaiveDate,
+    pub home_code: String,
+    pub away_code: String,
+    pub neutral: bool,
+    pub playoff: bool,
+    pub home_score: Option<i32>,
+    pub away_score: Option<i32>,
+}
+
+/// Everything a results source returns for one season, with provenance for the import log.
+#[derive(Debug, Clone, Default)]
+pub struct ResultsFetch {
+    pub records: Vec<ResultRecord>,
+    /// Where the data came from, for the import log.
+    pub source_url: String,
+    /// Number of HTTP requests the fetch needed.
+    pub requests: u32,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum SourceError {
+    #[error("results source is not configured: {0}")]
+    NotConfigured(String),
+    #[error("results source rejected the request ({status}): {message}")]
+    Rejected { status: u16, message: String },
+    #[error("results source rate limit still exceeded after {0} retries")]
+    RateLimited(u32),
+    #[error("results source transport error: {0}")]
+    Transport(String),
+    #[error("results source returned an unexpected payload: {0}")]
+    InvalidPayload(String),
+}
+
+#[allow(async_fn_in_trait)]
+pub trait ResultsSource: Send + Sync {
+    /// Human-readable source name for the import log (for example `balldontlie`).
+    fn name(&self) -> &'static str;
+    /// Every game of `season` the source knows: played games with scores, scheduled games without.
+    async fn season_results(&self, season: SeasonYear) -> Result<ResultsFetch, SourceError>;
+}

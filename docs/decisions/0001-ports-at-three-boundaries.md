@@ -1,7 +1,7 @@
 ---
 type: Architecture Decision
 title: Ports at the store, dataset and HTTP boundaries
-description: Why the application defines six port traits and one concrete store adapter.
+description: Why the application defines seven port traits and one concrete store adapter.
 tags: [decision, architecture, reas]
 generated: { by: "human:abenamer", at: "2026-10-21T19:00:00Z" }
 ---
@@ -14,8 +14,8 @@ REAS favours ports and adapters for human-maintained code and asks three questio
 
 ## Decision
 
-* The application defines six ports in `src/application/ports.rs`: `GameLog`, `GameStore`, `ImportLog`, `JobStore`, `AnalysisStore`, `DatasetSource`.
-* One adapter type, `PostgresStore`, implements the five store ports. `HttpDatasetSource` implements `DatasetSource`.
+* The application defines seven ports in `src/application/ports.rs`: `GameLog`, `GameStore`, `ImportLog`, `JobStore`, `AnalysisStore`, `DatasetSource`, `ResultsSource`.
+* One adapter type, `PostgresStore`, implements the five store ports. `HttpDatasetSource` implements `DatasetSource`. `BalldontlieSource` implements `ResultsSource` (added 2026-10-21 when the archive no longer covered the current season).
 * `App` holds the concrete adapters. Use cases that benefit from fakes (import, job runner, refresh) take the ports as generic parameters. HTTP handlers call the ports through `app.store`.
 * `main.rs` is the composition root.
 
