@@ -51,10 +51,22 @@ pub fn read_file(path: &Path) -> Result<Vec<u8>, ImportError> {
     Ok(maybe_gunzip(raw)?)
 }
 
+/// Upper bound on a decompressed upload. A game log of 80 seasons is about 16 MB, so this
+/// leaves a wide margin while stopping decompression bombs.
+pub const MAX_DECOMPRESSED_BYTES: u64 = 512 * 1024 * 1024;
+
 pub fn maybe_gunzip(raw: Vec<u8>) -> Result<Vec<u8>, std::io::Error> {
     if raw.len() > 2 && raw[0] == 0x1f && raw[1] == 0x8b {
         let mut out = Vec::new();
-        flate2::read::GzDecoder::new(&raw[..]).read_to_end(&mut out)?;
+        flate2::read::GzDecoder::new(&raw[..])
+            .take(MAX_DECOMPRESSED_BYTES + 1)
+            .read_to_end(&mut out)?;
+        if out.len() as u64 > MAX_DECOMPRESSED_BYTES {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("decompressed data exceeds {} bytes", MAX_DECOMPRESSED_BYTES),
+            ));
+        }
         Ok(out)
     } else {
         Ok(raw)
@@ -63,6 +75,35 @@ pub fn maybe_gunzip(raw: Vec<u8>) -> Result<Vec<u8>, std::io::Error> {
 
 pub fn sha256_hex(bytes: &[u8]) -> String {
     hex::encode(Sha256::digest(bytes))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+
+    #[test]
+    fn gunzip_passes_plain_data_and_small_archives() {
+        assert_eq!(maybe_gunzip(b"a,b\n".to_vec()).unwrap(), b"a,b\n");
+        let mut enc = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        enc.write_all(b"date,season\n").unwrap();
+        let gz = enc.finish().unwrap();
+        assert_eq!(maybe_gunzip(gz).unwrap(), b"date,season\n");
+    }
+
+    #[test]
+    fn gunzip_rejects_oversized_output() {
+        // 600 MB of zeros compresses to under 1 MB; decompression must stop at the cap.
+        let mut enc = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+        let chunk = vec![0u8; 1 << 20];
+        for _ in 0..600 {
+            enc.write_all(&chunk).unwrap();
+        }
+        let gz = enc.finish().unwrap();
+        assert!(gz.len() < 4 * 1024 * 1024);
+        let err = maybe_gunzip(gz).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+    }
 }
 
 /// Where a dataset came from, for provenance.

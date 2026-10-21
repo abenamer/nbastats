@@ -2,15 +2,18 @@
 
 pub mod api;
 pub mod error;
+pub mod guard;
 pub mod pages;
 
 use std::sync::Arc;
 
 use axum::extract::DefaultBodyLimit;
+use axum::http::{header, HeaderValue};
 use axum::routing::{get, post};
-use axum::Router;
+use axum::{middleware, Router};
 use tower_http::compression::CompressionLayer;
 use tower_http::services::ServeDir;
+use tower_http::set_header::SetResponseHeaderLayer;
 use tower_http::trace::TraceLayer;
 
 use crate::application::state::App;
@@ -64,6 +67,26 @@ pub fn router(app: State) -> Router {
         .nest_service("/static", ServeDir::new("static"))
         .layer(DefaultBodyLimit::max(64 * 1024 * 1024))
         .layer(CompressionLayer::new())
+        .layer(SetResponseHeaderLayer::if_not_present(
+            header::CONTENT_SECURITY_POLICY,
+            HeaderValue::from_static(
+                "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; \
+                 connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
+            ),
+        ))
+        .layer(SetResponseHeaderLayer::if_not_present(
+            header::X_CONTENT_TYPE_OPTIONS,
+            HeaderValue::from_static("nosniff"),
+        ))
+        .layer(SetResponseHeaderLayer::if_not_present(
+            header::X_FRAME_OPTIONS,
+            HeaderValue::from_static("DENY"),
+        ))
+        .layer(SetResponseHeaderLayer::if_not_present(
+            header::REFERRER_POLICY,
+            HeaderValue::from_static("same-origin"),
+        ))
+        .layer(middleware::from_fn_with_state(app.clone(), guard::browser_request_guard))
         .layer(TraceLayer::new_for_http())
         .with_state(app)
 }

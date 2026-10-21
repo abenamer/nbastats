@@ -29,6 +29,25 @@ use super::state::App;
 #[derive(Debug, Clone)]
 pub struct Limits {
     pub max_iterations: u64,
+    /// Upper bound on the estimated work of one job (elementary draws).
+    pub max_work_units: u64,
+}
+
+impl Limits {
+    /// Reject a job whose estimated work (`iterations × per_iteration`) exceeds the budget.
+    pub fn check_work(&self, iterations: u64, per_iteration: u64) -> Result<(), ValidationError> {
+        let work = iterations.saturating_mul(per_iteration);
+        if work > self.max_work_units {
+            return Err(ValidationError::new(
+                "iterations",
+                format!(
+                    "estimated work {work} exceeds the budget of {} units; reduce iterations or the problem size",
+                    self.max_work_units
+                ),
+            ));
+        }
+        Ok(())
+    }
 }
 
 pub struct JobContext {

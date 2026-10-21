@@ -16,7 +16,11 @@ pub struct Config {
     pub bundled_dataset: PathBuf,
     pub data_source_url: String,
     pub max_iterations: u64,
+    /// Upper bound on the estimated elementary operations of one job (draws × per-draw work).
+    pub max_work_units: u64,
     pub worker_threads: Option<usize>,
+    /// Host names accepted in the `Host` header; `*` accepts any.
+    pub allowed_hosts: Vec<String>,
 }
 
 impl Config {
@@ -50,7 +54,17 @@ impl Config {
             .ok()
             .and_then(|v| v.parse().ok())
             .unwrap_or(5_000_000);
+        let max_work_units = env::var("MAX_WORK_UNITS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(4_000_000_000);
         let worker_threads = env::var("SIM_THREADS").ok().and_then(|v| v.parse().ok());
+        let allowed_hosts = env::var("ALLOWED_HOSTS")
+            .unwrap_or_else(|_| "localhost,127.0.0.1,[::1]".to_string())
+            .split(',')
+            .map(|h| h.trim().to_ascii_lowercase())
+            .filter(|h| !h.is_empty())
+            .collect();
         Ok(Self {
             database_url,
             bind_addr,
@@ -61,8 +75,26 @@ impl Config {
             bundled_dataset,
             data_source_url,
             max_iterations,
+            max_work_units,
             worker_threads,
+            allowed_hosts,
         })
+    }
+
+    /// Whether a request `Host` header (with or without port) is accepted.
+    pub fn host_allowed(&self, host: &str) -> bool {
+        if self.allowed_hosts.iter().any(|h| h == "*") {
+            return true;
+        }
+        let host = host.trim().to_ascii_lowercase();
+        // Strip a port: "localhost:3000", "[::1]:3000".
+        let bare = if let Some(end) = host.strip_prefix('[').and_then(|_| host.find(']')) {
+            host[..=end].to_string()
+        } else {
+            host.rsplit_once(':')
+                .map_or(host.clone(), |(h, _)| h.to_string())
+        };
+        self.allowed_hosts.contains(&bare)
     }
 
     /// Database URL with the password masked, safe for logs and the UI.
@@ -88,6 +120,37 @@ pub const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn cfg(hosts: &str) -> Config {
+        Config {
+            database_url: String::new(),
+            bind_addr: String::new(),
+            data_dir: PathBuf::new(),
+            db_max_connections: 1,
+            db_connect_timeout: Duration::from_secs(1),
+            auto_import_bundled: false,
+            bundled_dataset: PathBuf::new(),
+            data_source_url: String::new(),
+            max_iterations: 1,
+            max_work_units: 1,
+            worker_threads: None,
+            allowed_hosts: hosts.split(',').map(str::to_string).collect(),
+        }
+    }
+
+    #[test]
+    fn host_allowlist() {
+        let c = cfg("localhost,127.0.0.1,[::1]");
+        assert!(c.host_allowed("localhost:3000"));
+        assert!(c.host_allowed("LOCALHOST"));
+        assert!(c.host_allowed("127.0.0.1:3100"));
+        assert!(c.host_allowed("[::1]:3000"));
+        assert!(!c.host_allowed("evil.example:3000"));
+        assert!(!c.host_allowed("localhost.evil.example"));
+        assert!(cfg("*").host_allowed("anything"));
+        assert!(cfg("nas.local").host_allowed("nas.local:3000"));
+    }
+
     #[test]
     fn masks_password() {
         assert_eq!(

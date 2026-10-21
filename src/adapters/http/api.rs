@@ -472,6 +472,7 @@ fn clean_name(name: Option<String>) -> Result<Option<String>, ApiError> {
 fn limits(app: &AppState) -> Limits {
     Limits {
         max_iterations: app.config.max_iterations,
+        max_work_units: app.config.max_work_units,
     }
 }
 

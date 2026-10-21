@@ -5,6 +5,10 @@
 source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
 require_db_running
 label="${1:-}"
+if [[ -n "$label" && ! "$label" =~ ^[A-Za-z0-9_-]{1,40}$ ]]; then
+  echo "error: label may contain only letters, digits, '_' and '-' (max 40)" >&2
+  exit 1
+fi
 stamp="$(date -u +%Y%m%dT%H%M%SZ)"
 name="nba_${stamp}${label:+_$label}.dump"
 target="$BACKUP_DIR/$name"

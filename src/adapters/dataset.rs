@@ -20,22 +20,37 @@ impl HttpDatasetSource {
     }
 }
 
+/// Upper bound on a downloaded dataset (the full game log is about 16 MB).
+pub const MAX_DOWNLOAD_BYTES: usize = 256 * 1024 * 1024;
+
 impl DatasetSource for HttpDatasetSource {
     async fn download(&self, url: &str) -> Result<Vec<u8>, DownloadError> {
-        let resp = self
+        let mut resp = self
             .client
             .get(url)
             .send()
             .await
             .and_then(reqwest::Response::error_for_status)
             .map_err(|e| DownloadError::Transport(e.to_string()))?;
-        let bytes = resp
-            .bytes()
+        if let Some(len) = resp.content_length() {
+            if len as usize > MAX_DOWNLOAD_BYTES {
+                return Err(DownloadError::TooLarge(len as usize));
+            }
+        }
+        let mut bytes = Vec::new();
+        while let Some(chunk) = resp
+            .chunk()
             .await
-            .map_err(|e| DownloadError::Transport(e.to_string()))?;
+            .map_err(|e| DownloadError::Transport(e.to_string()))?
+        {
+            if bytes.len() + chunk.len() > MAX_DOWNLOAD_BYTES {
+                return Err(DownloadError::TooLarge(bytes.len() + chunk.len()));
+            }
+            bytes.extend_from_slice(&chunk);
+        }
         if bytes.len() < 100 {
             return Err(DownloadError::TooSmall(bytes.len()));
         }
-        Ok(bytes.to_vec())
+        Ok(bytes)
     }
 }

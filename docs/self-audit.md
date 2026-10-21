@@ -36,7 +36,7 @@ sources:
 | REAS-DATA-004 reproducible builds | Run-time checked queries; no database needed to compile | Implemented |
 | REAS-TEST-001 tests | 61 unit tests, 6 PostgreSQL integration tests, seeded simulations, invalid-input tests | Pass locally |
 | REAS-TEST-002 async and CPU work | Engines run on `spawn_blocking` with Rayon; no lock held across `.await` | Implemented |
-| REAS-TEST-003 security | Input validation, parameterised queries, body limits, masked credentials; dependency audit in CI | Security review pending |
+| REAS-TEST-003 security | Security review done 2026-10-21: request guard (CSRF, DNS rebinding), security headers, decompression and download caps, work budget, container hardening; see [Security model](/concepts/security.md) | Reviewed; \`cargo audit\` result recorded in the log |
 | REAS-TEST-004 evidence | This table lists only executed checks | Maintained |
 | REAS-DOC-001 ASD-STE100 | Target only; see [STE review](/ste-review.md) | Unverified |
 | REAS-DOC-002 OKF bundle | `docs/` with `okf_version: "0.2"`; `scripts/check_docs.py` passes | Checked locally |

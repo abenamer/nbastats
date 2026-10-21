@@ -31,7 +31,12 @@ impl JobSpec for AlphaJob {
     type Output = AlphaResult;
 
     fn validate(&self, limits: &Limits) -> Result<(), ValidationError> {
-        self.0.validate(limits.max_iterations)
+        self.0.validate(limits.max_iterations)?;
+        // Each iteration draws one winner per season and updates one counter per franchise.
+        limits.check_work(
+            self.0.iterations,
+            (self.0.seasons + self.0.franchises.len()) as u64,
+        )
     }
     fn seed(&self) -> Option<i64> {
         Some(self.0.seed as i64)
@@ -93,6 +98,8 @@ impl JobSpec for PlayoffJob {
             );
         }
         self.model.validate()?;
+        // At most 15 series of 7 games per iteration.
+        limits.check_work(self.iterations, 105)?;
         if self.elo_overrides.len() > 16
             || self
                 .elo_overrides
@@ -179,7 +186,9 @@ impl JobSpec for SeasonJob {
     type Output = SeasonForecast;
 
     fn validate(&self, limits: &Limits) -> Result<(), ValidationError> {
-        self.0.validate(limits.max_iterations)
+        self.0.validate(limits.max_iterations)?;
+        // A full regular season (1,230 games), the play-in and the playoffs, plus sorting.
+        limits.check_work(self.0.iterations, 1_500)
     }
     fn seed(&self) -> Option<i64> {
         Some(self.0.seed as i64)

@@ -31,6 +31,8 @@ services:
       retries: 10
       start_period: 20s
     shm_size: 256mb
+    security_opt:
+      - no-new-privileges:true
 
   nba-app:
     build:
@@ -53,6 +55,8 @@ services:
       DB_CONNECT_TIMEOUT_SECS: ${DB_CONNECT_TIMEOUT_SECS:-120}
       RUST_LOG: ${RUST_LOG:-info,sqlx=warn}
       LOG_FORMAT: ${LOG_FORMAT:-text}
+      ALLOWED_HOSTS: ${ALLOWED_HOSTS:-localhost,127.0.0.1,[::1]}
+      MAX_WORK_UNITS: ${MAX_WORK_UNITS:-4000000000}
     ports:
       - "${APP_HOST_BIND:-127.0.0.1}:${APP_HOST_PORT:-3000}:3000"
     volumes:
@@ -60,6 +64,13 @@ services:
     networks:
       - nba-internal
     stop_grace_period: 30s
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
 
 volumes:
   nba_postgres_data:

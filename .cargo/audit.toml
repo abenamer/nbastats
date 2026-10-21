@@ -1,0 +1,10 @@
+# cargo-audit configuration (REAS-TEST-003). Each ignored advisory has a reason; review the
+# list at every release.
+[advisories]
+ignore = [
+    # RUSTSEC-2023-0071 (rsa, Marvin timing attack). `rsa` is a dependency of sqlx-mysql,
+    # which is in Cargo.lock through sqlx's optional feature graph but is never compiled:
+    # `cargo tree -i rsa --target all` prints nothing. The application only enables the
+    # PostgreSQL driver. No fixed version exists upstream.
+    "RUSTSEC-2023-0071",
+]

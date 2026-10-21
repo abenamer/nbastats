@@ -332,6 +332,8 @@ pub enum DownloadError {
     Transport(String),
     #[error("downloaded file is too small to be a dataset ({0} bytes)")]
     TooSmall(usize),
+    #[error("downloaded file exceeds the size limit ({0} bytes)")]
+    TooLarge(usize),
 }
 
 #[allow(async_fn_in_trait)]

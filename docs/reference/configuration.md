@@ -21,6 +21,8 @@ sources:
 | `BUNDLED_DATASET` | `./data/nba_elo_neil_paine.csv.gz` | Path of the bundled dataset. |
 | `DATA_SOURCE_URL` | Neil Paine's `nba_elo.csv` on GitHub | URL used by refresh. |
 | `MAX_ITERATIONS` | `5000000` | Upper limit for Monte Carlo iterations in one job. |
+| `MAX_WORK_UNITS` | `4000000000` | Upper limit for the estimated work of one job (iterations × per-iteration work). |
+| `ALLOWED_HOSTS` | `localhost,127.0.0.1,[::1]` | Host names accepted in the `Host` header. `*` accepts any. |
 | `DB_MAX_CONNECTIONS` | `8` | Connection pool size. |
 | `DB_CONNECT_TIMEOUT_SECS` | `120` | How long the start waits for PostgreSQL. |
 | `SIM_THREADS` | number of CPUs | Rayon thread count. |
