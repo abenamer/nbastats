@@ -20,6 +20,7 @@ These are project-specific technical terms. They are not a reproduction of the A
 | Bracket | The 16 playoff slots and their pairings. Slots 0 to 7 are the East, 8 to 15 the West. |
 | Composition root | `src/main.rs`. The one place that creates the concrete adapters and wires them to the application. |
 | Cup final | The NBA Cup (in-season tournament) final. An extra game that does not count in the standings. |
+| Current season | The season the daily sync targets: ends next year from September to December, ends this year from January to August. |
 | Elo | A rating that gives game probabilities from the rating difference. |
 | Elo continuation | The computation of ratings by the application for seasons after the imported archive ends. |
 | Elo source | The origin of a game's ratings: `imported` from an archive file or `computed` by the application. |

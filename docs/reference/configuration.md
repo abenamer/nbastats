@@ -26,6 +26,9 @@ sources:
 | `BALLDONTLIE_API_KEY` | none | API key for the results sync. When unset, the sync is unavailable. |
 | `BALLDONTLIE_BASE_URL` | `https://api.balldontlie.io/v1` | Base URL of the BALLDONTLIE API. |
 | `BALLDONTLIE_REQUESTS_PER_MINUTE` | `5` | Request pacing for the plan's quota. |
+| `RESULTS_SYNC_ENABLED` | `true` | Daily sync of the current season (needs the API key). |
+| `RESULTS_SYNC_TIME` | `04:00` | Wall-clock time of the daily sync, `HH:MM`. |
+| `RESULTS_SYNC_TIMEZONE` | `America/New_York` | IANA time zone of the daily sync. Daylight saving time is applied. |
 | `DB_MAX_CONNECTIONS` | `8` | Connection pool size. |
 | `DB_CONNECT_TIMEOUT_SECS` | `120` | How long the start waits for PostgreSQL. |
 | `SIM_THREADS` | number of CPUs | Rayon thread count. |

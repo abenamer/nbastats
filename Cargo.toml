@@ -11,6 +11,7 @@ anyhow = "1"
 askama = "0.16"
 axum = { version = "0.8", features = ["multipart", "macros"] }
 chrono = { version = "0.4", features = ["serde"] }
+chrono-tz = "0.10"
 clap = { version = "4", features = ["derive", "env"] }
 csv = "1"
 dotenvy = "0.15"

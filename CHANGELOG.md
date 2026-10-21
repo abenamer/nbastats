@@ -5,6 +5,7 @@
 - Initial application: Engines A, B and C, backtesting, dynasty laboratory, nine pages, PostgreSQL 17 persistence, Docker Compose, backup and restore scripts.
 - Aligned with REAS 1.2.0-draft: domain, application and adapters layout; six ports and one `PostgresStore` adapter; `TeamId`, `FranchiseId` and `SeasonYear` newtypes; typed errors; conditional job transitions; documentation checker, terminology, self-audit and decisions.
 
+- Daily automatic sync of the current season at `RESULTS_SYNC_TIME` in `RESULTS_SYNC_TIMEZONE` (default 04:00 America/New_York), with catch-up at start.
 - Results sync from the BALLDONTLIE API (`BALLDONTLIE_API_KEY`): `POST /api/data/sync`, the `sync-results` subcommand and a Data page button; paced to the plan's quota.
 - Elo continuation: computed ratings for seasons after the archive (2025-26 and later) from a results CSV or a preseason projection, with the Elo source stored on each game.
 

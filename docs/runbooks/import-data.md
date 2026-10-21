@@ -47,9 +47,19 @@ The application inserts the previous season's regular-season matchups one year l
 3. Restart the application: `docker compose up -d`.
 4. On the Data page, enter the season end year and click **Sync results from BALLDONTLIE**.
 
-The application fetches every game of the season (results and schedule) and recomputes the Elo. On the free tier a full season takes about three minutes. Run the sync again after each game day; each run replaces the computed games of that season.
+The application fetches every game of the season (results and schedule) and recomputes the Elo. On the free tier a full season takes about three minutes. Each run replaces the computed games of that season.
 
-Command line alternative, for a scheduled task:
+## Daily automatic sync
+
+When `BALLDONTLIE_API_KEY` is set, the application syncs the current season every day at `RESULTS_SYNC_TIME` in `RESULTS_SYNC_TIMEZONE` (default 04:00 America/New_York, after the last West Coast game). The current season is the one that ends next year from September to December, and the one that ends this year from January to August.
+
+* At start, the application runs the sync at once if no sync has completed since the last scheduled time (for example after the computer was off at 04:00).
+* When the previous season is not in the store yet (the first run after a new season starts), the application syncs that season first, so the ratings chain from the archive.
+* The Data page shows the next run time. The import history shows each run with the source `balldontlie`.
+* A season with imported archive data is skipped; the log says so.
+* Set `RESULTS_SYNC_ENABLED=false` to turn the daily sync off and keep the button.
+
+Command line alternative, for an external scheduler:
 
     docker compose exec nba-app nba-elo-simulator sync-results 2026
 

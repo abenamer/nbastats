@@ -26,6 +26,10 @@ pub struct Config {
     pub balldontlie_base_url: String,
     /// Request pacing for the BALLDONTLIE quota (the free tier allows 5 per minute).
     pub balldontlie_requests_per_minute: u32,
+    /// Daily results sync: enabled, wall-clock time (HH:MM) and IANA time zone.
+    pub results_sync_enabled: bool,
+    pub results_sync_time: String,
+    pub results_sync_timezone: String,
 }
 
 impl Config {
@@ -83,6 +87,13 @@ impl Config {
             .and_then(|v| v.parse().ok())
             .filter(|&n: &u32| n > 0)
             .unwrap_or(5);
+        let results_sync_enabled = env::var("RESULTS_SYNC_ENABLED")
+            .map(|v| matches!(v.to_ascii_lowercase().as_str(), "1" | "true" | "yes"))
+            .unwrap_or(true);
+        let results_sync_time =
+            env::var("RESULTS_SYNC_TIME").unwrap_or_else(|_| "04:00".to_string());
+        let results_sync_timezone =
+            env::var("RESULTS_SYNC_TIMEZONE").unwrap_or_else(|_| "America/New_York".to_string());
         Ok(Self {
             database_url,
             bind_addr,
@@ -99,6 +110,9 @@ impl Config {
             balldontlie_api_key,
             balldontlie_base_url,
             balldontlie_requests_per_minute,
+            results_sync_enabled,
+            results_sync_time,
+            results_sync_timezone,
         })
     }
 
@@ -159,6 +173,9 @@ mod tests {
             balldontlie_api_key: None,
             balldontlie_base_url: String::new(),
             balldontlie_requests_per_minute: 5,
+            results_sync_enabled: false,
+            results_sync_time: "04:00".to_string(),
+            results_sync_timezone: "America/New_York".to_string(),
         }
     }
 

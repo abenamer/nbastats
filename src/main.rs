@@ -14,6 +14,7 @@ use nba_elo_simulator::adapters::http;
 use nba_elo_simulator::adapters::postgres::PostgresStore;
 use nba_elo_simulator::application::jobs;
 use nba_elo_simulator::application::ports::{GameLog, GameStore, ImportLog, JobStore};
+use nba_elo_simulator::application::scheduler::{self, SyncSchedule};
 use nba_elo_simulator::application::state::App;
 use nba_elo_simulator::application::{continuation, imports};
 use nba_elo_simulator::config::{Config, APP_VERSION};
@@ -178,11 +179,28 @@ async fn serve(
     }
 
     // --- wiring ---
+    let sync_schedule = match (&results, config.results_sync_enabled) {
+        (Some(_), true) => Some(SyncSchedule::parse(
+            &config.results_sync_time,
+            &config.results_sync_timezone,
+        )?),
+        _ => None,
+    };
     if results.is_some() {
-        info!("BALLDONTLIE results sync available");
+        info!(
+            scheduled = sync_schedule.is_some(),
+            "BALLDONTLIE results sync available"
+        );
     }
-    let app = Arc::new(App::new(config.clone(), store.clone(), source, results));
+    let app = Arc::new(App::new(
+        config.clone(),
+        store.clone(),
+        source,
+        results,
+        sync_schedule,
+    ));
     let runner = tokio::spawn(jobs::runner(app.clone()));
+    let sync = tokio::spawn(scheduler::run(app.clone()));
     let router = http::router(app.clone());
     let listener = tokio::net::TcpListener::bind(&config.bind_addr).await?;
     info!(addr = %config.bind_addr, "listening");
@@ -196,6 +214,7 @@ async fn serve(
         .await?;
     // Give the runner a moment to record an interrupted job before the pool closes.
     let _ = tokio::time::timeout(std::time::Duration::from_secs(10), runner).await;
+    sync.abort();
     store.close().await;
     info!("stopped cleanly");
     Ok(())

@@ -35,7 +35,7 @@ A game without a result does not change the ratings. The application records the
 
 | Method | Input | Result |
 |--------|-------|--------|
-| Results sync | The BALLDONTLIE API (an API key in `BALLDONTLIE_API_KEY`). The application fetches every game of the season. | The ratings follow the results. The season is marked `computed`. The import log records the source URL. |
+| Results sync | The BALLDONTLIE API (an API key in `BALLDONTLIE_API_KEY`). The application fetches every game of the season, on request or once a day (see [Import and refresh data](../runbooks/import-data.md)). | The ratings follow the results. The season is marked `computed`. The import log records the source URL. |
 | Results import | A CSV file in the results layout with the played games, and optionally the games that are not played yet. | The ratings follow the results. The season is marked `computed`. |
 | Preseason projection | None. | The previous season's regular-season matchups, one year later, with no scores. All ratings are the reverted ratings of the previous season. |
 

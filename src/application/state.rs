@@ -13,6 +13,7 @@ use uuid::Uuid;
 use crate::adapters::balldontlie::BalldontlieSource;
 use crate::adapters::dataset::HttpDatasetSource;
 use crate::adapters::postgres::PostgresStore;
+use crate::application::scheduler::SyncSchedule;
 use crate::config::Config;
 use crate::domain::ids::{SeasonYear, TeamId};
 use crate::domain::models::{Game, Team};
@@ -50,6 +51,8 @@ pub struct App {
     pub source: HttpDatasetSource,
     /// Results source for seasons beyond the dataset; `None` until an API key is configured.
     pub results: Option<BalldontlieSource>,
+    /// Daily sync schedule; `None` when disabled or when there is no results source.
+    pub sync_schedule: Option<SyncSchedule>,
     pub started_at: chrono::DateTime<chrono::Utc>,
     /// Wakes the job runner when a job is queued.
     pub job_notify: Notify,
@@ -67,12 +70,14 @@ impl App {
         store: PostgresStore,
         source: HttpDatasetSource,
         results: Option<BalldontlieSource>,
+        sync_schedule: Option<SyncSchedule>,
     ) -> Self {
         Self {
             config,
             store,
             source,
             results,
+            sync_schedule,
             started_at: chrono::Utc::now(),
             job_notify: Notify::new(),
             cancel_flags: std::sync::Mutex::new(HashMap::new()),

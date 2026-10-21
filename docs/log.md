@@ -1,6 +1,7 @@
 # Bundle update log
 
 ## 2026-10-21
+* **Update**: Added the daily results sync (`RESULTS_SYNC_*` settings) to the import runbook, configuration and API references.
 * **Update**: Added the `ResultsSource` port and the BALLDONTLIE adapter: results sync runbook, configuration keys, API route, security rows and ADR 0001 update.
 * **Update**: Added [Elo continuation](/concepts/elo-continuation.md): computed ratings for seasons after the archive, the results layout, preseason projections, the Elo source of each game, and the new API routes.
 * **Update**: Security review. Added the [Security model](/concepts/security.md), the browser request guard, security headers, decompression and download size caps, the job work budget and container hardening.

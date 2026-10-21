@@ -36,7 +36,7 @@ sources:
 | `GET /api/dashboard?from=2004&to=2025` | Title distribution and concentration. |
 | `GET /api/dynasty?franchise=GSW&from=2015&to=2022&alpha=3` | Dynasty report and concentration comparison. |
 | `GET /api/data/imports` | Import history. |
-| `GET /api/data/coverage` | Season coverage, missing seasons, the next season without data, an example of the results layout and the configured results source (`null` when none). |
+| `GET /api/data/coverage` | Season coverage, missing seasons, the next season without data, an example of the results layout, the configured results source (`null` when none) and the daily sync schedule with its next run (`null` when disabled). |
 | `POST /api/data/refresh` | Download and import the source. Body: `{"force": false}`. |
 | `POST /api/data/upload` | Multipart upload. Fields: `file`, `force`. |
 | `POST /api/data/project` | Preseason projection with computed Elo. Body: `{"season": 2026}`. Refused when the season has imported games. |

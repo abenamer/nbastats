@@ -15,6 +15,7 @@ use crate::application::imports::{self, Provenance};
 use crate::application::jobs::specs::{AlphaJob, BacktestJob, PlayoffJob, SeasonJob};
 use crate::application::jobs::{self, Limits, Submit};
 use crate::application::ports::{AnalysisStore, GameLog, ImportLog, JobStore, ResultsSource};
+use crate::application::scheduler;
 use crate::application::{dashboard, dynasty};
 use crate::config::APP_VERSION;
 use crate::domain::backtesting::BacktestParams;
@@ -773,5 +774,14 @@ pub async fn coverage(State(app): State<AppState>) -> ApiResult<Value> {
             "base_url": r.base_url(),
             "requests_per_minute": r.requests_per_minute(),
         })),
+        "results_sync": app.sync_schedule.map(|s| {
+            let now = chrono::Utc::now();
+            json!({
+                "time": s.time.format("%H:%M").to_string(),
+                "zone": s.zone.name(),
+                "season": scheduler::current_season(now.with_timezone(&s.zone).date_naive()),
+                "next_run": s.next_run(now),
+            })
+        }),
     })))
 }

@@ -9,7 +9,13 @@
     document.getElementById('sourceUrl').textContent = c.source_url;
     if (c.next_season && !document.getElementById('nextSeason').value) document.getElementById('nextSeason').value = c.next_season;
     const sync = document.getElementById('sync');
-    if (c.results_source) { sync.disabled = false; sync.title = `${c.results_source.name} · ${c.results_source.base_url} · ${c.results_source.requests_per_minute} requests/min`; }
+    if (c.results_source) {
+      sync.disabled = false; sync.title = `${c.results_source.name} · ${c.results_source.base_url} · ${c.results_source.requests_per_minute} requests/min`;
+      const s = c.results_sync;
+      document.getElementById('syncHint').textContent = s
+        ? `Daily sync of ${s.season - 1}-${String(s.season % 100).padStart(2, '0')} at ${s.time} ${s.zone}; next run ${new Date(s.next_run).toLocaleString()}. The button syncs the season entered above now (about three minutes on the free tier).`
+        : 'Automatic daily sync is disabled (RESULTS_SYNC_ENABLED=false). The button syncs the season entered above now.';
+    }
     else { sync.disabled = true; document.getElementById('syncHint').textContent = 'Not configured: set BALLDONTLIE_API_KEY in .env and restart the application to sync results from the BALLDONTLIE API.'; }
     document.getElementById('coverage').innerHTML = table([
       { label: 'Season', value: 'label', left: true }, { label: 'Teams', value: 'teams' }, { label: 'Games', value: 'games' }, { label: 'Play-in', value: 'play_in_games' }, { label: 'Playoff games', value: 'playoff_games' },
