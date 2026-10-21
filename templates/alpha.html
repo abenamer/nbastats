@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="grid2">
+  <div class="panel">
+    <h2>Scenario</h2>
+    <div class="controls stack">
+      <label>Name (optional, saves the scenario) <input id="name" placeholder="e.g. Warriors alpha 4"></label>
+      <label>Franchises <input id="n" type="number" value="30" min="1" max="200"></label>
+      <label>Seasons <input id="seasons" type="number" value="22" min="1" max="200"></label>
+      <label>Iterations <input id="iterations" type="number" value="100000" min="1000" step="1000"></label>
+      <label>Threshold K <input id="k" type="number" value="4" min="1"></label>
+      <label>Seed <input id="seed" type="number" value="20240101"></label>
+      <label>Alpha mode <select id="mode"><option value="constant">Constant alphas</option><option value="decay">Season-dependent: alpha decays toward 1</option></select></label>
+      <label id="decayRow" class="hidden">Half-life (seasons) <input id="halflife" type="number" value="5" min="0.1" step="0.5"></label>
+      <div class="row"><button id="useLeague">Use NBA franchise names</button><button id="resetAlphas">All alphas = 1</button></div>
+      <div id="alphaEditor" class="alpha-editor"></div>
+      <button id="run" class="primary">Run simulation</button>
+      <span id="status" class="muted"></span>
+    </div>
+  </div>
+  <div class="panel">
+    <h2>Results</h2>
+    <div id="cards" class="cards"></div>
+    <div id="results"></div>
+    <div class="grid2">
+      <canvas id="maxChart" height="220"></canvas>
+      <canvas id="countChart" height="220"></canvas>
+    </div>
+    <canvas id="expectedChart" height="240"></canvas>
+    <h3>Exact check (equal strength)</h3>
+    <p class="muted small">For <span id="exN">30</span> equally likely franchises over <span id="exS">22</span> seasons, the exact probability that at least one wins <span id="exK">4</span>+ titles is <strong id="exact">…</strong> (expected ≈ 16.05% for 30/22/4). The simulated value should agree within a few standard errors.</p>
+  </div>
+</section>
+<section class="panel">
+  <h2>Saved scenarios</h2>
+  <div class="row"><button id="refreshScenarios">Refresh list</button><button id="compare">Compare selected</button></div>
+  <div id="scenarios" class="table-wrap"></div>
+  <div id="comparison" class="table-wrap"></div>
+</section>
+{% endblock %}
+{% block scripts %}<script src="/static/js/alpha.js" defer></script>{% endblock %}

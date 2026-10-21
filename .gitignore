@@ -1,0 +1,5 @@
+/target
+/app-data
+/backups
+.env
+*.log

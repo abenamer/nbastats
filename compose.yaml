@@ -1,0 +1,72 @@
+# NBA Elo Championship Simulator
+#
+# Containers are disposable; the named volumes below hold all durable state.
+#   nba_postgres_data    PostgreSQL data directory
+#   nba_application_data imported datasets, downloads and other file state
+#
+# Normal operations (stop/start/restart/down/up/--build, host reboots) keep the volumes.
+# `docker compose down -v` DELETES the volumes. Do not use it for routine upgrades.
+name: nba-elo-simulator
+
+services:
+  nba-postgres:
+    image: postgres:17-alpine
+    container_name: nba-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-nba}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-nba}
+      POSTGRES_INITDB_ARGS: "--data-checksums"
+    volumes:
+      - nba_postgres_data:/var/lib/postgresql/data
+      - ./backups:/backups
+    networks:
+      - nba-internal
+    # The database port is NOT published to the host by default.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-nba} -d ${POSTGRES_DB:-nba}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    shm_size: 256mb
+
+  nba-app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: nba-elo-simulator:latest
+    container_name: nba-app
+    restart: unless-stopped
+    depends_on:
+      nba-postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgres://${POSTGRES_USER:-nba}:${POSTGRES_PASSWORD}@nba-postgres:5432/${POSTGRES_DB:-nba}}
+      APP_BIND: 0.0.0.0:3000
+      APP_DATA_DIR: /var/lib/nba-app
+      AUTO_IMPORT_BUNDLED: ${AUTO_IMPORT_BUNDLED:-true}
+      DATA_SOURCE_URL: ${DATA_SOURCE_URL:-https://raw.githubusercontent.com/Neil-Paine-1/NBA-elo/master/nba_elo.csv}
+      MAX_ITERATIONS: ${MAX_ITERATIONS:-5000000}
+      DB_MAX_CONNECTIONS: ${DB_MAX_CONNECTIONS:-8}
+      DB_CONNECT_TIMEOUT_SECS: ${DB_CONNECT_TIMEOUT_SECS:-120}
+      RUST_LOG: ${RUST_LOG:-info,sqlx=warn}
+      LOG_FORMAT: ${LOG_FORMAT:-text}
+    ports:
+      - "${APP_HOST_BIND:-127.0.0.1}:${APP_HOST_PORT:-3000}:3000"
+    volumes:
+      - nba_application_data:/var/lib/nba-app
+    networks:
+      - nba-internal
+    stop_grace_period: 30s
+
+volumes:
+  nba_postgres_data:
+    name: nba_postgres_data
+  nba_application_data:
+    name: nba_application_data
+
+networks:
+  nba-internal:
+    driver: bridge

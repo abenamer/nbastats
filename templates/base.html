@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ layout.title }} · NBA Elo Simulator</title>
+  <link rel="stylesheet" href="/static/css/app.css">
+  <script src="/static/js/chart.umd.js"></script>
+  <script src="/static/js/app.js" defer></script>
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="/">NBA Elo Simulator</a>
+  <nav>
+    <a href="/" class="{% if layout.active == "dashboard" %}active{% endif %}">Dashboard</a>
+    <a href="/elo" class="{% if layout.active == "elo" %}active{% endif %}">Elo Explorer</a>
+    <a href="/alpha" class="{% if layout.active == "alpha" %}active{% endif %}">Alpha Simulator</a>
+    <a href="/playoffs" class="{% if layout.active == "playoffs" %}active{% endif %}">Playoff Simulator</a>
+    <a href="/season" class="{% if layout.active == "season" %}active{% endif %}">Season Forecast</a>
+    <a href="/dynasty" class="{% if layout.active == "dynasty" %}active{% endif %}">Dynasty Lab</a>
+    <a href="/validation" class="{% if layout.active == "validation" %}active{% endif %}">Validation</a>
+    <a href="/data" class="{% if layout.active == "data" %}active{% endif %}">Data</a>
+    <a href="/jobs" class="{% if layout.active == "jobs" %}active{% endif %}">Jobs</a>
+  </nav>
+  <span class="version">v{{ layout.version }}</span>
+</header>
+<main>
+  <h1>{{ layout.title }}</h1>
+  {% block content %}{% endblock %}
+</main>
+<footer>Locally hosted · data: FiveThirtyEight NBA Elo (via Neil Paine's archive) · probabilities are model outputs, not guarantees.</footer>
+{% block scripts %}{% endblock %}
+</body>
+</html>

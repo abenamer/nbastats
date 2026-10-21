@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="controls">
+  <label>From <select id="from">{% for s in seasons %}<option value="{{ s.season }}" {% if loop.last %}selected{% endif %}>{{ s.label }}</option>{% endfor %}</select></label>
+  <label>To <select id="to">{% for s in seasons %}<option value="{{ s.season }}" {% if loop.first %}selected{% endif %}>{{ s.label }}</option>{% endfor %}</select></label>
+  <label>Home adv. <input id="adv" type="number" value="100" min="0" max="400" step="5"></label>
+  <label>Elo scale <input id="scale" type="number" value="1.0" min="0.1" max="3" step="0.05"></label>
+  <label><input id="tuning" type="checkbox" checked> Rolling tuning (chronological holdout)</label>
+  <button id="run" class="primary">Run backtest</button>
+  <button id="loadLatest">Load latest</button>
+  <span id="status" class="muted"></span>
+</section>
+<section class="panel"><h2>Model comparison</h2><div id="summary" class="table-wrap"></div>
+<p class="muted small">Brier: multi-class score over the 16 playoff teams per season (uniform 1/16 forecast = 0.9375; lower is better). Log loss: −ln of the probability given to the actual champion. Standard errors are across seasons: with ~20 champions, sampling noise is large, which is uncertainty about calibration, not Monte Carlo error (forecasts here are exact). "elo_tuned_rolling" picks the home-court bonus and Elo scale that minimise log loss on earlier seasons only, then forecasts the next season, so tuned parameters are never scored on the seasons that chose them.</p></section>
+<section class="grid2">
+  <div class="panel"><h2>Calibration</h2><div class="controls"><label>Stage <select id="stage"><option value="champion">Champion</option><option value="finals">Reach Finals</option><option value="conf_finals">Reach conference finals</option><option value="second_round">Reach second round</option></select></label><label>Model <select id="calModel"></select></label></div><canvas id="calChart" height="280"></canvas></div>
+  <div class="panel"><h2>Probability given to the eventual champion</h2><canvas id="winnerChart" height="280"></canvas></div>
+</section>
+<section class="panel"><h2>Season by season</h2><div class="controls"><label>Model <select id="seasonModel"></select></label></div><div id="seasons" class="table-wrap"></div></section>
+<section class="panel"><h2>Assumptions and limitations</h2>
+<ul class="small">
+  <li>Inputs are FiveThirtyEight-style Elo ratings taken immediately before each postseason (after the play-in where it exists); ratings are held fixed through a simulated playoff run unless a K-factor is set.</li>
+  <li>Elo ratings are imported, never invented: seasons without complete playoff records are excluded from backtests and listed as skipped.</li>
+  <li>Home court in hypothetical matchups goes to the better regular-season record (then the better seed); real series use their actual game-1 host. Series formats follow the era (best-of-five first rounds before 2003, 2-3-2 Finals 1985–2013, neutral floor in 2020).</li>
+  <li>Baselines: equal (every game 50/50), win % (log5 through the same bracket), seeding (better seed wins a series with fixed probability 0.75).</li>
+  <li>Injuries, trades, rest and matchup effects are not modelled; franchise Elo measures team strength and cannot attribute outcomes to any single player.</li>
+</ul></section>
+{% endblock %}
+{% block scripts %}<script src="/static/js/validation.js" defer></script>{% endblock %}

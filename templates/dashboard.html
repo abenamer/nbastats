@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="controls">
+  <label>From <select id="from">{% for s in seasons %}<option value="{{ s.season }}" {% if s.season == 2004 %}selected{% endif %}>{{ s.label }}</option>{% endfor %}</select></label>
+  <label>To <select id="to">{% for s in seasons %}<option value="{{ s.season }}" {% if loop.first %}selected{% endif %}>{{ s.label }}</option>{% endfor %}</select></label>
+  <button id="reload" class="primary">Update</button>
+  <span id="status" class="muted"></span>
+</section>
+<section class="cards" id="cards"></section>
+<section class="grid2">
+  <div class="panel"><h2>Championships by franchise</h2><canvas id="titlesChart" height="260"></canvas></div>
+  <div class="panel"><h2>Franchises by title count: observed vs equal strength</h2><canvas id="countChart" height="260"></canvas>
+    <p class="muted small">Expected values come from Engine A with every franchise at alpha = 1 (20,000 simulated histories). The exact probability that at least one franchise wins 4+ titles over this range is shown in the cards.</p></div>
+</section>
+<section class="panel"><h2>Champions</h2><div id="champions" class="table-wrap"></div></section>
+{% endblock %}
+{% block scripts %}<script src="/static/js/dashboard.js" defer></script>{% endblock %}

@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="controls">
+  <label>Season <select id="season">{% for s in seasons %}<option value="{{ s.season }}">{{ s.label }}</option>{% endfor %}</select></label>
+  <label>Highlight teams (codes, comma-separated) <input id="teams" placeholder="GSW,CLE" size="18"></label>
+  <button id="load" class="primary">Load season</button>
+  <span id="status" class="muted"></span>
+</section>
+<section class="grid2">
+  <div class="panel"><h2>Team ratings</h2><div id="ratings" class="table-wrap"></div></div>
+  <div class="panel"><h2>Elo during the season</h2><canvas id="historyChart" height="300"></canvas></div>
+</section>
+<section class="grid2">
+  <div class="panel">
+    <h2>Franchise trajectory</h2>
+    <div class="controls">
+      <label>Franchise <select id="franchise">{% for f in franchises %}<option value="{{ f.key }}" {% if f.key == "GSW" %}selected{% endif %}>{{ f.name }}</option>{% endfor %}</select></label>
+      <label>From <input id="fFrom" type="number" value="2003" min="1947" max="2100"></label>
+      <label>To <input id="fTo" type="number" value="2025" min="1947" max="2100"></label>
+      <button id="loadFranchise">Load</button>
+    </div>
+    <canvas id="franchiseChart" height="260"></canvas>
+    <div id="franchiseSeasons" class="table-wrap"></div>
+  </div>
+  <div class="panel">
+    <h2>Matchup calculator</h2>
+    <div class="controls">
+      <label>Elo A <input id="eloA" type="number" value="1700" step="1"></label>
+      <label>Elo B <input id="eloB" type="number" value="1600" step="1"></label>
+      <label>Home <select id="home"><option value="a">A hosts</option><option value="b">B hosts</option><option value="neutral">Neutral</option></select></label>
+      <label>Home adv. <input id="adv" type="number" value="100" step="5" min="0" max="400"></label>
+      <button id="calc">Compute</button>
+    </div>
+    <div id="matchup" class="kv"></div>
+    <p class="muted small">P(A beats B) = 1 / (1 + 10<sup>(E<sub>B</sub> − E<sub>A</sub>)/400</sup>) with the home team's rating raised by the home-court bonus. Series probabilities use the 2-2-1-1-1 (best-of-7) and 2-2-1 (best-of-5) home patterns with A holding home court unless B hosts.</p>
+  </div>
+</section>
+{% endblock %}
+{% block scripts %}<script src="/static/js/elo.js" defer></script>{% endblock %}

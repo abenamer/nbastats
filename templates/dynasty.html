@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="controls">
+  <label>Franchise <select id="franchise">{% for f in franchises %}<option value="{{ f.key }}" {% if f.key == "GSW" %}selected{% endif %}>{{ f.name }}</option>{% endfor %}</select></label>
+  <label>From <select id="from">{% for s in seasons %}<option value="{{ s.season }}" {% if s.season == 2015 %}selected{% endif %}>{{ s.label }}</option>{% endfor %}</select></label>
+  <label>To <select id="to">{% for s in seasons %}<option value="{{ s.season }}" {% if s.season == 2022 %}selected{% endif %}>{{ s.label }}</option>{% endfor %}</select></label>
+  <label>Persistent alpha <input id="alpha" type="number" value="3" min="0" step="0.5"></label>
+  <label>Home adv. <input id="adv" type="number" value="100" min="0" max="400" step="5"></label>
+  <label>Elo scale <input id="scale" type="number" value="1.0" min="0.1" max="3" step="0.05"></label>
+  <label>Concentration K <input id="threshold" type="number" value="4" min="1"></label>
+  <button id="run" class="primary">Analyse</button>
+  <span id="status" class="muted"></span>
+  <span class="row"><button data-preset="GSW,2015,2022">Warriors 2015–22</button><button data-preset="MIA,2011,2014">Heat 2011–14</button><button data-preset="CLE,2015,2018">Cavaliers 2015–18</button><button data-preset="LAL,2004,2025">Lakers</button><button data-preset="BOS,2004,2025">Celtics</button><button data-preset="SAS,2004,2025">Spurs</button></span>
+</section>
+<section class="cards" id="cards"></section>
+<section class="panel"><h2>Season by season</h2><div id="seasons" class="table-wrap"></div></section>
+<section class="grid2">
+  <div class="panel"><h2>Pre-playoff Elo and title probability</h2><canvas id="eloChart" height="260"></canvas></div>
+  <div class="panel"><h2>Distribution of title count under each model</h2><canvas id="distChart" height="260"></canvas></div>
+</section>
+<section class="panel">
+  <h2>League-wide concentration over the same period</h2>
+  <p class="muted small">Probability that <em>some</em> franchise wins K or more titles: equal-strength lottery (exact), persistent alpha for the selected franchise (exact), and season-varying Elo championship probabilities fed into the lottery engine (50,000 simulated histories). Franchise Elo captures team strength, not the contribution of any single player.</p>
+  <div id="concentration" class="kv"></div>
+  <canvas id="maxChart" height="220"></canvas>
+</section>
+{% endblock %}
+{% block scripts %}<script src="/static/js/dynasty.js" defer></script>{% endblock %}

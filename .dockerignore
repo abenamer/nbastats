@@ -1,0 +1,6 @@
+target
+app-data
+backups
+.env
+.git
+*.log

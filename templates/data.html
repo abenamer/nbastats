@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="grid2">
+  <div class="panel"><h2>Application and database</h2><div id="health" class="kv"></div></div>
+  <div class="panel"><h2>Refresh and import</h2>
+    <p class="small">Download the latest game log from the configured source (<code id="sourceUrl"></code>) or upload a CSV in FiveThirtyEight's <code>nba_elo.csv</code> or <code>nbaallelo.csv</code> layout (gzip accepted). Imports are idempotent: unchanged games are skipped, changed games updated.</p>
+    <div class="row"><button id="refresh" class="primary">Download &amp; import latest</button><label><input id="force" type="checkbox"> Force re-import</label></div>
+    <form id="uploadForm" class="row"><input type="file" id="file" name="file" accept=".csv,.gz"><button type="submit">Upload CSV</button></form>
+    <pre id="importResult" class="small"></pre>
+  </div>
+</section>
+<section class="panel"><h2>Season coverage</h2><div id="coverage" class="table-wrap"></div></section>
+<section class="panel"><h2>Import history</h2><div id="imports" class="table-wrap"></div></section>
+{% endblock %}
+{% block scripts %}<script src="/static/js/data.js" defer></script>{% endblock %}
