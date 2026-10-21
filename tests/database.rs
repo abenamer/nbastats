@@ -4,12 +4,12 @@
 mod common;
 
 use chrono::NaiveDate;
-use nba_elo_simulator::db;
-use nba_elo_simulator::imports;
-use nba_elo_simulator::models::{GameType, JobKind, PlayoffResult};
-use nba_elo_simulator::playoffs::reconstruct;
-use nba_elo_simulator::playoffs::season::{self, SeasonParams};
-use nba_elo_simulator::simulation::progress::Silent;
+use nba_elo_simulator::adapters::postgres as db;
+use nba_elo_simulator::application::imports;
+use nba_elo_simulator::domain::models::{GameType, JobKind, PlayoffResult};
+use nba_elo_simulator::domain::playoffs::reconstruct;
+use nba_elo_simulator::domain::playoffs::season::{self, SeasonParams};
+use nba_elo_simulator::domain::simulation::progress::Silent;
 use sqlx::PgPool;
 
 #[sqlx::test(migrations = "./migrations")]
@@ -78,7 +78,7 @@ async fn malformed_csv_is_rejected_cleanly(pool: PgPool) {
     let err = imports::import_bytes(&pool, b"this,is,not,a,dataset\n1,2,3,4,5\n", "test", None, Some("bad.csv"), false).await;
     assert!(err.is_err());
     let imports = db::imports::list(&pool, 10).await.unwrap();
-    assert_eq!(imports[0].status, nba_elo_simulator::models::ImportStatus::Failed);
+    assert_eq!(imports[0].status, nba_elo_simulator::domain::models::ImportStatus::Failed);
     assert_eq!(db::games::game_count(&pool).await.unwrap(), 0);
     // Partially broken file: good rows imported, bad rows counted.
     let mut broken = common::FIXTURE.to_string();
@@ -148,12 +148,12 @@ async fn job_lifecycle_survives_restart(pool: PgPool) {
     let job = db::jobs::create(&pool, JobKind::Alpha, Some("scenario"), &params, Some(1), "0.1.0", "alpha-lottery-1.0").await.unwrap();
     let claimed = db::jobs::claim_next(&pool).await.unwrap().unwrap();
     assert_eq!(claimed.id, job.id);
-    assert_eq!(claimed.status, nba_elo_simulator::models::JobStatus::Running);
+    assert_eq!(claimed.status, nba_elo_simulator::domain::models::JobStatus::Running);
     assert!(db::jobs::claim_next(&pool).await.unwrap().is_none());
     // "Restart": the running job is marked interrupted but keeps its configuration.
     assert_eq!(db::jobs::mark_interrupted(&pool).await.unwrap(), 1);
     let j = db::jobs::get(&pool, job.id).await.unwrap().unwrap();
-    assert_eq!(j.status, nba_elo_simulator::models::JobStatus::Interrupted);
+    assert_eq!(j.status, nba_elo_simulator::domain::models::JobStatus::Interrupted);
     assert_eq!(j.params, params);
     // Retry re-queues it; a completed job cannot be retried.
     assert!(db::jobs::retry(&pool, job.id).await.unwrap());

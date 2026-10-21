@@ -1,0 +1,9 @@
+//! Domain: types, invariants, mathematics and simulation engines. Nothing in this module
+//! depends on Axum, SQLx, HTTP or Docker (REAS-ARCH-002).
+pub mod backtesting;
+pub mod elo;
+pub mod ids;
+pub mod models;
+pub mod playoffs;
+pub mod reference;
+pub mod simulation;

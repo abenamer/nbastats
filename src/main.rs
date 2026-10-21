@@ -5,9 +5,11 @@ use clap::{Parser, Subcommand};
 use tracing::{error, info, warn};
 use tracing_subscriber::EnvFilter;
 
-use nba_elo_simulator::app::App;
+use nba_elo_simulator::application::state::App;
 use nba_elo_simulator::config::{Config, APP_VERSION};
-use nba_elo_simulator::{db, imports, jobs, web};
+use nba_elo_simulator::adapters::http as web;
+use nba_elo_simulator::adapters::postgres as db;
+use nba_elo_simulator::application::{imports, jobs};
 
 #[derive(Parser)]
 #[command(name = "nba-elo-simulator", version = APP_VERSION, about = "NBA Elo championship simulator")]

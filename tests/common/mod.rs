@@ -4,8 +4,8 @@
 
 use std::collections::HashMap;
 
-use nba_elo_simulator::db::{self, Pool};
-use nba_elo_simulator::models::Team;
+use nba_elo_simulator::adapters::postgres::{self as db, Pool};
+use nba_elo_simulator::domain::models::Team;
 
 pub const FIXTURE: &str = include_str!("../fixtures/mini_2016.csv");
 
