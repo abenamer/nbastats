@@ -4,14 +4,17 @@
 //! legal transitions encoded as methods: the compiler, not a `CHECK` constraint alone, keeps
 //! a job from going `completed -> running` or a playoff team from "winning" the first round
 //! after losing the Finals.
+//!
+//! This module has no SQLx dependency; row mapping lives in `adapters::postgres::records`.
 
 use std::fmt;
 use std::str::FromStr;
 
 use chrono::{DateTime, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
-use sqlx::FromRow;
 use uuid::Uuid;
+
+use super::ids::{FranchiseId, SeasonYear, TeamId};
 
 // ---------------------------------------------------------------------------------------
 // Enumerated states
@@ -29,27 +32,6 @@ macro_rules! text_enum {
             pub const ALL: &'static [$name] = &[$($name::$variant),+];
             pub const fn as_str(self) -> &'static str {
                 match self { $($name::$variant => $text),+ }
-            }
-        }
-
-        // Stored as plain TEXT: delegate type info, encoding and decoding to `&str`, so the
-        // enum binds in scalar and array positions without a PostgreSQL enum type.
-        impl sqlx::Type<sqlx::Postgres> for $name {
-            fn type_info() -> sqlx::postgres::PgTypeInfo { <&str as sqlx::Type<sqlx::Postgres>>::type_info() }
-            fn compatible(ty: &sqlx::postgres::PgTypeInfo) -> bool { <&str as sqlx::Type<sqlx::Postgres>>::compatible(ty) }
-        }
-        impl sqlx::postgres::PgHasArrayType for $name {
-            fn array_type_info() -> sqlx::postgres::PgTypeInfo { <&str as sqlx::postgres::PgHasArrayType>::array_type_info() }
-        }
-        impl<'q> sqlx::Encode<'q, sqlx::Postgres> for $name {
-            fn encode_by_ref(&self, buf: &mut sqlx::postgres::PgArgumentBuffer) -> Result<sqlx::encode::IsNull, sqlx::error::BoxDynError> {
-                <&str as sqlx::Encode<'q, sqlx::Postgres>>::encode_by_ref(&self.as_str(), buf)
-            }
-        }
-        impl<'r> sqlx::Decode<'r, sqlx::Postgres> for $name {
-            fn decode(value: sqlx::postgres::PgValueRef<'r>) -> Result<Self, sqlx::error::BoxDynError> {
-                let s = <&str as sqlx::Decode<'r, sqlx::Postgres>>::decode(value)?;
-                Ok(s.parse::<$name>()?)
             }
         }
         impl fmt::Display for $name {
@@ -120,7 +102,12 @@ pub enum Round {
 }
 
 impl Round {
-    pub const ALL: [Round; 4] = [Round::First, Round::Second, Round::ConfFinals, Round::Finals];
+    pub const ALL: [Round; 4] = [
+        Round::First,
+        Round::Second,
+        Round::ConfFinals,
+        Round::Finals,
+    ];
 
     /// 1-based round number as used in bracket arithmetic.
     pub const fn number(self) -> u8 {
@@ -227,7 +214,13 @@ impl JobStatus {
         }
     }
     pub const fn is_terminal(self) -> bool {
-        matches!(self, JobStatus::Completed | JobStatus::Failed | JobStatus::Interrupted | JobStatus::Cancelled)
+        matches!(
+            self,
+            JobStatus::Completed
+                | JobStatus::Failed
+                | JobStatus::Interrupted
+                | JobStatus::Cancelled
+        )
     }
     pub const fn can_retry(self) -> bool {
         self.transition(JobEvent::Retry).is_ok()
@@ -242,33 +235,35 @@ text_enum! {
 // Rows
 // ---------------------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Franchise {
-    pub id: i32,
+    pub id: FranchiseId,
     pub key: String,
     pub name: String,
     pub active: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Team {
-    pub id: i32,
+    pub id: TeamId,
     pub code: String,
-    pub franchise_id: i32,
+    pub franchise_id: FranchiseId,
     pub name: String,
-    pub first_season: Option<i32>,
-    pub last_season: Option<i32>,
+    pub first_season: Option<SeasonYear>,
+    pub last_season: Option<SeasonYear>,
 }
 
 impl Team {
     pub fn franchise_key(&self) -> &str {
-        crate::domain::reference::lookup_team(&self.code).map(|t| t.1).unwrap_or(&self.code)
+        crate::domain::reference::lookup_team(&self.code)
+            .map(|t| t.1)
+            .unwrap_or(&self.code)
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Season {
-    pub season: i32,
+    pub season: SeasonYear,
     pub label: String,
     pub team_count: i32,
     pub game_count: i32,
@@ -281,14 +276,14 @@ pub struct Season {
     pub complete: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Game {
     pub id: i64,
-    pub season: i32,
+    pub season: SeasonYear,
     pub game_date: NaiveDate,
     pub seq: i16,
-    pub home_team_id: i32,
-    pub away_team_id: i32,
+    pub home_team_id: TeamId,
+    pub away_team_id: TeamId,
     pub neutral: bool,
     pub game_type: GameType,
     pub home_score: Option<i32>,
@@ -336,11 +331,11 @@ impl Game {
     pub fn is_played(&self) -> bool {
         self.outcome().is_some()
     }
-    pub fn involves(&self, team_id: i32) -> bool {
+    pub fn involves(&self, team_id: TeamId) -> bool {
         self.home_team_id == team_id || self.away_team_id == team_id
     }
     /// (elo_pre, elo_post) of `team_id` in this game.
-    pub fn elo_of(&self, team_id: i32) -> (f64, f64) {
+    pub fn elo_of(&self, team_id: TeamId) -> (f64, f64) {
         if self.home_team_id == team_id {
             (self.home_elo_pre, self.home_elo_post)
         } else {
@@ -349,11 +344,11 @@ impl Game {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TeamSeason {
-    pub season: i32,
-    pub team_id: i32,
-    pub franchise_id: i32,
+    pub season: SeasonYear,
+    pub team_id: TeamId,
+    pub franchise_id: FranchiseId,
     pub conference: Option<Conference>,
     pub division: Option<String>,
     pub wins: i32,
@@ -371,13 +366,13 @@ pub struct TeamSeason {
 }
 
 /// Team-season joined with team and franchise labels (for display).
-#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TeamSeasonView {
-    pub season: i32,
-    pub team_id: i32,
+    pub season: SeasonYear,
+    pub team_id: TeamId,
     pub code: String,
     pub team_name: String,
-    pub franchise_id: i32,
+    pub franchise_id: FranchiseId,
     pub franchise_key: String,
     pub franchise_name: String,
     pub conference: Option<Conference>,
@@ -396,9 +391,9 @@ pub struct TeamSeasonView {
     pub playoff_result: PlayoffResult,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChampionshipView {
-    pub season: i32,
+    pub season: SeasonYear,
     pub champion_code: String,
     pub champion_name: String,
     pub franchise_key: String,
@@ -407,7 +402,7 @@ pub struct ChampionshipView {
     pub source: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DataImport {
     pub id: i64,
     pub source: String,
@@ -421,15 +416,15 @@ pub struct DataImport {
     pub games_updated: i64,
     pub games_unchanged: i64,
     pub rows_rejected: i64,
-    pub min_season: Option<i32>,
-    pub max_season: Option<i32>,
+    pub min_season: Option<SeasonYear>,
+    pub max_season: Option<SeasonYear>,
     pub error: Option<String>,
     pub notes: Option<String>,
     pub started_at: DateTime<Utc>,
     pub finished_at: Option<DateTime<Utc>>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SimulationJob {
     pub id: Uuid,
     pub kind: JobKind,
@@ -475,7 +470,10 @@ mod tests {
         }
         assert_eq!("play_in".parse::<GameType>().unwrap(), GameType::PlayIn);
         assert!("bogus".parse::<GameType>().is_err());
-        assert_eq!(serde_json::to_string(&PlayoffResult::ConfFinals).unwrap(), "\"conf_finals\"");
+        assert_eq!(
+            serde_json::to_string(&PlayoffResult::ConfFinals).unwrap(),
+            "\"conf_finals\""
+        );
     }
 
     #[test]
@@ -490,11 +488,23 @@ mod tests {
     #[test]
     fn outcome_from_scores() {
         let g = Game {
-            id: 1, season: 2016, game_date: NaiveDate::from_ymd_opt(2016, 6, 19).unwrap(), seq: 0, home_team_id: 1,
-            away_team_id: 2, neutral: false, game_type: GameType::Playoff, home_score: Some(89), away_score: Some(93),
-            home_elo_pre: 1764.8, away_elo_pre: 1749.8, home_elo_post: 1755.6, away_elo_post: 1759.0, home_win_prob: Some(0.66),
+            id: 1,
+            season: SeasonYear::of(2016),
+            game_date: NaiveDate::from_ymd_opt(2016, 6, 19).unwrap(),
+            seq: 0,
+            home_team_id: TeamId::new(1),
+            away_team_id: TeamId::new(2),
+            neutral: false,
+            game_type: GameType::Playoff,
+            home_score: Some(89),
+            away_score: Some(93),
+            home_elo_pre: 1764.8,
+            away_elo_pre: 1749.8,
+            home_elo_post: 1755.6,
+            away_elo_post: 1759.0,
+            home_win_prob: Some(0.66),
         };
         assert_eq!(g.outcome(), Some(Outcome::AwayWin { margin: 4 }));
-        assert_eq!(g.elo_of(2), (1749.8, 1759.0));
+        assert_eq!(g.elo_of(TeamId::new(2)), (1749.8, 1759.0));
     }
 }

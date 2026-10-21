@@ -1,9 +1,8 @@
-//! Assemble the dynasty report for a franchise and season range from stored data.
+//! Use case: dynasty report for a franchise and season range.
 
 use serde::{Deserialize, Serialize};
 
-use crate::application::state::App;
-use crate::adapters::postgres as db;
+use crate::domain::ids::SeasonYear;
 use crate::domain::models::PlayoffResult;
 use crate::domain::playoffs::bracket::ModelSpec;
 use crate::domain::simulation::alpha::{self, AlphaParams};
@@ -11,11 +10,14 @@ use crate::domain::simulation::dynasty::{compare, DynastyReport, DynastySeason, 
 use crate::domain::simulation::exact;
 use crate::domain::simulation::progress::Silent;
 
+use super::ports::{AnalysisStore, GameLog, StoreError};
+use super::state::{App, SeasonLoadError};
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DynastyRequest {
     pub franchise: String,
-    pub from_season: i32,
-    pub to_season: i32,
+    pub from_season: SeasonYear,
+    pub to_season: SeasonYear,
     /// Persistent alpha for the selected franchise (others have alpha 1).
     #[serde(default = "default_alpha")]
     pub alpha: f64,
@@ -29,8 +31,8 @@ fn default_alpha() -> f64 {
 
 impl DynastyRequest {
     pub fn validate(&self) -> Result<(), String> {
-        if self.from_season < 1947 || self.to_season < self.from_season || self.to_season - self.from_season > 80 {
-            return Err("invalid season range".into());
+        if self.to_season < self.from_season {
+            return Err("the season range ends before it starts".into());
         }
         if !(0.0..=1000.0).contains(&self.alpha) {
             return Err("alpha must be between 0 and 1000".into());
@@ -40,6 +42,16 @@ impl DynastyRequest {
         }
         self.model.validate()
     }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum DynastyError {
+    #[error("unknown franchise {0}")]
+    UnknownFranchise(String),
+    #[error(transparent)]
+    Store(#[from] StoreError),
+    #[error(transparent)]
+    Season(#[from] SeasonLoadError),
 }
 
 /// League-wide concentration comparison for the same period.
@@ -56,7 +68,7 @@ pub struct ConcentrationComparison {
     pub max_distribution_alpha: Vec<f64>,
     pub max_distribution_elo: Vec<f64>,
     pub actual_max_titles: usize,
-    pub elo_seasons_used: Vec<i32>,
+    pub elo_seasons_used: Vec<SeasonYear>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -66,16 +78,25 @@ pub struct DynastyResponse {
     pub concentration: Option<ConcentrationComparison>,
 }
 
-pub async fn analyze(app: &App, req: &DynastyRequest) -> anyhow::Result<DynastyReport> {
-    let franchise = db::teams::franchise_by_key(&app.pool, &req.franchise)
+pub async fn analyze(app: &App, req: &DynastyRequest) -> Result<DynastyReport, DynastyError> {
+    let franchise = app
+        .store
+        .franchise_by_key(&req.franchise)
         .await?
-        .ok_or_else(|| anyhow::anyhow!("unknown franchise {}", req.franchise))?;
-    let rows = db::analysis::franchise_seasons(&app.pool, franchise.id, req.from_season, req.to_season).await?;
+        .ok_or_else(|| DynastyError::UnknownFranchise(req.franchise.clone()))?;
+    let rows = app
+        .store
+        .franchise_seasons(franchise.id, req.from_season, req.to_season)
+        .await?;
     let mut seasons = Vec::new();
     for ts in rows {
         let data = app.season_data(ts.season).await?;
         let team_count = {
-            let mut ids: Vec<i32> = data.games.iter().flat_map(|g| [g.home_team_id, g.away_team_id]).collect();
+            let mut ids: Vec<_> = data
+                .games
+                .iter()
+                .flat_map(|g| [g.home_team_id, g.away_team_id])
+                .collect();
             ids.sort_unstable();
             ids.dedup();
             ids.len() as i32
@@ -126,19 +147,29 @@ pub async fn analyze(app: &App, req: &DynastyRequest) -> anyhow::Result<DynastyR
 /// Compare league-wide title concentration under equal strength, a persistent alpha for the
 /// selected franchise, and season-varying Elo championship probabilities (Engine A in
 /// schedule mode, fed with Engine B's exact per-season probabilities).
-pub async fn concentration(app: &App, req: &DynastyRequest, threshold: usize) -> anyhow::Result<Option<ConcentrationComparison>> {
-    let franchises = db::teams::active_franchises(&app.pool).await?;
+pub async fn concentration(
+    app: &App,
+    req: &DynastyRequest,
+    threshold: usize,
+) -> Result<Option<ConcentrationComparison>, DynastyError> {
+    let franchises = app.store.franchises(true).await?;
     let keys: Vec<String> = franchises.iter().map(|f| f.key.clone()).collect();
     let n = keys.len();
     let mut schedule: Vec<Vec<f64>> = Vec::new();
     let mut used = Vec::new();
-    for season in req.from_season..=req.to_season {
-        let Ok(data) = app.season_data(season).await else { continue };
-        let Ok(r) = &data.reconstruction else { continue };
+    for season in SeasonYear::range(req.from_season, req.to_season) {
+        let Ok(data) = app.season_data(season).await else {
+            continue;
+        };
+        let Ok(r) = &data.reconstruction else {
+            continue;
+        };
         if !r.complete {
             continue;
         }
-        let Some(exact) = req.model.exact(&r.bracket) else { continue };
+        let Some(exact) = req.model.exact(&r.bracket) else {
+            continue;
+        };
         let mut row = vec![0.0; n];
         for (slot, t) in r.bracket.teams.iter().enumerate() {
             if let Some(i) = keys.iter().position(|k| *k == t.franchise_key) {
@@ -155,7 +186,10 @@ pub async fn concentration(app: &App, req: &DynastyRequest, threshold: usize) ->
     }
     let seasons = schedule.len();
     let threshold = threshold.clamp(1, seasons);
-    let titles = db::analysis::title_counts(&app.pool, req.from_season, req.to_season).await?;
+    let titles = app
+        .store
+        .title_counts(req.from_season, req.to_season)
+        .await?;
     let actual_max = titles.values().copied().max().unwrap_or(0) as usize;
     let equal = vec![1.0; n];
     let mut alpha_vec = vec![1.0; n];
@@ -165,7 +199,9 @@ pub async fn concentration(app: &App, req: &DynastyRequest, threshold: usize) ->
     let mut params = AlphaParams::equal(n, seasons, 50_000, threshold, 20240601);
     params.franchises = keys.clone();
     params.schedule = Some(schedule);
-    let elo_result = tokio::task::spawn_blocking(move || alpha::run(&params, &Silent)).await?;
+    let elo_result = tokio::task::spawn_blocking(move || alpha::run(&params, &Silent))
+        .await
+        .map_err(|e| StoreError::Query(format!("simulation task failed: {e}")))?;
     Ok(Some(ConcentrationComparison {
         threshold,
         seasons,

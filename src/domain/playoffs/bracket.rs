@@ -14,6 +14,7 @@ use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::domain::elo;
+use crate::domain::ids::{SeasonYear, TeamId};
 use crate::domain::models::{Conference, PlayoffResult, Round};
 use crate::domain::simulation::progress::{ChunkTracker, Progress};
 use crate::domain::simulation::rng::{chunk_rng, chunks};
@@ -23,7 +24,10 @@ pub const SLOT_SEEDS: [u8; 8] = [1, 8, 4, 5, 2, 7, 3, 6];
 pub const SLOTS: usize = 16;
 
 pub fn slot_for(conference: Conference, seed: u8) -> usize {
-    let p = SLOT_SEEDS.iter().position(|&s| s == seed).expect("seed 1-8");
+    let p = SLOT_SEEDS
+        .iter()
+        .position(|&s| s == seed)
+        .expect("seed 1-8");
     conference.index() * 8 + p
 }
 
@@ -54,28 +58,56 @@ impl Side {
 /// advance it, and a decided series ignores further games.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SeriesState {
-    InProgress { wins_a: u8, wins_b: u8, need: u8 },
-    Won { winner: Side, wins_a: u8, wins_b: u8 },
+    InProgress {
+        wins_a: u8,
+        wins_b: u8,
+        need: u8,
+    },
+    Won {
+        winner: Side,
+        wins_a: u8,
+        wins_b: u8,
+    },
 }
 
 impl SeriesState {
     pub const fn best_of(games: u8) -> Self {
-        SeriesState::InProgress { wins_a: 0, wins_b: 0, need: games / 2 + 1 }
+        SeriesState::InProgress {
+            wins_a: 0,
+            wins_b: 0,
+            need: games / 2 + 1,
+        }
     }
 
     pub const fn record(self, game_winner: Side) -> Self {
         match self {
-            SeriesState::InProgress { wins_a, wins_b, need } => {
+            SeriesState::InProgress {
+                wins_a,
+                wins_b,
+                need,
+            } => {
                 let (wins_a, wins_b) = match game_winner {
                     Side::A => (wins_a + 1, wins_b),
                     Side::B => (wins_a, wins_b + 1),
                 };
                 if wins_a == need {
-                    SeriesState::Won { winner: Side::A, wins_a, wins_b }
+                    SeriesState::Won {
+                        winner: Side::A,
+                        wins_a,
+                        wins_b,
+                    }
                 } else if wins_b == need {
-                    SeriesState::Won { winner: Side::B, wins_a, wins_b }
+                    SeriesState::Won {
+                        winner: Side::B,
+                        wins_a,
+                        wins_b,
+                    }
                 } else {
-                    SeriesState::InProgress { wins_a, wins_b, need }
+                    SeriesState::InProgress {
+                        wins_a,
+                        wins_b,
+                        need,
+                    }
                 }
             }
             done @ SeriesState::Won { .. } => done,
@@ -84,7 +116,8 @@ impl SeriesState {
 
     pub const fn games_played(self) -> u8 {
         match self {
-            SeriesState::InProgress { wins_a, wins_b, .. } | SeriesState::Won { wins_a, wins_b, .. } => wins_a + wins_b,
+            SeriesState::InProgress { wins_a, wins_b, .. }
+            | SeriesState::Won { wins_a, wins_b, .. } => wins_a + wins_b,
         }
     }
 
@@ -97,7 +130,8 @@ impl SeriesState {
 
     pub const fn wins(self) -> (u8, u8) {
         match self {
-            SeriesState::InProgress { wins_a, wins_b, .. } | SeriesState::Won { wins_a, wins_b, .. } => (wins_a, wins_b),
+            SeriesState::InProgress { wins_a, wins_b, .. }
+            | SeriesState::Won { wins_a, wins_b, .. } => (wins_a, wins_b),
         }
     }
 }
@@ -121,15 +155,16 @@ pub struct PlayoffFormat {
 }
 
 impl PlayoffFormat {
-    pub fn for_season(season: i32) -> Self {
+    pub fn for_season(season: SeasonYear) -> Self {
+        let year = season.end_year();
         Self {
-            first_round_games: if season >= 2003 { 7 } else { 5 },
-            finals_pattern: if (1985..=2013).contains(&season) {
+            first_round_games: if year >= 2003 { 7 } else { 5 },
+            finals_pattern: if (1985..=2013).contains(&year) {
                 FinalsPattern::TwoThreeTwo
             } else {
                 FinalsPattern::TwoTwoOneOneOne
             },
-            neutral_site: season == 2020,
+            neutral_site: year == 2020,
         }
     }
 
@@ -145,7 +180,7 @@ impl PlayoffFormat {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BracketTeam {
-    pub team_id: i32,
+    pub team_id: TeamId,
     pub code: String,
     pub name: String,
     pub franchise_key: String,
@@ -172,7 +207,7 @@ pub struct SeriesRecord {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Bracket {
-    pub season: i32,
+    pub season: SeasonYear,
     pub teams: Vec<BracketTeam>,
     pub format: PlayoffFormat,
     pub actual_series: Vec<SeriesRecord>,
@@ -184,7 +219,11 @@ impl Bracket {
     /// Uses the historical game-1 host when that series was actually played; otherwise the
     /// better regular-season record, then the better seed, then the East slot.
     pub fn home_court(&self, a: usize, b: usize) -> usize {
-        if let Some(s) = self.actual_series.iter().find(|s| (s.slot_a == a && s.slot_b == b) || (s.slot_a == b && s.slot_b == a)) {
+        if let Some(s) = self
+            .actual_series
+            .iter()
+            .find(|s| (s.slot_a == a && s.slot_b == b) || (s.slot_a == b && s.slot_b == a))
+        {
             return s.game1_host_slot;
         }
         let (ta, tb) = (&self.teams[a], &self.teams[b]);
@@ -207,7 +246,9 @@ impl Bracket {
         if a == b || a >= SLOTS || b >= SLOTS {
             return None;
         }
-        Round::ALL.into_iter().find(|r| a >> r.number() == b >> r.number())
+        Round::ALL
+            .into_iter()
+            .find(|r| a >> r.number() == b >> r.number())
     }
 
     /// Exact per-slot probabilities of reaching each stage:
@@ -222,14 +263,20 @@ impl Bracket {
             for s in 0..SLOTS {
                 let block_start = s / block * block;
                 let own_half_start = s / half * half;
-                let opp_half_start = if own_half_start == block_start { block_start + half } else { block_start };
+                let opp_half_start = if own_half_start == block_start {
+                    block_start + half
+                } else {
+                    block_start
+                };
                 let total: f64 = (opp_half_start..opp_half_start + half)
                     .map(|o| reach[r - 1][o] * model.series_probability(self, s, o, round, &elos))
                     .sum();
                 reach[r][s] = reach[r - 1][s] * total;
             }
         }
-        (0..SLOTS).map(|s| [reach[1][s], reach[2][s], reach[3][s], reach[4][s]]).collect()
+        (0..SLOTS)
+            .map(|s| [reach[1][s], reach[2][s], reach[3][s], reach[4][s]])
+            .collect()
     }
 }
 
@@ -265,9 +312,24 @@ pub trait GameModel: Sync {
 /// A model that prices whole series. Implemented for every [`GameModel`] and for models that
 /// are inherently series-level (e.g. "the better seed wins with probability p").
 pub trait SeriesModel: Sync {
-    fn series_probability(&self, bracket: &Bracket, a: usize, b: usize, round: Round, elos: &[f64]) -> f64;
+    fn series_probability(
+        &self,
+        bracket: &Bracket,
+        a: usize,
+        b: usize,
+        round: Round,
+        elos: &[f64],
+    ) -> f64;
 
-    fn simulate_series<R: Rng>(&self, bracket: &Bracket, rng: &mut R, a: usize, b: usize, round: Round, elos: &mut [f64]) -> Side;
+    fn simulate_series<R: Rng>(
+        &self,
+        bracket: &Bracket,
+        rng: &mut R,
+        a: usize,
+        b: usize,
+        round: Round,
+        elos: &mut [f64],
+    ) -> Side;
 
     fn exact_available(&self) -> bool {
         true
@@ -276,7 +338,14 @@ pub trait SeriesModel: Sync {
 
 /// Blanket implementation: play the series game by game with the round's home pattern.
 impl<M: GameModel> SeriesModel for M {
-    fn series_probability(&self, bracket: &Bracket, a: usize, b: usize, round: Round, elos: &[f64]) -> f64 {
+    fn series_probability(
+        &self,
+        bracket: &Bracket,
+        a: usize,
+        b: usize,
+        round: Round,
+        elos: &[f64],
+    ) -> f64 {
         let hc = bracket.home_court(a, b);
         let probs: Vec<f64> = bracket
             .format
@@ -284,19 +353,45 @@ impl<M: GameModel> SeriesModel for M {
             .iter()
             .map(|&hc_hosts| {
                 let a_home = if hc == a { hc_hosts } else { !hc_hosts };
-                self.game_probability(GameContext { bracket, a, b, a_home, neutral: bracket.format.neutral_site }, elos)
+                self.game_probability(
+                    GameContext {
+                        bracket,
+                        a,
+                        b,
+                        a_home,
+                        neutral: bracket.format.neutral_site,
+                    },
+                    elos,
+                )
             })
             .collect();
         elo::series_probability(&probs)
     }
 
-    fn simulate_series<R: Rng>(&self, bracket: &Bracket, rng: &mut R, a: usize, b: usize, round: Round, elos: &mut [f64]) -> Side {
+    fn simulate_series<R: Rng>(
+        &self,
+        bracket: &Bracket,
+        rng: &mut R,
+        a: usize,
+        b: usize,
+        round: Round,
+        elos: &mut [f64],
+    ) -> Side {
         let pattern = bracket.format.pattern(round);
         let hc = bracket.home_court(a, b);
         let mut state = SeriesState::best_of(pattern.len() as u8);
         for &hc_hosts in pattern {
             let a_home = if hc == a { hc_hosts } else { !hc_hosts };
-            let p = self.game_probability(GameContext { bracket, a, b, a_home, neutral: bracket.format.neutral_site }, elos);
+            let p = self.game_probability(
+                GameContext {
+                    bracket,
+                    a,
+                    b,
+                    a_home,
+                    neutral: bracket.format.neutral_site,
+                },
+                elos,
+            );
             let a_won = rng.gen::<f64>() < p;
             self.after_game(elos, a, b, p, a_won);
             state = state.record(if a_won { Side::A } else { Side::B });
@@ -304,7 +399,11 @@ impl<M: GameModel> SeriesModel for M {
                 return w;
             }
         }
-        unreachable!("a best-of-{} series resolves within {} games", pattern.len(), pattern.len())
+        unreachable!(
+            "a best-of-{} series resolves within {} games",
+            pattern.len(),
+            pattern.len()
+        )
     }
 
     fn exact_available(&self) -> bool {
@@ -323,14 +422,25 @@ pub struct EloModel {
 
 impl Default for EloModel {
     fn default() -> Self {
-        Self { home_advantage: elo::DEFAULT_HOME_ADVANTAGE, scale: 1.0, k: None }
+        Self {
+            home_advantage: elo::DEFAULT_HOME_ADVANTAGE,
+            scale: 1.0,
+            k: None,
+        }
     }
 }
 
 impl GameModel for EloModel {
     #[inline]
     fn game_probability(&self, ctx: GameContext<'_>, elos: &[f64]) -> f64 {
-        elo::game_probability(elos[ctx.a], elos[ctx.b], ctx.a_home, ctx.neutral, self.home_advantage, self.scale)
+        elo::game_probability(
+            elos[ctx.a],
+            elos[ctx.b],
+            ctx.a_home,
+            ctx.neutral,
+            self.home_advantage,
+            self.scale,
+        )
     }
     #[inline]
     fn after_game(&self, elos: &mut [f64], a: usize, b: usize, p_a: f64, a_won: bool) {
@@ -363,7 +473,10 @@ pub struct WinPctModel;
 impl GameModel for WinPctModel {
     #[inline]
     fn game_probability(&self, ctx: GameContext<'_>, _: &[f64]) -> f64 {
-        log5(ctx.bracket.teams[ctx.a].win_pct, ctx.bracket.teams[ctx.b].win_pct)
+        log5(
+            ctx.bracket.teams[ctx.a].win_pct,
+            ctx.bracket.teams[ctx.b].win_pct,
+        )
     }
 }
 
@@ -374,7 +487,14 @@ pub struct SeedModel {
 }
 
 impl SeriesModel for SeedModel {
-    fn series_probability(&self, bracket: &Bracket, a: usize, b: usize, _round: Round, _elos: &[f64]) -> f64 {
+    fn series_probability(
+        &self,
+        bracket: &Bracket,
+        a: usize,
+        b: usize,
+        _round: Round,
+        _elos: &[f64],
+    ) -> f64 {
         let (ta, tb) = (&bracket.teams[a], &bracket.teams[b]);
         let a_better = if ta.conference == tb.conference {
             ta.seed < tb.seed
@@ -389,7 +509,15 @@ impl SeriesModel for SeedModel {
             1.0 - self.p_better
         }
     }
-    fn simulate_series<R: Rng>(&self, bracket: &Bracket, rng: &mut R, a: usize, b: usize, round: Round, elos: &mut [f64]) -> Side {
+    fn simulate_series<R: Rng>(
+        &self,
+        bracket: &Bracket,
+        rng: &mut R,
+        a: usize,
+        b: usize,
+        round: Round,
+        elos: &mut [f64],
+    ) -> Side {
         if rng.gen::<f64>() < self.series_probability(bracket, a, b, round, elos) {
             Side::A
         } else {
@@ -437,7 +565,11 @@ fn default_p_better() -> f64 {
 
 impl Default for ModelSpec {
     fn default() -> Self {
-        ModelSpec::Elo { home_advantage: elo::DEFAULT_HOME_ADVANTAGE, scale: 1.0, k: None }
+        ModelSpec::Elo {
+            home_advantage: elo::DEFAULT_HOME_ADVANTAGE,
+            scale: 1.0,
+            k: None,
+        }
     }
 }
 
@@ -453,7 +585,11 @@ impl ModelSpec {
 
     pub fn validate(&self) -> Result<(), String> {
         match self {
-            ModelSpec::Elo { home_advantage, scale, k } => {
+            ModelSpec::Elo {
+                home_advantage,
+                scale,
+                k,
+            } => {
                 if !(0.0..=400.0).contains(home_advantage) {
                     return Err("home advantage must be between 0 and 400 Elo points".into());
                 }
@@ -466,10 +602,9 @@ impl ModelSpec {
                     }
                 }
             }
-            ModelSpec::Seed { p_better }
-                if !(0.5..=1.0).contains(p_better) => {
-                    return Err("seed model probability must be between 0.5 and 1".into());
-                }
+            ModelSpec::Seed { p_better } if !(0.5..=1.0).contains(p_better) => {
+                return Err("seed model probability must be between 0.5 and 1".into());
+            }
             _ => {}
         }
         Ok(())
@@ -478,22 +613,54 @@ impl ModelSpec {
     /// Dispatch once, then run monomorphized code.
     pub fn exact(&self, bracket: &Bracket) -> Option<Vec<[f64; 4]>> {
         match *self {
-            ModelSpec::Elo { home_advantage, scale, k } => {
-                let m = EloModel { home_advantage, scale, k };
+            ModelSpec::Elo {
+                home_advantage,
+                scale,
+                k,
+            } => {
+                let m = EloModel {
+                    home_advantage,
+                    scale,
+                    k,
+                };
                 m.exact_available().then(|| bracket.exact_probabilities(&m))
             }
             ModelSpec::Equal => Some(bracket.exact_probabilities(&EqualModel)),
             ModelSpec::WinPct => Some(bracket.exact_probabilities(&WinPctModel)),
-            ModelSpec::Seed { p_better } => Some(bracket.exact_probabilities(&SeedModel { p_better })),
+            ModelSpec::Seed { p_better } => {
+                Some(bracket.exact_probabilities(&SeedModel { p_better }))
+            }
         }
     }
 
-    pub fn simulate<P: Progress + ?Sized>(&self, bracket: &Bracket, iterations: u64, seed: u64, progress: &P) -> BracketSimulation {
+    pub fn simulate<P: Progress + ?Sized>(
+        &self,
+        bracket: &Bracket,
+        iterations: u64,
+        seed: u64,
+        progress: &P,
+    ) -> BracketSimulation {
         match *self {
-            ModelSpec::Elo { home_advantage, scale, k } => simulate(bracket, &EloModel { home_advantage, scale, k }, iterations, seed, progress),
+            ModelSpec::Elo {
+                home_advantage,
+                scale,
+                k,
+            } => simulate(
+                bracket,
+                &EloModel {
+                    home_advantage,
+                    scale,
+                    k,
+                },
+                iterations,
+                seed,
+                progress,
+            ),
             ModelSpec::Equal => simulate(bracket, &EqualModel, iterations, seed, progress),
             ModelSpec::WinPct => simulate(bracket, &WinPctModel, iterations, seed, progress),
-            ModelSpec::Seed { p_better } => simulate(bracket, &SeedModel { p_better }, iterations, seed, progress),
+            ModelSpec::Seed { p_better } => {
+                simulate(bracket, &SeedModel { p_better }, iterations, seed, progress)
+            }
         }
     }
 }
@@ -505,7 +672,7 @@ impl ModelSpec {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SlotOutcome {
     pub slot: usize,
-    pub team_id: i32,
+    pub team_id: TeamId,
     pub code: String,
     pub name: String,
     pub franchise_key: String,
@@ -546,11 +713,20 @@ struct Acc {
 
 impl Acc {
     fn new() -> Self {
-        Self { iterations: 0, reached: [[0; SLOTS]; 4], finals: [0; 64] }
+        Self {
+            iterations: 0,
+            reached: [[0; SLOTS]; 4],
+            finals: [0; 64],
+        }
     }
     fn merge(mut self, o: Acc) -> Acc {
         self.iterations += o.iterations;
-        for (a, b) in self.reached.iter_mut().flatten().zip(o.reached.iter().flatten()) {
+        for (a, b) in self
+            .reached
+            .iter_mut()
+            .flatten()
+            .zip(o.reached.iter().flatten())
+        {
             *a += b;
         }
         for (a, b) in self.finals.iter_mut().zip(&o.finals) {
@@ -562,7 +738,13 @@ impl Acc {
 
 /// Play the bracket once. Returns (champion, East finalist, West finalist) and increments
 /// `reached[round][slot]` for every series winner.
-pub fn play_bracket<M: SeriesModel, R: Rng>(bracket: &Bracket, rng: &mut R, model: &M, elos: &mut [f64], reached: &mut RoundCounts) -> (usize, usize, usize) {
+pub fn play_bracket<M: SeriesModel, R: Rng>(
+    bracket: &Bracket,
+    rng: &mut R,
+    model: &M,
+    elos: &mut [f64],
+    reached: &mut RoundCounts,
+) -> (usize, usize, usize) {
     let mut alive: Vec<usize> = (0..SLOTS).collect();
     let mut finalists = (0usize, 0usize);
     for round in Round::ALL {
@@ -584,7 +766,13 @@ pub fn play_bracket<M: SeriesModel, R: Rng>(bracket: &Bracket, rng: &mut R, mode
     (alive[0], finalists.0, finalists.1)
 }
 
-pub fn simulate<M: SeriesModel, P: Progress + ?Sized>(bracket: &Bracket, model: &M, iterations: u64, seed: u64, progress: &P) -> BracketSimulation {
+pub fn simulate<M: SeriesModel, P: Progress + ?Sized>(
+    bracket: &Bracket,
+    model: &M,
+    iterations: u64,
+    seed: u64,
+    progress: &P,
+) -> BracketSimulation {
     let start = std::time::Instant::now();
     let base_elos: Vec<f64> = bracket.teams.iter().map(|t| t.elo).collect();
     let chunk_list = chunks(iterations, 2_000);
@@ -610,7 +798,9 @@ pub fn simulate<M: SeriesModel, P: Progress + ?Sized>(bracket: &Bracket, model: 
         .reduce(Acc::new, Acc::merge);
 
     let it = acc.iterations.max(1) as f64;
-    let exact = model.exact_available().then(|| bracket.exact_probabilities(model));
+    let exact = model
+        .exact_available()
+        .then(|| bracket.exact_probabilities(model));
     let outcomes = bracket
         .teams
         .iter()
@@ -639,10 +829,21 @@ pub fn simulate<M: SeriesModel, P: Progress + ?Sized>(bracket: &Bracket, model: 
             }
         })
         .collect();
-    let mut finals_matchups: Vec<(usize, usize, u64)> =
-        acc.finals.iter().enumerate().filter(|(_, &c)| c > 0).map(|(i, &c)| (i / 8, 8 + i % 8, c)).collect();
+    let mut finals_matchups: Vec<(usize, usize, u64)> = acc
+        .finals
+        .iter()
+        .enumerate()
+        .filter(|(_, &c)| c > 0)
+        .map(|(i, &c)| (i / 8, 8 + i % 8, c))
+        .collect();
     finals_matchups.sort_by_key(|m| std::cmp::Reverse(m.2));
-    BracketSimulation { iterations: acc.iterations, seed, outcomes, finals_matchups, elapsed_ms: start.elapsed().as_millis() }
+    BracketSimulation {
+        iterations: acc.iterations,
+        seed,
+        outcomes,
+        finals_matchups,
+        elapsed_ms: start.elapsed().as_millis(),
+    }
 }
 
 #[cfg(test)]
@@ -651,7 +852,7 @@ pub(crate) fn test_bracket(elos: [f64; 16]) -> Bracket {
         .map(|s| {
             let seed = SLOT_SEEDS[s % 8];
             BracketTeam {
-                team_id: s as i32,
+                team_id: TeamId::new(s as i32),
                 code: format!("T{s}"),
                 name: format!("Team {s}"),
                 franchise_key: format!("T{s}"),
@@ -665,7 +866,13 @@ pub(crate) fn test_bracket(elos: [f64; 16]) -> Bracket {
             }
         })
         .collect();
-    Bracket { season: 2016, teams, format: PlayoffFormat::for_season(2016), actual_series: vec![], notes: vec![] }
+    Bracket {
+        season: SeasonYear::of(2016),
+        teams,
+        format: PlayoffFormat::for_season(SeasonYear::of(2016)),
+        actual_series: vec![],
+        notes: vec![],
+    }
 }
 
 #[cfg(test)]
@@ -687,7 +894,14 @@ mod tests {
         assert_eq!(s.winner(), Some(Side::A));
         // decided series ignore further games
         assert_eq!(s.record(Side::B), s);
-        assert_eq!(SeriesState::best_of(5).record(Side::B).record(Side::B).record(Side::B).winner(), Some(Side::B));
+        assert_eq!(
+            SeriesState::best_of(5)
+                .record(Side::B)
+                .record(Side::B)
+                .record(Side::B)
+                .winner(),
+            Some(Side::B)
+        );
     }
 
     #[test]
@@ -723,7 +937,12 @@ mod tests {
         assert_abs_diff_eq!(p.iter().map(|x| x[3]).sum::<f64>(), 1.0, epsilon = 1e-9);
         assert_abs_diff_eq!(p.iter().map(|x| x[2]).sum::<f64>(), 2.0, epsilon = 1e-9);
         assert_abs_diff_eq!(p.iter().map(|x| x[0]).sum::<f64>(), 8.0, epsilon = 1e-9);
-        let best = p.iter().enumerate().max_by(|a, b| a.1[3].partial_cmp(&b.1[3]).unwrap()).unwrap().0;
+        let best = p
+            .iter()
+            .enumerate()
+            .max_by(|a, b| a.1[3].partial_cmp(&b.1[3]).unwrap())
+            .unwrap()
+            .0;
         assert_eq!(best, 15);
     }
 
@@ -737,7 +956,13 @@ mod tests {
         let sim = ModelSpec::default().simulate(&b, 100_000, 11, &Silent);
         for o in &sim.outcomes {
             let e = o.exact.unwrap();
-            assert!((o.p_champion - e[3]).abs() < 4.0 * o.p_champion_se.max(0.001), "{} {} {}", o.code, o.p_champion, e[3]);
+            assert!(
+                (o.p_champion - e[3]).abs() < 4.0 * o.p_champion_se.max(0.001),
+                "{} {} {}",
+                o.code,
+                o.p_champion,
+                e[3]
+            );
             assert!((o.p_finals - e[2]).abs() < 0.01);
         }
         assert_eq!(sim.outcomes.iter().map(|o| o.titles).sum::<u64>(), 100_000);
@@ -754,7 +979,10 @@ mod tests {
     #[test]
     fn dynamic_elo_runs_and_sums() {
         let b = test_bracket([1500.0; 16]);
-        let m = EloModel { k: Some(20.0), ..Default::default() };
+        let m = EloModel {
+            k: Some(20.0),
+            ..Default::default()
+        };
         assert!(!m.exact_available());
         let s = simulate(&b, &m, 2000, 1, &Silent);
         assert!(s.outcomes[0].exact.is_none());
@@ -766,14 +994,32 @@ mod tests {
         let mut elos = [1500.0; 16];
         elos[3] = 9000.0;
         let b = test_bracket(elos);
-        let s = simulate(&b, &EloModel { home_advantage: 0.0, scale: 1.0, k: None }, 200, 5, &Silent);
+        let s = simulate(
+            &b,
+            &EloModel {
+                home_advantage: 0.0,
+                scale: 1.0,
+                k: None,
+            },
+            200,
+            5,
+            &Silent,
+        );
         assert_eq!(s.outcomes[3].titles, 200);
         assert_eq!(s.outcomes[2].p_second_round, 0.0);
-        assert_abs_diff_eq!(s.outcomes[0].p_second_round + s.outcomes[1].p_second_round, 1.0, epsilon = 1e-12);
+        assert_abs_diff_eq!(
+            s.outcomes[0].p_second_round + s.outcomes[1].p_second_round,
+            1.0,
+            epsilon = 1e-12
+        );
         for o in &s.outcomes[8..] {
             assert_eq!(o.titles, 0);
         }
-        assert_abs_diff_eq!(s.outcomes[8..].iter().map(|o| o.p_finals).sum::<f64>(), 1.0, epsilon = 1e-12);
+        assert_abs_diff_eq!(
+            s.outcomes[8..].iter().map(|o| o.p_finals).sum::<f64>(),
+            1.0,
+            epsilon = 1e-12
+        );
     }
 
     #[test]
@@ -795,11 +1041,12 @@ mod tests {
 
     #[test]
     fn format_by_era() {
-        assert_eq!(PlayoffFormat::for_season(2002).first_round_games, 5);
-        assert_eq!(PlayoffFormat::for_season(2003).first_round_games, 7);
-        assert_eq!(PlayoffFormat::for_season(2013).finals_pattern, FinalsPattern::TwoThreeTwo);
-        assert_eq!(PlayoffFormat::for_season(2014).finals_pattern, FinalsPattern::TwoTwoOneOneOne);
-        assert!(PlayoffFormat::for_season(2020).neutral_site);
-        assert_eq!(PlayoffFormat::for_season(2002).pattern(Round::First).len(), 5);
+        let f = |y| PlayoffFormat::for_season(SeasonYear::of(y));
+        assert_eq!(f(2002).first_round_games, 5);
+        assert_eq!(f(2003).first_round_games, 7);
+        assert_eq!(f(2013).finals_pattern, FinalsPattern::TwoThreeTwo);
+        assert_eq!(f(2014).finals_pattern, FinalsPattern::TwoTwoOneOneOne);
+        assert!(f(2020).neutral_site);
+        assert_eq!(f(2002).pattern(Round::First).len(), 5);
     }
 }

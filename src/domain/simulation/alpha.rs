@@ -83,7 +83,8 @@ impl AlphaParams {
                 if row.len() != n {
                     return Err("each schedule row must have one alpha per franchise".into());
                 }
-                if row.iter().any(|a| !a.is_finite() || *a < 0.0) || row.iter().sum::<f64>() <= 0.0 {
+                if row.iter().any(|a| !a.is_finite() || *a < 0.0) || row.iter().sum::<f64>() <= 0.0
+                {
                     return Err("schedule rows must be non-negative with a positive sum".into());
                 }
             }
@@ -185,7 +186,11 @@ impl Accum {
         for (a, b) in self.count_hist.iter_mut().zip(&other.count_hist) {
             *a += b;
         }
-        for (ha, hb) in self.per_franchise_hist.iter_mut().zip(&other.per_franchise_hist) {
+        for (ha, hb) in self
+            .per_franchise_hist
+            .iter_mut()
+            .zip(&other.per_franchise_hist)
+        {
             for (a, b) in ha.iter_mut().zip(hb) {
                 *a += b;
             }
@@ -298,7 +303,10 @@ pub fn run<P: Progress + ?Sized>(params: &AlphaParams, progress: &P) -> AlphaRes
     let franchises: Vec<FranchiseOutcome> = (0..n)
         .map(|i| {
             let p_mean = probs.iter().map(|row| row[i]).sum::<f64>() / seasons as f64;
-            let hist: Vec<f64> = accum.per_franchise_hist[i].iter().map(|&c| c as f64 / it).collect();
+            let hist: Vec<f64> = accum.per_franchise_hist[i]
+                .iter()
+                .map(|&c| c as f64 / it)
+                .collect();
             for (j, h) in hist.iter().enumerate() {
                 franchises_by_title_count[j] += h;
             }
@@ -311,7 +319,8 @@ pub fn run<P: Progress + ?Sized>(params: &AlphaParams, progress: &P) -> AlphaRes
                 simulated_mean_titles: accum.title_sum[i] / it,
                 p_at_least_k: p_k,
                 p_at_least_k_se: stats::binomial_se(p_k, accum.iterations),
-                p_at_least_k_exact: constant.then(|| exact::p_franchise_at_least(base_probs[i], seasons, k)),
+                p_at_least_k_exact: constant
+                    .then(|| exact::p_franchise_at_least(base_probs[i], seasons, k)),
                 title_distribution: hist,
             }
         })
@@ -325,11 +334,15 @@ pub fn run<P: Progress + ?Sized>(params: &AlphaParams, progress: &P) -> AlphaRes
         seed: params.seed,
         p_any_at_least_k: p_any,
         p_any_at_least_k_se: se_any,
-        p_any_at_least_k_ci95: ((p_any - 1.96 * se_any).max(0.0), (p_any + 1.96 * se_any).min(1.0)),
+        p_any_at_least_k_ci95: (
+            (p_any - 1.96 * se_any).max(0.0),
+            (p_any + 1.96 * se_any).min(1.0),
+        ),
         p_any_at_least_k_exact: exact_any,
         p_target_at_least_k: p_target,
         p_target_at_least_k_se: stats::binomial_se(p_target, accum.iterations),
-        p_target_at_least_k_exact: constant.then(|| exact::p_franchise_at_least(base_probs[params.target_index], seasons, k)),
+        p_target_at_least_k_exact: constant
+            .then(|| exact::p_franchise_at_least(base_probs[params.target_index], seasons, k)),
         max_titles_distribution: accum.max_hist.iter().map(|&c| c as f64 / it).collect(),
         max_titles_distribution_exact: exact_max,
         count_at_least_k_distribution: accum.count_hist.iter().map(|&c| c as f64 / it).collect(),
@@ -381,9 +394,22 @@ mod tests {
         let exact = r.p_any_at_least_k_exact.unwrap();
         assert_abs_diff_eq!(exact, 0.1605, epsilon = 0.0006);
         // within 4 standard errors
-        assert!((r.p_any_at_least_k - exact).abs() < 4.0 * r.p_any_at_least_k_se, "{} vs {}", r.p_any_at_least_k, exact);
-        assert_abs_diff_eq!(r.max_titles_distribution.iter().sum::<f64>(), 1.0, epsilon = 1e-9);
-        assert_abs_diff_eq!(r.franchises[0].expected_titles, 22.0 / 30.0, epsilon = 1e-12);
+        assert!(
+            (r.p_any_at_least_k - exact).abs() < 4.0 * r.p_any_at_least_k_se,
+            "{} vs {}",
+            r.p_any_at_least_k,
+            exact
+        );
+        assert_abs_diff_eq!(
+            r.max_titles_distribution.iter().sum::<f64>(),
+            1.0,
+            epsilon = 1e-9
+        );
+        assert_abs_diff_eq!(
+            r.franchises[0].expected_titles,
+            22.0 / 30.0,
+            epsilon = 1e-12
+        );
         assert!((r.franchises[0].simulated_mean_titles - 22.0 / 30.0).abs() < 0.02);
     }
 

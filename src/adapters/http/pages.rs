@@ -6,8 +6,9 @@ use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::{Html, IntoResponse, Response};
 
+use crate::application::ports::GameLog;
 use crate::config::APP_VERSION;
-use crate::adapters::postgres as db;
+use crate::domain::ids::SeasonYear;
 use crate::domain::models::{Franchise, Season};
 
 use super::State as AppState;
@@ -21,7 +22,11 @@ pub struct Layout {
 
 impl Layout {
     fn new(title: &'static str, active: &'static str) -> Self {
-        Self { title, active, version: APP_VERSION }
+        Self {
+            title,
+            active,
+            version: APP_VERSION,
+        }
     }
 }
 
@@ -36,11 +41,23 @@ fn render<T: Template>(t: T) -> Response {
 }
 
 async fn season_list(app: &AppState) -> Vec<Season> {
-    db::games::seasons(&app.pool).await.unwrap_or_default().into_iter().rev().collect()
+    match app.store.seasons().await {
+        Ok(s) => s.into_iter().rev().collect(),
+        Err(e) => {
+            tracing::warn!(error = %e, "season list unavailable");
+            vec![]
+        }
+    }
 }
 
 async fn franchise_list(app: &AppState) -> Vec<Franchise> {
-    db::teams::active_franchises(&app.pool).await.unwrap_or_default()
+    match app.store.franchises(true).await {
+        Ok(f) => f,
+        Err(e) => {
+            tracing::warn!(error = %e, "franchise list unavailable");
+            vec![]
+        }
+    }
 }
 
 #[derive(Template)]
@@ -51,7 +68,10 @@ pub struct DashboardPage {
 }
 
 pub async fn dashboard(State(app): State<AppState>) -> Response {
-    render(DashboardPage { layout: Layout::new("Dashboard", "dashboard"), seasons: season_list(&app).await })
+    render(DashboardPage {
+        layout: Layout::new("Dashboard", "dashboard"),
+        seasons: season_list(&app).await,
+    })
 }
 
 #[derive(Template)]
@@ -63,7 +83,11 @@ pub struct EloPage {
 }
 
 pub async fn elo(State(app): State<AppState>) -> Response {
-    render(EloPage { layout: Layout::new("Elo Explorer", "elo"), seasons: season_list(&app).await, franchises: franchise_list(&app).await })
+    render(EloPage {
+        layout: Layout::new("Elo Explorer", "elo"),
+        seasons: season_list(&app).await,
+        franchises: franchise_list(&app).await,
+    })
 }
 
 #[derive(Template)]
@@ -74,7 +98,10 @@ pub struct AlphaPage {
 }
 
 pub async fn alpha(State(app): State<AppState>) -> Response {
-    render(AlphaPage { layout: Layout::new("Alpha Simulator", "alpha"), franchises: franchise_list(&app).await })
+    render(AlphaPage {
+        layout: Layout::new("Alpha Simulator", "alpha"),
+        franchises: franchise_list(&app).await,
+    })
 }
 
 #[derive(Template)]
@@ -85,8 +112,15 @@ pub struct PlayoffsPage {
 }
 
 pub async fn playoffs(State(app): State<AppState>) -> Response {
-    let seasons = season_list(&app).await.into_iter().filter(|s| s.season >= 2003 && s.playoff_game_count > 0).collect();
-    render(PlayoffsPage { layout: Layout::new("Playoff Simulator", "playoffs"), seasons })
+    let seasons = season_list(&app)
+        .await
+        .into_iter()
+        .filter(|s| s.season >= SeasonYear::FIRST_MODERN && s.playoff_game_count > 0)
+        .collect();
+    render(PlayoffsPage {
+        layout: Layout::new("Playoff Simulator", "playoffs"),
+        seasons,
+    })
 }
 
 #[derive(Template)]
@@ -97,8 +131,15 @@ pub struct SeasonPage {
 }
 
 pub async fn season(State(app): State<AppState>) -> Response {
-    let seasons = season_list(&app).await.into_iter().filter(|s| s.season >= 2003).collect();
-    render(SeasonPage { layout: Layout::new("Season Forecast", "season"), seasons })
+    let seasons = season_list(&app)
+        .await
+        .into_iter()
+        .filter(|s| s.season >= SeasonYear::FIRST_MODERN)
+        .collect();
+    render(SeasonPage {
+        layout: Layout::new("Season Forecast", "season"),
+        seasons,
+    })
 }
 
 #[derive(Template)]
@@ -110,8 +151,16 @@ pub struct DynastyPage {
 }
 
 pub async fn dynasty(State(app): State<AppState>) -> Response {
-    let seasons = season_list(&app).await.into_iter().filter(|s| s.season >= 2003).collect();
-    render(DynastyPage { layout: Layout::new("Dynasty Laboratory", "dynasty"), franchises: franchise_list(&app).await, seasons })
+    let seasons = season_list(&app)
+        .await
+        .into_iter()
+        .filter(|s| s.season >= SeasonYear::FIRST_MODERN)
+        .collect();
+    render(DynastyPage {
+        layout: Layout::new("Dynasty Laboratory", "dynasty"),
+        franchises: franchise_list(&app).await,
+        seasons,
+    })
 }
 
 #[derive(Template)]
@@ -122,8 +171,15 @@ pub struct ValidationPage {
 }
 
 pub async fn validation(State(app): State<AppState>) -> Response {
-    let seasons = season_list(&app).await.into_iter().filter(|s| s.season >= 2003 && s.complete).collect();
-    render(ValidationPage { layout: Layout::new("Model Validation", "validation"), seasons })
+    let seasons = season_list(&app)
+        .await
+        .into_iter()
+        .filter(|s| s.season >= SeasonYear::FIRST_MODERN && s.complete)
+        .collect();
+    render(ValidationPage {
+        layout: Layout::new("Model Validation", "validation"),
+        seasons,
+    })
 }
 
 #[derive(Template)]
@@ -133,7 +189,9 @@ pub struct DataPage {
 }
 
 pub async fn data(State(_app): State<AppState>) -> Response {
-    render(DataPage { layout: Layout::new("Data Management", "data") })
+    render(DataPage {
+        layout: Layout::new("Data Management", "data"),
+    })
 }
 
 #[derive(Template)]
@@ -143,5 +201,7 @@ pub struct JobsPage {
 }
 
 pub async fn jobs(State(_app): State<AppState>) -> Response {
-    render(JobsPage { layout: Layout::new("Simulation Jobs", "jobs") })
+    render(JobsPage {
+        layout: Layout::new("Simulation Jobs", "jobs"),
+    })
 }

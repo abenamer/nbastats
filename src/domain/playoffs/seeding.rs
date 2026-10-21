@@ -11,8 +11,11 @@
 //! tournament for seeds 7–10.
 
 use std::collections::HashMap;
+use std::hash::Hash;
 
 use serde::{Deserialize, Serialize};
+
+use crate::domain::ids::SeasonYear;
 
 use super::standings::Standing;
 
@@ -23,9 +26,9 @@ pub enum Qualification {
     PlayIn,
 }
 
-pub fn qualification(season: i32) -> Qualification {
-    match season {
-        s if s <= 2019 => Qualification::Top8,
+pub fn qualification(season: SeasonYear) -> Qualification {
+    match season.end_year() {
+        y if y <= 2019 => Qualification::Top8,
         2020 => Qualification::Bubble2020,
         _ => Qualification::PlayIn,
     }
@@ -33,7 +36,7 @@ pub fn qualification(season: i32) -> Qualification {
 
 /// Order the conference (already sorted by record with tiebreaks) into seed order.
 /// Returns the full ordering (seed 1 first).
-pub fn seed_order(season: i32, ordered: &[Standing]) -> Vec<Standing> {
+pub fn seed_order<T: Copy>(season: SeasonYear, ordered: &[Standing<T>]) -> Vec<Standing<T>> {
     if ordered.is_empty() {
         return vec![];
     }
@@ -45,10 +48,10 @@ pub fn seed_order(season: i32, ordered: &[Standing]) -> Vec<Standing> {
             div_winners.push(i);
         }
     }
-    let protected = match season {
-        s if s <= 2004 => 2usize,
+    let protected = match season.end_year() {
+        y if y <= 2004 => 2usize,
         2005 | 2006 => 3,
-        s if s <= 2015 => 4,
+        y if y <= 2015 => 4,
         _ => 0,
     };
     if protected == 0 {
@@ -65,7 +68,7 @@ pub fn seed_order(season: i32, ordered: &[Standing]) -> Vec<Standing> {
         top.extend(div_winners.iter().take(protected));
     }
     top.sort();
-    let mut out: Vec<Standing> = top.iter().map(|&i| ordered[i].clone()).collect();
+    let mut out: Vec<Standing<T>> = top.iter().map(|&i| ordered[i].clone()).collect();
     for (i, s) in ordered.iter().enumerate() {
         if !top.contains(&i) {
             out.push(s.clone());
@@ -75,8 +78,12 @@ pub fn seed_order(season: i32, ordered: &[Standing]) -> Vec<Standing> {
 }
 
 /// Seed number (1-based) by team id from a seed ordering.
-pub fn seed_map(order: &[Standing]) -> HashMap<i32, u8> {
-    order.iter().enumerate().map(|(i, s)| (s.team_id, (i + 1) as u8)).collect()
+pub fn seed_map<T: Copy + Eq + Hash>(order: &[Standing<T>]) -> HashMap<T, u8> {
+    order
+        .iter()
+        .enumerate()
+        .map(|(i, s)| (s.team_id, (i + 1) as u8))
+        .collect()
 }
 
 #[cfg(test)]
@@ -84,8 +91,19 @@ mod tests {
     use super::*;
     use crate::domain::models::Conference;
 
-    fn s(id: i32, div: &str, w: i32) -> Standing {
-        Standing { team_id: id, conference: Conference::West, division: div.into(), wins: w, losses: 82 - w, point_diff: 0, conf_wins: 0, conf_losses: 0, div_wins: 0, div_losses: 0 }
+    fn s(id: i32, div: &str, w: i32) -> Standing<i32> {
+        Standing {
+            team_id: id,
+            conference: Conference::West,
+            division: div.into(),
+            wins: w,
+            losses: 82 - w,
+            point_diff: 0,
+            conf_wins: 0,
+            conf_losses: 0,
+            div_wins: 0,
+            div_losses: 0,
+        }
     }
 
     #[test]
@@ -101,20 +119,32 @@ mod tests {
             s(7, "NW", 44), // DEN
             s(8, "P", 44),  // SAC
         ];
-        let seeds: Vec<i32> = seed_order(2006, &ordered).iter().map(|x| x.team_id).collect();
+        let seeds: Vec<i32> = seed_order(SeasonYear::of(2006), &ordered)
+            .iter()
+            .map(|x| x.team_id)
+            .collect();
         assert_eq!(seeds, vec![1, 3, 7, 2, 4, 5, 6, 8]);
         // 2007+ rule: top four = 3 division winners + best other, by record -> SAS, DAL, PHO, DEN
-        let seeds: Vec<i32> = seed_order(2007, &ordered).iter().map(|x| x.team_id).collect();
+        let seeds: Vec<i32> = seed_order(SeasonYear::of(2007), &ordered)
+            .iter()
+            .map(|x| x.team_id)
+            .collect();
         assert_eq!(seeds, vec![1, 2, 3, 7, 4, 5, 6, 8]);
         // 2016+: by record
-        let seeds: Vec<i32> = seed_order(2016, &ordered).iter().map(|x| x.team_id).collect();
+        let seeds: Vec<i32> = seed_order(SeasonYear::of(2016), &ordered)
+            .iter()
+            .map(|x| x.team_id)
+            .collect();
         assert_eq!(seeds, vec![1, 2, 3, 4, 5, 6, 7, 8]);
     }
 
     #[test]
     fn qualification_eras() {
-        assert_eq!(qualification(2019), Qualification::Top8);
-        assert_eq!(qualification(2020), Qualification::Bubble2020);
-        assert_eq!(qualification(2021), Qualification::PlayIn);
+        assert_eq!(qualification(SeasonYear::of(2019)), Qualification::Top8);
+        assert_eq!(
+            qualification(SeasonYear::of(2020)),
+            Qualification::Bubble2020
+        );
+        assert_eq!(qualification(SeasonYear::of(2021)), Qualification::PlayIn);
     }
 }

@@ -15,19 +15,22 @@ use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::domain::elo;
+use crate::domain::ids::{SeasonYear, TeamId};
 use crate::domain::models::{Conference, Game, GameType, PlayoffResult, Team};
 use crate::domain::simulation::progress::{ChunkTracker, Progress};
 use crate::domain::simulation::rng::{chunk_rng, chunks};
 use crate::domain::simulation::stats;
 
-use super::bracket::{play_bracket, Bracket, BracketTeam, EloModel, PlayoffFormat, RoundCounts, SLOTS, SLOT_SEEDS};
+use super::bracket::{
+    play_bracket, Bracket, BracketTeam, EloModel, PlayoffFormat, RoundCounts, SLOTS, SLOT_SEEDS,
+};
 use super::reconstruct;
 use super::seeding::{self, Qualification};
 use super::standings::{order_with_tiebreaks, Standing};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SeasonParams {
-    pub season: i32,
+    pub season: SeasonYear,
     /// Information cutoff (inclusive). `None` = before the first game of the season.
     #[serde(default)]
     pub as_of: Option<NaiveDate>,
@@ -63,7 +66,10 @@ impl SeasonParams {
         if !(0.0..=400.0).contains(&self.home_advantage) {
             return Err("home advantage must be between 0 and 400 Elo points".into());
         }
-        for k in [self.regular_season_k, self.playoff_k].into_iter().flatten() {
+        for k in [self.regular_season_k, self.playoff_k]
+            .into_iter()
+            .flatten()
+        {
             if !(0.0..=100.0).contains(&k) {
                 return Err("K-factors must be between 0 and 100".into());
             }
@@ -77,7 +83,7 @@ impl SeasonParams {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TeamForecast {
-    pub team_id: i32,
+    pub team_id: TeamId,
     pub code: String,
     pub name: String,
     pub franchise_key: String,
@@ -104,7 +110,7 @@ pub struct TeamForecast {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SeasonForecast {
-    pub season: i32,
+    pub season: SeasonYear,
     pub as_of: NaiveDate,
     pub information_cutoff_note: String,
     pub qualification: Qualification,
@@ -122,7 +128,7 @@ pub enum SeasonError {
     #[error("season has no games")]
     NoGames,
     #[error("season {0} has no conference alignment data (supported from 2002-03)")]
-    NoAlignment(i32),
+    NoAlignment(SeasonYear),
 }
 
 // ---------------------------------------------------------------------------------------
@@ -137,15 +143,38 @@ type Ti = usize;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PlayInState {
     /// 2021+: 7 hosts 8 for the 7th seed.
-    SevenVsEight { s7: Ti, s8: Ti, s9: Ti, s10: Ti },
+    SevenVsEight {
+        s7: Ti,
+        s8: Ti,
+        s9: Ti,
+        s10: Ti,
+    },
     /// 2021+: 9 hosts 10, loser eliminated.
-    NineVsTen { seed7: Ti, loser78: Ti, s9: Ti, s10: Ti },
+    NineVsTen {
+        seed7: Ti,
+        loser78: Ti,
+        s9: Ti,
+        s10: Ti,
+    },
     /// 2021+: loser of 7/8 hosts winner of 9/10 for the 8th seed.
-    LoserVsWinner { seed7: Ti, loser78: Ti, winner910: Ti },
+    LoserVsWinner {
+        seed7: Ti,
+        loser78: Ti,
+        winner910: Ti,
+    },
     /// 2020 bubble: 9th within four games of 8th; the 9th seed must win twice (neutral floor).
-    BubbleFirst { s8: Ti, s9: Ti },
-    BubbleSecond { s8: Ti, s9: Ti },
-    Done { seed7: Ti, seed8: Ti },
+    BubbleFirst {
+        s8: Ti,
+        s9: Ti,
+    },
+    BubbleSecond {
+        s8: Ti,
+        s9: Ti,
+    },
+    Done {
+        seed7: Ti,
+        seed8: Ti,
+    },
 }
 
 impl PlayInState {
@@ -154,8 +183,12 @@ impl PlayInState {
         match self {
             PlayInState::SevenVsEight { s7, s8, .. } => Some((s7, s8, false)),
             PlayInState::NineVsTen { s9, s10, .. } => Some((s9, s10, false)),
-            PlayInState::LoserVsWinner { loser78, winner910, .. } => Some((loser78, winner910, false)),
-            PlayInState::BubbleFirst { s8, s9 } | PlayInState::BubbleSecond { s8, s9 } => Some((s8, s9, true)),
+            PlayInState::LoserVsWinner {
+                loser78, winner910, ..
+            } => Some((loser78, winner910, false)),
+            PlayInState::BubbleFirst { s8, s9 } | PlayInState::BubbleSecond { s8, s9 } => {
+                Some((s8, s9, true))
+            }
             PlayInState::Done { .. } => None,
         }
     }
@@ -164,22 +197,45 @@ impl PlayInState {
         match self {
             PlayInState::SevenVsEight { s7, s8, s9, s10 } => {
                 let (seed7, loser78) = if home_won { (s7, s8) } else { (s8, s7) };
-                PlayInState::NineVsTen { seed7, loser78, s9, s10 }
+                PlayInState::NineVsTen {
+                    seed7,
+                    loser78,
+                    s9,
+                    s10,
+                }
             }
-            PlayInState::NineVsTen { seed7, loser78, s9, s10 } => {
-                PlayInState::LoserVsWinner { seed7, loser78, winner910: if home_won { s9 } else { s10 } }
-            }
-            PlayInState::LoserVsWinner { seed7, loser78, winner910 } => {
-                PlayInState::Done { seed7, seed8: if home_won { loser78 } else { winner910 } }
-            }
+            PlayInState::NineVsTen {
+                seed7,
+                loser78,
+                s9,
+                s10,
+            } => PlayInState::LoserVsWinner {
+                seed7,
+                loser78,
+                winner910: if home_won { s9 } else { s10 },
+            },
+            PlayInState::LoserVsWinner {
+                seed7,
+                loser78,
+                winner910,
+            } => PlayInState::Done {
+                seed7,
+                seed8: if home_won { loser78 } else { winner910 },
+            },
             PlayInState::BubbleFirst { s8, s9 } => {
                 if home_won {
-                    PlayInState::Done { seed7: usize::MAX, seed8: s8 }
+                    PlayInState::Done {
+                        seed7: usize::MAX,
+                        seed8: s8,
+                    }
                 } else {
                     PlayInState::BubbleSecond { s8, s9 }
                 }
             }
-            PlayInState::BubbleSecond { s8, s9 } => PlayInState::Done { seed7: usize::MAX, seed8: if home_won { s8 } else { s9 } },
+            PlayInState::BubbleSecond { s8, s9 } => PlayInState::Done {
+                seed7: usize::MAX,
+                seed8: if home_won { s8 } else { s9 },
+            },
             done @ PlayInState::Done { .. } => done,
         }
     }
@@ -187,7 +243,9 @@ impl PlayInState {
     /// Every team that takes part in this play-in.
     pub fn participants(self) -> impl Iterator<Item = Ti> {
         let v: [Option<Ti>; 4] = match self {
-            PlayInState::SevenVsEight { s7, s8, s9, s10 } => [Some(s7), Some(s8), Some(s9), Some(s10)],
+            PlayInState::SevenVsEight { s7, s8, s9, s10 } => {
+                [Some(s7), Some(s8), Some(s9), Some(s10)]
+            }
             PlayInState::BubbleFirst { s8, s9 } => [Some(s8), Some(s9), None, None],
             _ => [None; 4],
         };
@@ -254,7 +312,7 @@ impl Acc {
 
 struct Setup {
     n: usize,
-    ids: Vec<i32>,
+    ids: Vec<TeamId>,
     codes: Vec<String>,
     names: Vec<String>,
     fran: Vec<String>,
@@ -275,15 +333,20 @@ struct Setup {
 }
 
 impl Setup {
-    fn build(params: &SeasonParams, games: &[Game], teams: &HashMap<i32, Team>, as_of: NaiveDate) -> Result<Setup, SeasonError> {
+    fn build(
+        params: &SeasonParams,
+        games: &[Game],
+        teams: &HashMap<TeamId, Team>,
+        as_of: NaiveDate,
+    ) -> Result<Setup, SeasonError> {
         let alignment = reconstruct::alignment_map(params.season, teams, games);
         if alignment.len() < 16 {
             return Err(SeasonError::NoAlignment(params.season));
         }
-        let mut ids: Vec<i32> = alignment.keys().copied().collect();
+        let mut ids: Vec<TeamId> = alignment.keys().copied().collect();
         ids.sort_unstable();
         let n = ids.len();
-        let idx: HashMap<i32, Ti> = ids.iter().enumerate().map(|(i, &t)| (t, i)).collect();
+        let idx: HashMap<TeamId, Ti> = ids.iter().enumerate().map(|(i, &t)| (t, i)).collect();
         let mut elo = vec![f64::NAN; n];
         let mut first_pre = vec![f64::NAN; n];
         let mut base_wins = vec![0; n];
@@ -296,7 +359,9 @@ impl Setup {
         let mut remaining = Vec::new();
         let mut played_play_in = Vec::new();
         for g in games {
-            let (Some(&h), Some(&a)) = (idx.get(&g.home_team_id), idx.get(&g.away_team_id)) else { continue };
+            let (Some(&h), Some(&a)) = (idx.get(&g.home_team_id), idx.get(&g.away_team_id)) else {
+                continue;
+            };
             if first_pre[h].is_nan() {
                 first_pre[h] = g.home_elo_pre;
             }
@@ -326,13 +391,21 @@ impl Setup {
                 (true, Some(o), GameType::PlayIn) => {
                     elo[h] = g.home_elo_post;
                     elo[a] = g.away_elo_post;
-                    played_play_in.push(PlayedPlayIn { home: h, away: a, home_won: o.home_won() });
+                    played_play_in.push(PlayedPlayIn {
+                        home: h,
+                        away: a,
+                        home_won: o.home_won(),
+                    });
                 }
                 (true, Some(_), GameType::CupFinal) => {
                     elo[h] = g.home_elo_post;
                     elo[a] = g.away_elo_post;
                 }
-                (_, _, GameType::Regular) => remaining.push(Remaining { home: h, away: a, neutral: g.neutral }),
+                (_, _, GameType::Regular) => remaining.push(Remaining {
+                    home: h,
+                    away: a,
+                    neutral: g.neutral,
+                }),
                 _ => {}
             }
         }
@@ -342,12 +415,15 @@ impl Setup {
             }
         }
         let mut format = PlayoffFormat::for_season(params.season);
-        format.neutral_site |= params.season == 2020;
+        format.neutral_site |= params.season.end_year() == 2020;
         Ok(Setup {
             n,
             codes: ids.iter().map(|t| teams[t].code.clone()).collect(),
             names: ids.iter().map(|t| teams[t].name.clone()).collect(),
-            fran: ids.iter().map(|t| teams[t].franchise_key().to_string()).collect(),
+            fran: ids
+                .iter()
+                .map(|t| teams[t].franchise_key().to_string())
+                .collect(),
             conf: ids.iter().map(|t| alignment[t].0).collect(),
             div: ids.iter().map(|t| alignment[t].1.clone()).collect(),
             ids,
@@ -365,12 +441,12 @@ impl Setup {
     }
 
     /// Order a conference by record with tiebreaks (group head-to-head, point differential, random key).
-    fn order_conference(&self, conf: Conference, st: &IterState) -> Vec<Standing> {
+    fn order_conference(&self, conf: Conference, st: &IterState) -> Vec<Standing<Ti>> {
         let n = self.n;
-        let rows: Vec<Standing> = (0..n)
+        let rows: Vec<Standing<Ti>> = (0..n)
             .filter(|&i| self.conf[i] == conf)
             .map(|i| Standing {
-                team_id: i as i32,
+                team_id: i,
                 conference: conf,
                 division: self.div[i].clone(),
                 wins: st.wins[i],
@@ -382,17 +458,38 @@ impl Setup {
                 div_losses: st.records[i][3],
             })
             .collect();
-        order_with_tiebreaks(rows, |a, b| st.h2h[a as usize * n + b as usize], |t| st.keys[t as usize])
+        order_with_tiebreaks(rows, |a, b| st.h2h[a * n + b], |t| st.keys[t])
     }
 
     /// Resolve a play-in game: the historical result if it was played before the cutoff,
     /// otherwise a draw from Elo.
-    fn resolve_game<R: Rng>(&self, rng: &mut R, elo: &mut [f64], game: (Ti, Ti, bool), rules: GameRules) -> bool {
+    fn resolve_game<R: Rng>(
+        &self,
+        rng: &mut R,
+        elo: &mut [f64],
+        game: (Ti, Ti, bool),
+        rules: GameRules,
+    ) -> bool {
         let (home, away, neutral) = game;
-        if let Some(p) = self.played_play_in.iter().find(|g| (g.home == home && g.away == away) || (g.home == away && g.away == home)) {
-            return if p.home == home { p.home_won } else { !p.home_won };
+        if let Some(p) = self
+            .played_play_in
+            .iter()
+            .find(|g| (g.home == home && g.away == away) || (g.home == away && g.away == home))
+        {
+            return if p.home == home {
+                p.home_won
+            } else {
+                !p.home_won
+            };
         }
-        let p = elo::game_probability(elo[home], elo[away], true, neutral, rules.home_advantage, 1.0);
+        let p = elo::game_probability(
+            elo[home],
+            elo[away],
+            true,
+            neutral,
+            rules.home_advantage,
+            1.0,
+        );
         let home_won = rng.gen::<f64>() < p;
         if let Some(k) = rules.k {
             let (nh, na) = elo::update(elo[home], elo[away], p, home_won, k);
@@ -403,19 +500,33 @@ impl Setup {
     }
 
     /// The eight playoff teams of a conference in seed order, resolving the play-in.
-    fn qualify<R: Rng>(&self, rng: &mut R, elo: &mut [f64], order: &[Standing], rules: GameRules, acc: &mut Acc) -> Vec<Ti> {
-        let t = |i: usize| order[i].team_id as usize;
+    fn qualify<R: Rng>(
+        &self,
+        rng: &mut R,
+        elo: &mut [f64],
+        order: &[Standing<Ti>],
+        rules: GameRules,
+        acc: &mut Acc,
+    ) -> Vec<Ti> {
+        let t = |i: usize| order[i].team_id;
         let initial = match self.qualification {
             Qualification::Top8 => return (0..8).map(t).collect(),
             Qualification::Bubble2020 => {
-                let games_behind = f64::from((order[7].wins - order[8].wins) + (order[8].losses - order[7].losses)) / 2.0;
+                let games_behind = f64::from(
+                    (order[7].wins - order[8].wins) + (order[8].losses - order[7].losses),
+                ) / 2.0;
                 if games_behind <= 4.0 {
                     PlayInState::BubbleFirst { s8: t(7), s9: t(8) }
                 } else {
                     return (0..8).map(t).collect();
                 }
             }
-            Qualification::PlayIn => PlayInState::SevenVsEight { s7: t(6), s8: t(7), s9: t(8), s10: t(9) },
+            Qualification::PlayIn => PlayInState::SevenVsEight {
+                s7: t(6),
+                s8: t(7),
+                s9: t(8),
+                s10: t(9),
+            },
         };
         for p in initial.participants() {
             acc.play_in[p] += 1;
@@ -425,7 +536,9 @@ impl Setup {
             let home_won = self.resolve_game(rng, elo, game, rules);
             state = state.advance(home_won);
         }
-        let PlayInState::Done { seed7, seed8 } = state else { unreachable!("loop exits on Done") };
+        let PlayInState::Done { seed7, seed8 } = state else {
+            unreachable!("loop exits on Done")
+        };
         let direct = if seed7 == usize::MAX { 7 } else { 6 };
         let mut out: Vec<Ti> = (0..direct).map(t).collect();
         if seed7 != usize::MAX {
@@ -489,11 +602,21 @@ impl IterState {
     }
 }
 
-pub fn run<P: Progress + ?Sized>(params: &SeasonParams, games: &[Game], teams: &HashMap<i32, Team>, progress: &P) -> Result<SeasonForecast, SeasonError> {
+pub fn run<P: Progress + ?Sized>(
+    params: &SeasonParams,
+    games: &[Game],
+    teams: &HashMap<TeamId, Team>,
+    progress: &P,
+) -> Result<SeasonForecast, SeasonError> {
     let start = std::time::Instant::now();
-    let first_date = games.first().map(|g| g.game_date).ok_or(SeasonError::NoGames)?;
+    let first_date = games
+        .first()
+        .map(|g| g.game_date)
+        .ok_or(SeasonError::NoGames)?;
     let first_playoff = games.iter().find(|g| g.is_playoff()).map(|g| g.game_date);
-    let mut as_of = params.as_of.unwrap_or(first_date - chrono::Duration::days(1));
+    let mut as_of = params
+        .as_of
+        .unwrap_or(first_date - chrono::Duration::days(1));
     let mut note = format!("Only games on or before {as_of} inform ratings and standings.");
     if let Some(fp) = first_playoff.filter(|fp| as_of >= *fp) {
         as_of = fp - chrono::Duration::days(1);
@@ -501,10 +624,20 @@ pub fn run<P: Progress + ?Sized>(params: &SeasonParams, games: &[Game], teams: &
     }
     let setup = Setup::build(params, games, teams, as_of)?;
     let n = setup.n;
-    let games_played = games.iter().filter(|g| g.game_date <= as_of && !g.is_playoff() && g.is_played()).count();
+    let games_played = games
+        .iter()
+        .filter(|g| g.game_date <= as_of && !g.is_playoff() && g.is_played())
+        .count();
     let home_adv = params.home_advantage;
-    let rules = GameRules { home_advantage: home_adv, k: params.regular_season_k };
-    let playoff_model = EloModel { home_advantage: home_adv, scale: params.playoff_scale, k: params.playoff_k };
+    let rules = GameRules {
+        home_advantage: home_adv,
+        k: params.regular_season_k,
+    };
+    let playoff_model = EloModel {
+        home_advantage: home_adv,
+        scale: params.playoff_scale,
+        k: params.playoff_k,
+    };
     let chunk_list = chunks(params.iterations, 250);
     let tracker = ChunkTracker::new(progress, chunk_list.len() as u64);
 
@@ -522,14 +655,25 @@ pub fn run<P: Progress + ?Sized>(params: &SeasonParams, games: &[Game], teams: &
                 st.reset(&setup, &mut rng);
                 // remaining regular season
                 for g in &setup.remaining {
-                    let p = elo::game_probability(st.elo[g.home], st.elo[g.away], true, g.neutral, home_adv, 1.0);
+                    let p = elo::game_probability(
+                        st.elo[g.home],
+                        st.elo[g.away],
+                        true,
+                        g.neutral,
+                        home_adv,
+                        1.0,
+                    );
                     let home_won = rng.gen::<f64>() < p;
                     if let Some(k) = params.regular_season_k {
                         let (nh, na) = elo::update(st.elo[g.home], st.elo[g.away], p, home_won, k);
                         st.elo[g.home] = nh;
                         st.elo[g.away] = na;
                     }
-                    let (w, l) = if home_won { (g.home, g.away) } else { (g.away, g.home) };
+                    let (w, l) = if home_won {
+                        (g.home, g.away)
+                    } else {
+                        (g.away, g.home)
+                    };
                     st.record(&setup, w, l);
                 }
                 for i in 0..n {
@@ -537,12 +681,13 @@ pub fn run<P: Progress + ?Sized>(params: &SeasonParams, games: &[Game], teams: &
                 }
                 // standings, seeding and qualification per conference
                 let mut bracket_teams: Vec<BracketTeam> = Vec::with_capacity(SLOTS);
+                let mut slot_team: Vec<Ti> = Vec::with_capacity(SLOTS);
                 let mut ok = true;
                 for conf in [Conference::East, Conference::West] {
                     let ordered = setup.order_conference(conf, &st);
                     let seeded = seeding::seed_order(params.season, &ordered);
                     for (pos, s) in seeded.iter().enumerate().take(16) {
-                        let i = s.team_id as usize;
+                        let i = s.team_id;
                         acc.positions[i][pos] += 1;
                         if pos < 6 {
                             acc.top6[i] += 1;
@@ -553,36 +698,57 @@ pub fn run<P: Progress + ?Sized>(params: &SeasonParams, games: &[Game], teams: &
                         break;
                     }
                     let qualified = setup.qualify(&mut rng, &mut st.elo, &seeded, rules, &mut acc);
-                    let mut conf_slots: [Option<BracketTeam>; 8] = Default::default();
+                    let mut conf_slots: [Option<(Ti, BracketTeam)>; 8] = Default::default();
                     for (seed_idx, &ti) in qualified.iter().enumerate() {
                         acc.playoffs[ti] += 1;
                         let seed = (seed_idx + 1) as u8;
-                        let p = SLOT_SEEDS.iter().position(|&s| s == seed).expect("seed 1-8");
-                        conf_slots[p] = Some(BracketTeam {
-                            team_id: ti as i32,
-                            code: String::new(),
-                            name: String::new(),
-                            franchise_key: String::new(),
-                            conference: conf,
-                            seed,
-                            elo: st.elo[ti],
-                            wins: st.wins[ti],
-                            losses: st.losses[ti],
-                            win_pct: f64::from(st.wins[ti]) / f64::from((st.wins[ti] + st.losses[ti]).max(1)),
-                            actual_result: None,
-                        });
+                        let p = SLOT_SEEDS
+                            .iter()
+                            .position(|&s| s == seed)
+                            .expect("seed 1-8");
+                        conf_slots[p] = Some((
+                            ti,
+                            BracketTeam {
+                                team_id: setup.ids[ti],
+                                code: String::new(),
+                                name: String::new(),
+                                franchise_key: String::new(),
+                                conference: conf,
+                                seed,
+                                elo: st.elo[ti],
+                                wins: st.wins[ti],
+                                losses: st.losses[ti],
+                                win_pct: f64::from(st.wins[ti])
+                                    / f64::from((st.wins[ti] + st.losses[ti]).max(1)),
+                                actual_result: None,
+                            },
+                        ));
                     }
-                    bracket_teams.extend(conf_slots.into_iter().map(|s| s.expect("eight qualifiers")));
+                    for (ti, team) in conf_slots.into_iter().map(|s| s.expect("eight qualifiers")) {
+                        slot_team.push(ti);
+                        bracket_teams.push(team);
+                    }
                 }
                 if !ok {
                     continue;
                 }
-                let bracket = Bracket { season: params.season, teams: bracket_teams, format: setup.format, actual_series: vec![], notes: vec![] };
+                let bracket = Bracket {
+                    season: params.season,
+                    teams: bracket_teams,
+                    format: setup.format,
+                    actual_series: vec![],
+                    notes: vec![],
+                };
                 let mut b_elos: Vec<f64> = bracket.teams.iter().map(|t| t.elo).collect();
                 reached.iter_mut().flatten().for_each(|x| *x = 0);
-                play_bracket(&bracket, &mut rng, &playoff_model, &mut b_elos, &mut reached);
-                for (slot, bt) in bracket.teams.iter().enumerate() {
-                    let ti = bt.team_id as usize;
+                play_bracket(
+                    &bracket,
+                    &mut rng,
+                    &playoff_model,
+                    &mut b_elos,
+                    &mut reached,
+                );
+                for (slot, &ti) in slot_team.iter().enumerate() {
                     for (total, round_counts) in acc.reached[ti].iter_mut().zip(&reached) {
                         *total += round_counts[slot];
                     }
@@ -598,8 +764,14 @@ pub fn run<P: Progress + ?Sized>(params: &SeasonParams, games: &[Game], teams: &
     // actual outcomes for comparison (never used as inputs)
     let series = reconstruct::series_from_games(params.season, games);
     let actual_results = reconstruct::playoff_results(&series);
-    let actual_seed: HashMap<i32, u8> = reconstruct::reconstruct(params.season, games, teams)
-        .map(|r| r.bracket.teams.iter().map(|t| (t.team_id, t.seed)).collect())
+    let actual_seed: HashMap<TeamId, u8> = reconstruct::reconstruct(params.season, games, teams)
+        .map(|r| {
+            r.bracket
+                .teams
+                .iter()
+                .map(|t| (t.team_id, t.seed))
+                .collect()
+        })
         .unwrap_or_default();
     let mut teams_out: Vec<TeamForecast> = (0..n)
         .map(|i| {
@@ -614,7 +786,11 @@ pub fn run<P: Progress + ?Sized>(params: &SeasonParams, games: &[Game], teams: &
                 elo_as_of: setup.elo[i],
                 wins: setup.base_wins[i],
                 losses: setup.base_losses[i],
-                remaining_games: setup.remaining.iter().filter(|g| g.home == i || g.away == i).count() as i32,
+                remaining_games: setup
+                    .remaining
+                    .iter()
+                    .filter(|g| g.home == i || g.away == i)
+                    .count() as i32,
                 expected_wins: acc.wins_sum[i] / it,
                 p_top6: acc.top6[i] as f64 / it,
                 p_play_in: acc.play_in[i] as f64 / it,
@@ -630,7 +806,12 @@ pub fn run<P: Progress + ?Sized>(params: &SeasonParams, games: &[Game], teams: &
             }
         })
         .collect();
-    teams_out.sort_by(|a, b| b.p_champion.partial_cmp(&a.p_champion).unwrap_or(std::cmp::Ordering::Equal).then_with(|| a.code.cmp(&b.code)));
+    teams_out.sort_by(|a, b| {
+        b.p_champion
+            .partial_cmp(&a.p_champion)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.code.cmp(&b.code))
+    });
     Ok(SeasonForecast {
         season: params.season,
         as_of,
@@ -652,7 +833,12 @@ mod tests {
 
     #[test]
     fn play_in_tournament_state_machine() {
-        let s = PlayInState::SevenVsEight { s7: 7, s8: 8, s9: 9, s10: 10 };
+        let s = PlayInState::SevenVsEight {
+            s7: 7,
+            s8: 8,
+            s9: 9,
+            s10: 10,
+        };
         assert_eq!(s.participants().collect::<Vec<_>>(), vec![7, 8, 9, 10]);
         assert_eq!(s.pending_game(), Some((7, 8, false)));
         let s = s.advance(false); // 8 beats 7 -> 8 is the 7 seed
@@ -668,10 +854,22 @@ mod tests {
     #[test]
     fn bubble_play_in_state_machine() {
         let s = PlayInState::BubbleFirst { s8: 1, s9: 2 };
-        assert_eq!(s.advance(true), PlayInState::Done { seed7: usize::MAX, seed8: 1 });
+        assert_eq!(
+            s.advance(true),
+            PlayInState::Done {
+                seed7: usize::MAX,
+                seed8: 1
+            }
+        );
         let s = s.advance(false);
         assert_eq!(s, PlayInState::BubbleSecond { s8: 1, s9: 2 });
         assert_eq!(s.pending_game(), Some((1, 2, true)));
-        assert_eq!(s.advance(false), PlayInState::Done { seed7: usize::MAX, seed8: 2 });
+        assert_eq!(
+            s.advance(false),
+            PlayInState::Done {
+                seed7: usize::MAX,
+                seed8: 2
+            }
+        );
     }
 }

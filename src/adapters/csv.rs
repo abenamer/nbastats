@@ -51,9 +51,21 @@ pub enum ParseError {
 
 pub fn detect_format(header: &[String]) -> Option<&'static str> {
     let has = |c: &str| header.iter().any(|h| h == c);
-    if has("team1") && has("team2") && has("elo1_pre") && has("elo2_pre") && has("season") && has("date") {
+    if has("team1")
+        && has("team2")
+        && has("elo1_pre")
+        && has("elo2_pre")
+        && has("season")
+        && has("date")
+    {
         Some("fivethirtyeight_nba_elo")
-    } else if has("team_id") && has("opp_id") && has("elo_i") && has("elo_n") && has("year_id") && has("game_location") {
+    } else if has("team_id")
+        && has("opp_id")
+        && has("elo_i")
+        && has("elo_n")
+        && has("year_id")
+        && has("game_location")
+    {
         Some("fivethirtyeight_nbaallelo")
     } else {
         None
@@ -73,7 +85,10 @@ fn parse_i32(s: &str) -> Option<i32> {
 }
 
 fn parse_bool(s: &str) -> bool {
-    matches!(s.trim().to_ascii_lowercase().as_str(), "1" | "t" | "true" | "yes" | "y")
+    matches!(
+        s.trim().to_ascii_lowercase().as_str(),
+        "1" | "t" | "true" | "yes" | "y"
+    )
 }
 
 fn parse_date(s: &str) -> Option<NaiveDate> {
@@ -85,17 +100,36 @@ fn parse_date(s: &str) -> Option<NaiveDate> {
 }
 
 pub fn parse<R: Read>(reader: R) -> Result<ParseReport, ParseError> {
-    let mut rdr = csv::ReaderBuilder::new().flexible(true).trim(csv::Trim::All).from_reader(reader);
-    let header: Vec<String> = rdr.headers()?.iter().map(|h| h.trim().to_string()).collect();
+    let mut rdr = csv::ReaderBuilder::new()
+        .flexible(true)
+        .trim(csv::Trim::All)
+        .from_reader(reader);
+    let header: Vec<String> = rdr
+        .headers()?
+        .iter()
+        .map(|h| h.trim().to_string())
+        .collect();
     if header.is_empty() {
         return Err(ParseError::Empty);
     }
     let format = detect_format(&header).ok_or_else(|| ParseError::UnknownFormat(header.clone()))?;
-    let col: HashMap<&str, usize> = header.iter().enumerate().map(|(i, h)| (h.as_str(), i)).collect();
-    let mut report = ParseReport { format: format.to_string(), ..Default::default() };
+    let col: HashMap<&str, usize> = header
+        .iter()
+        .enumerate()
+        .map(|(i, h)| (h.as_str(), i))
+        .collect();
+    let mut report = ParseReport {
+        format: format.to_string(),
+        ..Default::default()
+    };
     // occurrences per (date, unordered pair) to derive `seq` and to deduplicate perspective rows
     let mut seen: HashMap<(NaiveDate, String, String), (u32, u32)> = HashMap::new();
-    let get = |rec: &csv::StringRecord, name: &str| -> String { col.get(name).and_then(|&i| rec.get(i)).unwrap_or("").to_string() };
+    let get = |rec: &csv::StringRecord, name: &str| -> String {
+        col.get(name)
+            .and_then(|&i| rec.get(i))
+            .unwrap_or("")
+            .to_string()
+    };
     for (line_no, rec) in rdr.records().enumerate() {
         let rec = match rec {
             Ok(r) => r,
@@ -153,8 +187,16 @@ fn parse_nba_elo_row(
     let has_is_home = col.contains_key("is_home");
     // In the two-perspective layout, keep only the home perspective; neutral games have two
     // identical rows with is_home = 0, of which we keep every other occurrence.
-    let team1_is_home = if has_is_home { parse_bool(&get(rec, "is_home")) } else { true };
-    let key = (date, team1.clone().min(team2.clone()), team1.clone().max(team2.clone()));
+    let team1_is_home = if has_is_home {
+        parse_bool(&get(rec, "is_home"))
+    } else {
+        true
+    };
+    let key = (
+        date,
+        team1.clone().min(team2.clone()),
+        team1.clone().max(team2.clone()),
+    );
     let (occurrence, kept) = seen.entry(key).or_insert((0, 0));
     let keep = if has_is_home {
         if neutral {
@@ -219,14 +261,30 @@ fn parse_nbaallelo_row(
     let opp_elo_i = parse_f64(&get(rec, "opp_elo_i")).ok_or("bad opp_elo_i")?;
     let opp_elo_n = parse_f64(&get(rec, "opp_elo_n")).unwrap_or(opp_elo_i);
     let forecast = parse_f64(&get(rec, "forecast"));
-    let key = (date, team.clone().min(opp.clone()), team.clone().max(opp.clone()));
+    let key = (
+        date,
+        team.clone().min(opp.clone()),
+        team.clone().max(opp.clone()),
+    );
     let (_, kept) = seen.entry(key).or_insert((0, 0));
     let seq = *kept;
     *kept += 1;
     let (home, away, hs, as_, hpre, apre, hpost, apost, hprob) = if team_home {
-        (team, opp, pts, opp_pts, elo_i, opp_elo_i, elo_n, opp_elo_n, forecast)
+        (
+            team, opp, pts, opp_pts, elo_i, opp_elo_i, elo_n, opp_elo_n, forecast,
+        )
     } else {
-        (opp, team, opp_pts, pts, opp_elo_i, elo_i, opp_elo_n, elo_n, forecast.map(|f| 1.0 - f))
+        (
+            opp,
+            team,
+            opp_pts,
+            pts,
+            opp_elo_i,
+            elo_i,
+            opp_elo_n,
+            elo_n,
+            forecast.map(|f| 1.0 - f),
+        )
     };
     Ok(Some(ParsedGame {
         season,
@@ -321,6 +379,8 @@ bad-date,2016,0,,BOS,NYK,1500,1500,0.5,0.5,1500,1500,1,2,1
     fn handles_garbage_gracefully() {
         let r = parse("date,season,neutral,playoff,team1,team2,elo1_pre,elo2_pre,score1,score2\n\"unterminated,2016\n".as_bytes());
         // either a CSV error on the row or a rejection; never a panic
-        if let Ok(rep) = r { assert_eq!(rep.games.len(), 0) }
+        if let Ok(rep) = r {
+            assert_eq!(rep.games.len(), 0)
+        }
     }
 }

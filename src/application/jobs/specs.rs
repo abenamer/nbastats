@@ -5,17 +5,18 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
+use crate::application::dynasty::{self, DynastyRequest};
+use crate::application::ports::{AnalysisStore, NewForecast};
 use crate::domain::backtesting::{self, BacktestParams, BacktestResult, SeasonInput};
-use crate::adapters::postgres as db;
-use crate::domain::models::{JobKind, PlayoffResult};
+use crate::domain::ids::SeasonYear;
+use crate::domain::models::{GameType, JobKind, PlayoffResult};
 use crate::domain::playoffs::bracket::{Bracket, BracketSimulation, ModelSpec};
 use crate::domain::playoffs::season::{self, SeasonForecast, SeasonParams};
-use crate::application::dynasty::{self, DynastyRequest};
 use crate::domain::simulation::alpha::{self, AlphaParams, AlphaResult};
 use crate::domain::simulation::dynasty::DynastyReport;
 use crate::domain::simulation::progress::Progress;
 
-use super::{JobContext, JobSpec, Limits};
+use super::{JobContext, JobError, JobSpec, Limits};
 
 // ---------------------------------------------------------------------------------------
 
@@ -34,9 +35,11 @@ impl JobSpec for AlphaJob {
     fn seed(&self) -> Option<i64> {
         Some(self.0.seed as i64)
     }
-    async fn execute(self, ctx: JobContext) -> anyhow::Result<AlphaResult> {
+    async fn execute(self, ctx: JobContext) -> Result<AlphaResult, JobError> {
         let progress = ctx.progress;
-        Ok(tokio::task::spawn_blocking(move || alpha::run(&self.0, &progress)).await?)
+        tokio::task::spawn_blocking(move || alpha::run(&self.0, &progress))
+            .await
+            .map_err(|e| JobError::Execution(e.to_string()))
     }
 }
 
@@ -54,7 +57,7 @@ pub enum EloSource {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PlayoffJob {
-    pub season: i32,
+    pub season: SeasonYear,
     pub iterations: u64,
     pub seed: u64,
     #[serde(default)]
@@ -83,13 +86,18 @@ impl JobSpec for PlayoffJob {
 
     fn validate(&self, limits: &Limits) -> Result<(), String> {
         if self.iterations == 0 || self.iterations > limits.max_iterations {
-            return Err(format!("iterations must be between 1 and {}", limits.max_iterations));
-        }
-        if !(1947..=2100).contains(&self.season) {
-            return Err("season out of range".into());
+            return Err(format!(
+                "iterations must be between 1 and {}",
+                limits.max_iterations
+            ));
         }
         self.model.validate()?;
-        if self.elo_overrides.len() > 16 || self.elo_overrides.values().any(|e| !(800.0..=2500.0).contains(e)) {
+        if self.elo_overrides.len() > 16
+            || self
+                .elo_overrides
+                .values()
+                .any(|e| !(800.0..=2500.0).contains(e))
+        {
             return Err("Elo overrides must be between 800 and 2500".into());
         }
         Ok(())
@@ -97,14 +105,23 @@ impl JobSpec for PlayoffJob {
     fn seed(&self) -> Option<i64> {
         Some(self.seed as i64)
     }
-    async fn execute(self, ctx: JobContext) -> anyhow::Result<PlayoffOutput> {
-        let data = ctx.app.season_data(self.season).await?;
-        let mut bracket = data.reconstruction.as_ref().map_err(|e| anyhow::anyhow!("{e}"))?.bracket.clone();
+    async fn execute(self, ctx: JobContext) -> Result<PlayoffOutput, JobError> {
+        let data = ctx
+            .app
+            .season_data(self.season)
+            .await
+            .map_err(|e| JobError::Execution(e.to_string()))?;
+        let mut bracket = data
+            .reconstruction
+            .as_ref()
+            .map_err(|e| JobError::Execution(e.to_string()))?
+            .bracket
+            .clone();
         if self.elo_source == EloSource::RegularSeasonEnd {
-            let regular_end: HashMap<i32, f64> = data
+            let regular_end: HashMap<_, f64> = data
                 .games
                 .iter()
-                .filter(|g| g.game_type == crate::domain::models::GameType::Regular && g.is_played())
+                .filter(|g| g.game_type == GameType::Regular && g.is_played())
                 .fold(HashMap::new(), |mut m, g| {
                     m.insert(g.home_team_id, g.home_elo_post);
                     m.insert(g.away_team_id, g.away_elo_post);
@@ -121,13 +138,28 @@ impl JobSpec for PlayoffJob {
                 t.elo = *e;
             }
         }
-        let actual_champion = bracket.teams.iter().find(|t| t.actual_result == Some(PlayoffResult::Champion)).map(|t| t.code.clone());
+        let actual_champion = bracket
+            .teams
+            .iter()
+            .find(|t| t.actual_result == Some(PlayoffResult::Champion))
+            .map(|t| t.code.clone());
         let information_cutoff = data.pre_playoff_cutoff();
         let progress = ctx.progress;
         let model = self.model.clone();
         let b2 = bracket.clone();
-        let simulation = tokio::task::spawn_blocking(move || model.simulate(&b2, self.iterations, self.seed, &progress)).await?;
-        Ok(PlayoffOutput { bracket, simulation, model: self.model, elo_source: self.elo_source, information_cutoff, actual_champion })
+        let simulation = tokio::task::spawn_blocking(move || {
+            model.simulate(&b2, self.iterations, self.seed, &progress)
+        })
+        .await
+        .map_err(|e| JobError::Execution(e.to_string()))?;
+        Ok(PlayoffOutput {
+            bracket,
+            simulation,
+            model: self.model,
+            elo_source: self.elo_source,
+            information_cutoff,
+            actual_champion,
+        })
     }
 }
 
@@ -148,12 +180,19 @@ impl JobSpec for SeasonJob {
     fn seed(&self) -> Option<i64> {
         Some(self.0.seed as i64)
     }
-    async fn execute(self, ctx: JobContext) -> anyhow::Result<SeasonForecast> {
-        let data = ctx.app.season_data(self.0.season).await?;
+    async fn execute(self, ctx: JobContext) -> Result<SeasonForecast, JobError> {
+        let data = ctx
+            .app
+            .season_data(self.0.season)
+            .await
+            .map_err(|e| JobError::Execution(e.to_string()))?;
         let teams = ctx.app.teams().await?;
         let progress = ctx.progress;
         let params = self.0;
-        Ok(tokio::task::spawn_blocking(move || season::run(&params, &data.games, &teams, &progress)).await??)
+        tokio::task::spawn_blocking(move || season::run(&params, &data.games, &teams, &progress))
+            .await
+            .map_err(|e| JobError::Execution(e.to_string()))?
+            .map_err(|e| JobError::Execution(e.to_string()))
     }
 }
 
@@ -171,52 +210,67 @@ impl JobSpec for BacktestJob {
     fn validate(&self, _: &Limits) -> Result<(), String> {
         self.0.validate()
     }
-    async fn execute(self, ctx: JobContext) -> anyhow::Result<BacktestResult> {
+    async fn execute(self, ctx: JobContext) -> Result<BacktestResult, JobError> {
         let params = self.0;
-        let seasons = db::analysis::complete_playoff_seasons(&ctx.app.pool, params.from_season, params.to_season).await?;
+        let complete = ctx
+            .app
+            .store
+            .complete_playoff_seasons(params.from_season, params.to_season)
+            .await?;
         let mut inputs = Vec::new();
         let mut skipped = Vec::new();
-        let total = (params.to_season - params.from_season + 1) as f64;
-        for s in params.from_season..=params.to_season {
-            ctx.progress.report(0.5 * (s - params.from_season) as f64 / total);
-            if !seasons.contains(&s) {
-                skipped.push((s, "no complete playoff record in the imported data".to_string()));
+        let total = params.to_season.seasons_since(params.from_season).max(1) as f64;
+        for (i, season) in SeasonYear::range(params.from_season, params.to_season).enumerate() {
+            ctx.progress.report(0.5 * i as f64 / total);
+            if !complete.contains(&season) {
+                skipped.push((
+                    season,
+                    "no complete playoff record in the imported data".to_string(),
+                ));
                 continue;
             }
-            let data = match ctx.app.season_data(s).await {
+            let data = match ctx.app.season_data(season).await {
                 Ok(d) => d,
                 Err(e) => {
-                    skipped.push((s, e.to_string()));
+                    skipped.push((season, e.to_string()));
                     continue;
                 }
             };
             match (&data.reconstruction, data.pre_playoff_cutoff()) {
-                (Ok(r), Some(cutoff)) if r.complete => inputs.push(SeasonInput { season: s, bracket: r.bracket.clone(), cutoff }),
-                (Ok(_), _) => skipped.push((s, "postseason incomplete".into())),
-                (Err(e), _) => skipped.push((s, e.to_string())),
+                (Ok(r), Some(cutoff)) if r.complete => inputs.push(SeasonInput {
+                    season,
+                    bracket: r.bracket.clone(),
+                    cutoff,
+                }),
+                (Ok(_), _) => skipped.push((season, "postseason incomplete".into())),
+                (Err(e), _) => skipped.push((season, e.to_string())),
             }
         }
-        let result = tokio::task::spawn_blocking(move || backtesting::run(&params, &inputs, skipped)).await?;
+        let cutoffs: HashMap<SeasonYear, chrono::NaiveDate> =
+            inputs.iter().map(|i| (i.season, i.cutoff)).collect();
+        let result =
+            tokio::task::spawn_blocking(move || backtesting::run(&params, &inputs, skipped))
+                .await
+                .map_err(|e| JobError::Execution(e.to_string()))?;
         ctx.progress.report(0.9);
         // Persist per-team forecasts for the validation page.
         for model in &result.models {
             for f in &model.forecasts {
-                let cutoff = match ctx.app.season_data(f.season).await.ok().and_then(|d| d.pre_playoff_cutoff()) {
-                    Some(c) => c,
-                    None => chrono::NaiveDate::from_ymd_opt(f.season, 4, 1).expect("valid date"),
+                let Some(&cutoff) = cutoffs.get(&f.season) else {
+                    continue;
                 };
-                let row = db::analysis::NewForecast {
+                let row = NewForecast {
                     job_id: ctx.job_id,
                     model: &model.name,
                     season: f.season,
-                    team_id: f.team_id,
+                    team: f.team_id,
                     seed: Some(i32::from(f.seed)),
                     probs: f.probs,
                     actual_result: f.actual,
                     actual_champion: f.champion,
                     cutoff,
                 };
-                db::analysis::insert_forecast(&ctx.app.pool, &row).await?;
+                ctx.app.store.insert_forecast(&row).await?;
             }
         }
         ctx.progress.report(1.0);
@@ -238,7 +292,9 @@ impl JobSpec for DynastyJob {
     fn validate(&self, _: &Limits) -> Result<(), String> {
         self.0.validate()
     }
-    async fn execute(self, ctx: JobContext) -> anyhow::Result<DynastyReport> {
-        dynasty::analyze(&ctx.app, &self.0).await
+    async fn execute(self, ctx: JobContext) -> Result<DynastyReport, JobError> {
+        dynasty::analyze(&ctx.app, &self.0)
+            .await
+            .map_err(|e| JobError::Execution(e.to_string()))
     }
 }

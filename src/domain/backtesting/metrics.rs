@@ -6,7 +6,11 @@ use crate::domain::simulation::stats::wilson_interval;
 
 /// Multi-class Brier score: Σ (p_i − y_i)² over the candidate set.
 pub fn multiclass_brier(probs: &[f64], outcomes: &[bool]) -> f64 {
-    probs.iter().zip(outcomes).map(|(p, &y)| (p - if y { 1.0 } else { 0.0 }).powi(2)).sum()
+    probs
+        .iter()
+        .zip(outcomes)
+        .map(|(p, &y)| (p - if y { 1.0 } else { 0.0 }).powi(2))
+        .sum()
 }
 
 /// −ln p of the realised outcome, floored to avoid infinities.
@@ -70,10 +74,15 @@ pub fn calibration(pairs: &[(f64, bool)]) -> Vec<CalibrationBin> {
         .windows(2)
         .map(|w| {
             let (lo, hi) = (w[0], w[1]);
-            let in_bin: Vec<&(f64, bool)> = pairs.iter().filter(|(p, _)| *p >= lo && *p < hi).collect();
+            let in_bin: Vec<&(f64, bool)> =
+                pairs.iter().filter(|(p, _)| *p >= lo && *p < hi).collect();
             let count = in_bin.len();
             let hits = in_bin.iter().filter(|(_, y)| *y).count() as f64;
-            let mean_predicted = if count > 0 { in_bin.iter().map(|(p, _)| p).sum::<f64>() / count as f64 } else { 0.0 };
+            let mean_predicted = if count > 0 {
+                in_bin.iter().map(|(p, _)| p).sum::<f64>() / count as f64
+            } else {
+                0.0
+            };
             CalibrationBin {
                 lower: lo,
                 upper: hi.min(1.0),
@@ -98,7 +107,11 @@ mod tests {
         let mut perfect = vec![0.0; 16];
         perfect[0] = 1.0;
         assert_abs_diff_eq!(multiclass_brier(&perfect, &outcomes), 0.0, epsilon = 1e-12);
-        assert_abs_diff_eq!(multiclass_brier(&[1.0 / 16.0; 16], &outcomes), 0.9375, epsilon = 1e-12);
+        assert_abs_diff_eq!(
+            multiclass_brier(&[1.0 / 16.0; 16], &outcomes),
+            0.9375,
+            epsilon = 1e-12
+        );
     }
 
     #[test]

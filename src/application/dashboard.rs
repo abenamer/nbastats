@@ -1,32 +1,43 @@
-//! Dashboard aggregates: historical title distribution and concentration versus theory.
+//! Use case: dashboard aggregates (title distribution and concentration versus theory).
 
 use std::collections::BTreeMap;
 
 use serde::Serialize;
 
-use crate::application::state::App;
-use crate::adapters::postgres as db;
+use crate::domain::ids::SeasonYear;
 use crate::domain::simulation::alpha::{self, AlphaParams};
 use crate::domain::simulation::exact;
 use crate::domain::simulation::progress::Silent;
 use crate::domain::simulation::stats;
+
+use super::ports::{AnalysisStore, GameLog, StoreError};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct FranchiseTitles {
     pub key: String,
     pub name: String,
     pub titles: i64,
-    pub seasons: Vec<i32>,
+    pub seasons: Vec<SeasonYear>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ChampionRow {
+    pub season: SeasonYear,
+    pub label: String,
+    pub champion: String,
+    pub champion_name: String,
+    pub runner_up: Option<String>,
+    pub source: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
 pub struct DashboardData {
-    pub from_season: i32,
-    pub to_season: i32,
+    pub from_season: SeasonYear,
+    pub to_season: SeasonYear,
     pub seasons_with_champion: usize,
     pub franchise_count: usize,
     pub titles: Vec<FranchiseTitles>,
-    pub champions: Vec<db_view::ChampionRow>,
+    pub champions: Vec<ChampionRow>,
     pub gini: f64,
     pub hhi: f64,
     pub top5_share: f64,
@@ -40,28 +51,30 @@ pub struct DashboardData {
     pub expected_gini_equal: f64,
     pub expected_hhi_equal: f64,
     pub expected_top5_equal: f64,
-    pub latest_season: Option<i32>,
+    pub latest_season: Option<SeasonYear>,
     pub game_count: i64,
 }
 
-pub mod db_view {
-    #[derive(Debug, Clone, serde::Serialize)]
-    pub struct ChampionRow {
-        pub season: i32,
-        pub label: String,
-        pub champion: String,
-        pub champion_name: String,
-        pub runner_up: Option<String>,
-        pub source: String,
-    }
-}
-
-pub async fn build(app: &App, from: i32, to: i32) -> anyhow::Result<DashboardData> {
-    let franchises = db::teams::active_franchises(&app.pool).await?;
-    let champions = db::analysis::championships(&app.pool, from, to).await?;
+pub async fn build<S: GameLog + AnalysisStore>(
+    store: &S,
+    from: SeasonYear,
+    to: SeasonYear,
+) -> Result<DashboardData, StoreError> {
+    let franchises = store.franchises(true).await?;
+    let champions = store.championships(from, to).await?;
     let mut by_key: BTreeMap<String, FranchiseTitles> = franchises
         .iter()
-        .map(|f| (f.key.clone(), FranchiseTitles { key: f.key.clone(), name: f.name.clone(), titles: 0, seasons: vec![] }))
+        .map(|f| {
+            (
+                f.key.clone(),
+                FranchiseTitles {
+                    key: f.key.clone(),
+                    name: f.name.clone(),
+                    titles: 0,
+                    seasons: vec![],
+                },
+            )
+        })
         .collect();
     for c in &champions {
         if let Some(f) = by_key.get_mut(&c.franchise_key) {
@@ -82,8 +95,15 @@ pub async fn build(app: &App, from: i32, to: i32) -> anyhow::Result<DashboardDat
     let equal = vec![1.0; n_fr];
     let (expected_by_count_equal, eg, eh, et) = if n_seasons > 0 {
         let p = AlphaParams::equal(n_fr, n_seasons, 20_000, 1, 7);
-        let r = tokio::task::spawn_blocking(move || alpha::run(&p, &Silent)).await?;
-        (r.franchises_by_title_count, r.gini_mean, r.hhi_mean, r.top5_share_mean)
+        let r = tokio::task::spawn_blocking(move || alpha::run(&p, &Silent))
+            .await
+            .map_err(|e| StoreError::Query(format!("simulation task failed: {e}")))?;
+        (
+            r.franchises_by_title_count,
+            r.gini_mean,
+            r.hhi_mean,
+            r.top5_share_mean,
+        )
     } else {
         (vec![], 0.0, 0.0, 0.0)
     };
@@ -94,9 +114,9 @@ pub async fn build(app: &App, from: i32, to: i32) -> anyhow::Result<DashboardDat
         franchise_count: n_fr,
         champions: champions
             .iter()
-            .map(|c| db_view::ChampionRow {
+            .map(|c| ChampionRow {
                 season: c.season,
-                label: crate::domain::reference::season_label(c.season),
+                label: c.season.label(),
                 champion: c.franchise_key.clone(),
                 champion_name: c.champion_name.clone(),
                 runner_up: c.runner_up_code.clone(),
@@ -110,12 +130,20 @@ pub async fn build(app: &App, from: i32, to: i32) -> anyhow::Result<DashboardDat
         max_titles,
         observed_by_count,
         expected_by_count_equal,
-        p_any_at_least_max_equal: if n_seasons > 0 { exact::p_any_at_least(&equal, n_seasons, max_titles.max(1) as usize) } else { 0.0 },
-        p_any_at_least_4_equal: if n_seasons >= 4 { exact::p_any_at_least(&equal, n_seasons, 4) } else { 0.0 },
+        p_any_at_least_max_equal: if n_seasons > 0 {
+            exact::p_any_at_least(&equal, n_seasons, max_titles.max(1) as usize)
+        } else {
+            0.0
+        },
+        p_any_at_least_4_equal: if n_seasons >= 4 {
+            exact::p_any_at_least(&equal, n_seasons, 4)
+        } else {
+            0.0
+        },
         expected_gini_equal: eg,
         expected_hhi_equal: eh,
         expected_top5_equal: et,
-        latest_season: db::games::latest_season(&app.pool).await?,
-        game_count: db::games::game_count(&app.pool).await?,
+        latest_season: store.latest_season().await?,
+        game_count: store.game_count().await?,
     })
 }

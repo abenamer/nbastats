@@ -22,7 +22,10 @@ pub fn router(app: State) -> Router {
         .route("/health", get(api::health))
         .route("/seasons", get(api::seasons))
         .route("/seasons/{season}/teams", get(api::season_teams))
-        .route("/seasons/{season}/elo-history", get(api::season_elo_history))
+        .route(
+            "/seasons/{season}/elo-history",
+            get(api::season_elo_history),
+        )
         .route("/seasons/{season}/bracket", get(api::season_bracket))
         .route("/franchises", get(api::franchises))
         .route("/franchises/{key}/elo", get(api::franchise_elo))
@@ -64,4 +67,3 @@ pub fn router(app: State) -> Router {
         .layer(TraceLayer::new_for_http())
         .with_state(app)
 }
-

@@ -67,7 +67,9 @@ pub fn max_titles_distribution(probs: &[f64], seasons: usize) -> Vec<f64> {
     for k in 0..=seasons + 1 {
         cdf.push(p_all_below(probs, seasons, k));
     }
-    (0..=seasons).map(|j| (cdf[j + 1] - cdf[j]).max(0.0)).collect()
+    (0..=seasons)
+        .map(|j| (cdf[j + 1] - cdf[j]).max(0.0))
+        .collect()
 }
 
 fn factorials(n: usize) -> Vec<f64> {

@@ -18,7 +18,14 @@ pub fn home_win_probability(home_elo: f64, away_elo: f64, home_advantage: f64) -
 
 /// Win probability for team A against B where `a_home` says whether A hosts.
 /// `neutral` disables the home-court bonus.
-pub fn game_probability(elo_a: f64, elo_b: f64, a_home: bool, neutral: bool, home_advantage: f64, scale: f64) -> f64 {
+pub fn game_probability(
+    elo_a: f64,
+    elo_b: f64,
+    a_home: bool,
+    neutral: bool,
+    home_advantage: f64,
+    scale: f64,
+) -> f64 {
     let diff = (elo_a - elo_b) * scale;
     let adj = if neutral {
         0.0
@@ -43,7 +50,10 @@ pub fn update(elo_a: f64, elo_b: f64, expected_a: f64, a_won: bool, k: f64) -> (
 /// the required number of wins. `game_probs.len()` must be at least `n`.
 pub fn series_probability(game_probs: &[f64]) -> f64 {
     let n = game_probs.len();
-    assert!(n % 2 == 1 && n >= 1, "series must have an odd number of games");
+    assert!(
+        n % 2 == 1 && n >= 1,
+        "series must have an odd number of games"
+    );
     let need = n / 2 + 1;
     // dp[a][b] = probability of state with A having a wins and B having b wins
     let mut dp = vec![vec![0.0f64; need + 1]; need + 1];
@@ -93,7 +103,11 @@ pub fn series_game_probs(
     pattern
         .iter()
         .map(|&hc_team_hosts| {
-            let a_home = if a_home_court { hc_team_hosts } else { !hc_team_hosts };
+            let a_home = if a_home_court {
+                hc_team_hosts
+            } else {
+                !hc_team_hosts
+            };
             game_probability(elo_a, elo_b, a_home, neutral, home_advantage, scale)
         })
         .collect()
@@ -111,15 +125,27 @@ mod tests {
 
     #[test]
     fn four_hundred_points_is_ten_to_one() {
-        assert_abs_diff_eq!(win_probability(1900.0, 1500.0), 10.0 / 11.0, epsilon = 1e-12);
+        assert_abs_diff_eq!(
+            win_probability(1900.0, 1500.0),
+            10.0 / 11.0,
+            epsilon = 1e-12
+        );
     }
 
     #[test]
     fn home_court_matches_fivethirtyeight_file() {
         // First row of nba_elo.csv: TRH 1300 vs NYK 1300 at home -> 0.640065
-        assert_abs_diff_eq!(home_win_probability(1300.0, 1300.0, 100.0), 0.640065, epsilon = 1e-5);
+        assert_abs_diff_eq!(
+            home_win_probability(1300.0, 1300.0, 100.0),
+            0.640065,
+            epsilon = 1e-5
+        );
         // 2016 Finals G7: GSW 1764.828667 home vs CLE 1749.839437 -> 0.659694076
-        assert_abs_diff_eq!(home_win_probability(1764.828667, 1749.839437, 100.0), 0.659694076, epsilon = 1e-6);
+        assert_abs_diff_eq!(
+            home_win_probability(1764.828667, 1749.839437, 100.0),
+            0.659694076,
+            epsilon = 1e-6
+        );
     }
 
     #[test]
@@ -145,9 +171,29 @@ mod tests {
 
     #[test]
     fn series_probability_with_home_pattern_is_order_sensitive_but_symmetric() {
-        let a = series_game_probs(1600.0, 1550.0, true, &HOME_PATTERN_2_2_1_1_1, false, 100.0, 1.0);
-        let b = series_game_probs(1550.0, 1600.0, false, &HOME_PATTERN_2_2_1_1_1, false, 100.0, 1.0);
-        assert_abs_diff_eq!(series_probability(&a) + series_probability(&b), 1.0, epsilon = 1e-12);
+        let a = series_game_probs(
+            1600.0,
+            1550.0,
+            true,
+            &HOME_PATTERN_2_2_1_1_1,
+            false,
+            100.0,
+            1.0,
+        );
+        let b = series_game_probs(
+            1550.0,
+            1600.0,
+            false,
+            &HOME_PATTERN_2_2_1_1_1,
+            false,
+            100.0,
+            1.0,
+        );
+        assert_abs_diff_eq!(
+            series_probability(&a) + series_probability(&b),
+            1.0,
+            epsilon = 1e-12
+        );
         assert!(series_probability(&a) > 0.5);
     }
 

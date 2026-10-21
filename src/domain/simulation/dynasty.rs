@@ -2,6 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::domain::ids::SeasonYear;
 use crate::domain::models::PlayoffResult;
 use crate::domain::simulation::stats::{poisson_binomial_pmf, tail_at_least};
 
@@ -9,7 +10,7 @@ pub const MODEL_VERSION: &str = "dynasty-1.0";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DynastySeason {
-    pub season: i32,
+    pub season: SeasonYear,
     pub code: String,
     pub wins: i32,
     pub losses: i32,
@@ -42,8 +43,8 @@ pub struct DynastyReport {
     pub model_version: String,
     pub franchise_key: String,
     pub franchise_name: String,
-    pub from_season: i32,
-    pub to_season: i32,
+    pub from_season: SeasonYear,
+    pub to_season: SeasonYear,
     pub alpha: f64,
     pub seasons: Vec<DynastySeason>,
     pub actual_titles: usize,
@@ -61,8 +62,14 @@ pub fn compare(seasons: &[DynastySeason], actual: usize) -> Vec<ModelComparison>
         }
     };
     vec![
-        make("equal_lottery", seasons.iter().map(|s| s.p_lottery).collect()),
-        make("persistent_alpha", seasons.iter().map(|s| s.p_alpha).collect()),
+        make(
+            "equal_lottery",
+            seasons.iter().map(|s| s.p_lottery).collect(),
+        ),
+        make(
+            "persistent_alpha",
+            seasons.iter().map(|s| s.p_alpha).collect(),
+        ),
         make("historical_elo", seasons.iter().map(|s| s.p_elo).collect()),
     ]
 }
@@ -76,7 +83,7 @@ mod tests {
     fn comparisons_are_consistent() {
         let seasons: Vec<DynastySeason> = (0..4)
             .map(|i| DynastySeason {
-                season: 2015 + i,
+                season: SeasonYear::of(2015 + i),
                 code: "GSW".into(),
                 wins: 60,
                 losses: 22,
@@ -93,7 +100,11 @@ mod tests {
             })
             .collect();
         let c = compare(&seasons, 4);
-        assert_abs_diff_eq!(c[0].p_at_least_actual, (1.0f64 / 30.0).powi(4), epsilon = 1e-12);
+        assert_abs_diff_eq!(
+            c[0].p_at_least_actual,
+            (1.0f64 / 30.0).powi(4),
+            epsilon = 1e-12
+        );
         assert_abs_diff_eq!(c[2].expected_titles, 2.0, epsilon = 1e-12);
         assert_abs_diff_eq!(c[2].p_at_least_actual, 0.0625, epsilon = 1e-12);
     }

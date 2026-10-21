@@ -8,6 +8,7 @@ use std::collections::BTreeMap;
 use chrono::NaiveDate;
 use serde::{Deserialize, Serialize};
 
+use crate::domain::ids::{SeasonYear, TeamId};
 use crate::domain::models::PlayoffResult;
 use crate::domain::playoffs::bracket::{Bracket, ModelSpec};
 
@@ -23,14 +24,18 @@ pub struct TuningGrid {
 
 impl Default for TuningGrid {
     fn default() -> Self {
-        Self { home_advantages: vec![0.0, 50.0, 100.0, 150.0], scales: vec![0.75, 1.0, 1.25, 1.5, 1.75], min_train_seasons: 5 }
+        Self {
+            home_advantages: vec![0.0, 50.0, 100.0, 150.0],
+            scales: vec![0.75, 1.0, 1.25, 1.5, 1.75],
+            min_train_seasons: 5,
+        }
     }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BacktestParams {
-    pub from_season: i32,
-    pub to_season: i32,
+    pub from_season: SeasonYear,
+    pub to_season: SeasonYear,
     #[serde(default = "default_models")]
     pub models: Vec<ModelSpec>,
     #[serde(default = "default_tuning")]
@@ -38,7 +43,12 @@ pub struct BacktestParams {
 }
 
 fn default_models() -> Vec<ModelSpec> {
-    vec![ModelSpec::default(), ModelSpec::Equal, ModelSpec::WinPct, ModelSpec::Seed { p_better: 0.75 }]
+    vec![
+        ModelSpec::default(),
+        ModelSpec::Equal,
+        ModelSpec::WinPct,
+        ModelSpec::Seed { p_better: 0.75 },
+    ]
 }
 fn default_tuning() -> Option<TuningGrid> {
     Some(TuningGrid::default())
@@ -46,8 +56,10 @@ fn default_tuning() -> Option<TuningGrid> {
 
 impl BacktestParams {
     pub fn validate(&self) -> Result<(), String> {
-        if self.from_season < 1984 || self.to_season < self.from_season || self.to_season - self.from_season > 100 {
-            return Err("season range must start in 1984 or later and be at most 100 seasons".into());
+        if self.from_season.end_year() < 1984 || self.to_season < self.from_season {
+            return Err(
+                "season range must start in 1983-84 or later and end after it starts".into(),
+            );
         }
         if self.models.is_empty() || self.models.len() > 12 {
             return Err("between 1 and 12 models are allowed".into());
@@ -56,7 +68,10 @@ impl BacktestParams {
             m.validate()?;
         }
         if let Some(t) = &self.tuning {
-            if t.home_advantages.is_empty() || t.scales.is_empty() || t.home_advantages.len() * t.scales.len() > 400 {
+            if t.home_advantages.is_empty()
+                || t.scales.is_empty()
+                || t.home_advantages.len() * t.scales.len() > 400
+            {
                 return Err("tuning grid must have between 1 and 400 points".into());
             }
         }
@@ -66,15 +81,15 @@ impl BacktestParams {
 
 /// One season's bracket together with the information cutoff used to build it.
 pub struct SeasonInput {
-    pub season: i32,
+    pub season: SeasonYear,
     pub bracket: Bracket,
     pub cutoff: NaiveDate,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TeamForecastRow {
-    pub season: i32,
-    pub team_id: i32,
+    pub season: SeasonYear,
+    pub team_id: TeamId,
     pub code: String,
     pub franchise_key: String,
     pub seed: u8,
@@ -85,7 +100,7 @@ pub struct TeamForecastRow {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SeasonScore {
-    pub season: i32,
+    pub season: SeasonYear,
     pub champion: String,
     pub favorite: String,
     pub favorite_prob: f64,
@@ -104,16 +119,16 @@ pub struct ModelReport {
     pub calibration: BTreeMap<String, Vec<metrics::CalibrationBin>>,
     pub forecasts: Vec<TeamForecastRow>,
     /// For the rolling-tuned model: the parameters chosen for each evaluated season.
-    pub chosen_params: Option<Vec<(i32, f64, f64)>>,
+    pub chosen_params: Option<Vec<(SeasonYear, f64, f64)>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BacktestResult {
     pub model_version: String,
-    pub from_season: i32,
-    pub to_season: i32,
-    pub seasons_evaluated: Vec<i32>,
-    pub seasons_skipped: Vec<(i32, String)>,
+    pub from_season: SeasonYear,
+    pub to_season: SeasonYear,
+    pub seasons_evaluated: Vec<SeasonYear>,
+    pub seasons_skipped: Vec<(SeasonYear, String)>,
     pub models: Vec<ModelReport>,
     /// Best in-sample grid point over all seasons (reported for transparency; not a fair score).
     pub in_sample_best: Option<(f64, f64, f64)>,
@@ -121,7 +136,9 @@ pub struct BacktestResult {
 }
 
 fn forecast_rows(input: &SeasonInput, spec: &ModelSpec) -> Vec<TeamForecastRow> {
-    let exact = spec.exact(&input.bracket).expect("backtest models are stateless");
+    let exact = spec
+        .exact(&input.bracket)
+        .expect("backtest models are stateless");
     input
         .bracket
         .teams
@@ -141,8 +158,14 @@ fn forecast_rows(input: &SeasonInput, spec: &ModelSpec) -> Vec<TeamForecastRow> 
 }
 
 fn score_season(rows: &[TeamForecastRow]) -> SeasonScore {
-    let champ = rows.iter().find(|r| r.champion).expect("complete season has a champion");
-    let fav = rows.iter().max_by(|a, b| a.probs[3].partial_cmp(&b.probs[3]).unwrap()).expect("16 teams");
+    let champ = rows
+        .iter()
+        .find(|r| r.champion)
+        .expect("complete season has a champion");
+    let fav = rows
+        .iter()
+        .max_by(|a, b| a.probs[3].partial_cmp(&b.probs[3]).unwrap())
+        .expect("16 teams");
     let probs: Vec<f64> = rows.iter().map(|r| r.probs[3]).collect();
     let outcomes: Vec<bool> = rows.iter().map(|r| r.champion).collect();
     SeasonScore {
@@ -157,8 +180,13 @@ fn score_season(rows: &[TeamForecastRow]) -> SeasonScore {
     }
 }
 
-fn build_report(name: String, spec: Option<ModelSpec>, forecasts: Vec<TeamForecastRow>, chosen: Option<Vec<(i32, f64, f64)>>) -> ModelReport {
-    let mut by_season: BTreeMap<i32, Vec<&TeamForecastRow>> = BTreeMap::new();
+fn build_report(
+    name: String,
+    spec: Option<ModelSpec>,
+    forecasts: Vec<TeamForecastRow>,
+    chosen: Option<Vec<(SeasonYear, f64, f64)>>,
+) -> ModelReport {
+    let mut by_season: BTreeMap<SeasonYear, Vec<&TeamForecastRow>> = BTreeMap::new();
     for r in &forecasts {
         by_season.entry(r.season).or_default().push(r);
     }
@@ -178,33 +206,64 @@ fn build_report(name: String, spec: Option<ModelSpec>, forecasts: Vec<TeamForeca
         ("champion", 3, PlayoffResult::Champion),
     ];
     for (label, idx, at_least) in stages {
-        let pairs: Vec<(f64, bool)> = forecasts.iter().map(|r| (r.probs[idx], r.actual >= at_least)).collect();
+        let pairs: Vec<(f64, bool)> = forecasts
+            .iter()
+            .map(|r| (r.probs[idx], r.actual >= at_least))
+            .collect();
         calibration.insert(label.to_string(), metrics::calibration(&pairs));
     }
-    ModelReport { name, spec, seasons, summary, calibration, forecasts, chosen_params: chosen }
+    ModelReport {
+        name,
+        spec,
+        seasons,
+        summary,
+        calibration,
+        forecasts,
+        chosen_params: chosen,
+    }
 }
 
 /// Run the backtest over prepared season inputs (already restricted to complete seasons).
-pub fn run(params: &BacktestParams, inputs: &[SeasonInput], skipped: Vec<(i32, String)>) -> BacktestResult {
+pub fn run(
+    params: &BacktestParams,
+    inputs: &[SeasonInput],
+    skipped: Vec<(SeasonYear, String)>,
+) -> BacktestResult {
     let start = std::time::Instant::now();
     let mut models = Vec::new();
     let mut seen_names: BTreeMap<&str, usize> = BTreeMap::new();
     for spec in &params.models {
         let n = seen_names.entry(spec.name()).or_insert(0);
         *n += 1;
-        let name = if *n == 1 { spec.name().to_string() } else { format!("{}_{}", spec.name(), n) };
-        let forecasts: Vec<TeamForecastRow> = inputs.iter().flat_map(|i| forecast_rows(i, spec)).collect();
+        let name = if *n == 1 {
+            spec.name().to_string()
+        } else {
+            format!("{}_{}", spec.name(), n)
+        };
+        let forecasts: Vec<TeamForecastRow> =
+            inputs.iter().flat_map(|i| forecast_rows(i, spec)).collect();
         models.push(build_report(name, Some(spec.clone()), forecasts, None));
     }
     let mut in_sample_best = None;
     if let Some(grid) = &params.tuning {
         // Log loss of every grid point on every season, computed once.
-        let points: Vec<(f64, f64)> = grid.home_advantages.iter().flat_map(|&h| grid.scales.iter().map(move |&s| (h, s))).collect();
+        let points: Vec<(f64, f64)> = grid
+            .home_advantages
+            .iter()
+            .flat_map(|&h| grid.scales.iter().map(move |&s| (h, s)))
+            .collect();
         let losses: Vec<Vec<f64>> = points
             .iter()
             .map(|&(h, s)| {
-                let spec = ModelSpec::Elo { home_advantage: h, scale: s, k: None };
-                inputs.iter().map(|i| score_season(&forecast_rows(i, &spec)).log_loss).collect()
+                let spec = ModelSpec::Elo {
+                    home_advantage: h,
+                    scale: s,
+                    k: None,
+                };
+                inputs
+                    .iter()
+                    .map(|i| score_season(&forecast_rows(i, &spec)).log_loss)
+                    .collect()
             })
             .collect();
         // in-sample best (for transparency only)
@@ -232,10 +291,22 @@ pub fn run(params: &BacktestParams, inputs: &[SeasonInput], skipped: Vec<(i32, S
                 .expect("non-empty grid");
             let (h, s) = points[best];
             chosen.push((input.season, h, s));
-            forecasts.extend(forecast_rows(input, &ModelSpec::Elo { home_advantage: h, scale: s, k: None }));
+            forecasts.extend(forecast_rows(
+                input,
+                &ModelSpec::Elo {
+                    home_advantage: h,
+                    scale: s,
+                    k: None,
+                },
+            ));
         }
         if !forecasts.is_empty() {
-            models.push(build_report("elo_tuned_rolling".into(), None, forecasts, Some(chosen)));
+            models.push(build_report(
+                "elo_tuned_rolling".into(),
+                None,
+                forecasts,
+                Some(chosen),
+            ));
         }
     }
     BacktestResult {
@@ -255,28 +326,49 @@ mod tests {
     use super::*;
     use crate::domain::playoffs::bracket::test_bracket;
 
-    fn input(season: i32, champ_slot: usize) -> SeasonInput {
+    fn input(year: i32, champ_slot: usize) -> SeasonInput {
+        let season = SeasonYear::of(year);
         let mut elos = [1500.0; 16];
         elos[champ_slot] = 1650.0;
         let mut b = test_bracket(elos);
         b.season = season;
         for (i, t) in b.teams.iter_mut().enumerate() {
-            t.actual_result = Some(if i == champ_slot { PlayoffResult::Champion } else { PlayoffResult::FirstRound });
+            t.actual_result = Some(if i == champ_slot {
+                PlayoffResult::Champion
+            } else {
+                PlayoffResult::FirstRound
+            });
         }
-        SeasonInput { season, bracket: b, cutoff: NaiveDate::from_ymd_opt(season, 4, 15).unwrap() }
+        SeasonInput {
+            season,
+            bracket: b,
+            cutoff: NaiveDate::from_ymd_opt(year, 4, 15).expect("valid date"),
+        }
     }
 
     #[test]
     fn elo_beats_equal_when_favourite_wins() {
         let inputs: Vec<SeasonInput> = (2010..2016).map(|s| input(s, (s as usize) % 16)).collect();
-        let params = BacktestParams { from_season: 2010, to_season: 2015, models: default_models(), tuning: Some(TuningGrid { min_train_seasons: 2, ..Default::default() }) };
+        let params = BacktestParams {
+            from_season: SeasonYear::of(2010),
+            to_season: SeasonYear::of(2015),
+            models: default_models(),
+            tuning: Some(TuningGrid {
+                min_train_seasons: 2,
+                ..Default::default()
+            }),
+        };
         let r = run(&params, &inputs, vec![]);
         let elo = r.models.iter().find(|m| m.name == "elo").unwrap();
         let equal = r.models.iter().find(|m| m.name == "equal").unwrap();
         assert!(elo.summary.mean_log_loss < equal.summary.mean_log_loss);
         assert_eq!(elo.summary.top_pick_accuracy, 1.0);
         assert!((equal.summary.mean_p_winner - 1.0 / 16.0).abs() < 1e-9);
-        let tuned = r.models.iter().find(|m| m.name == "elo_tuned_rolling").unwrap();
+        let tuned = r
+            .models
+            .iter()
+            .find(|m| m.name == "elo_tuned_rolling")
+            .unwrap();
         assert_eq!(tuned.seasons.len(), 4);
         assert!(r.in_sample_best.is_some());
         assert_eq!(elo.forecasts.len(), 16 * 6);

@@ -52,7 +52,8 @@ impl<'a, P: Progress + ?Sized> ChunkTracker<'a, P> {
     pub fn chunk_done(&self) {
         let d = self.done.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
         if !self.sink.report(d as f64 / self.total as f64) {
-            self.cancelled.store(true, std::sync::atomic::Ordering::Relaxed);
+            self.cancelled
+                .store(true, std::sync::atomic::Ordering::Relaxed);
         }
     }
 }

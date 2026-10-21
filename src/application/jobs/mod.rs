@@ -1,10 +1,10 @@
 //! Background job runner.
 //!
 //! A job is any type implementing [`JobSpec`]; the blanket [`Submit`] impl gives every spec a
-//! `submit` method that validates, serialises and queues it. The runner claims queued jobs
-//! one at a time, executes the CPU-bound part on the blocking pool (Rayon inside), streams
-//! progress to PostgreSQL, and records completion, failure, cancellation or interruption
-//! through the `JobStatus` state machine.
+//! `submit` method that validates, serialises and queues it through the `JobStore` port. The
+//! runner claims queued jobs one at a time, executes the CPU-bound part on the blocking pool
+//! (Rayon inside), streams progress to the store, and records completion, failure,
+//! cancellation or interruption through the `JobStatus` state machine.
 
 pub mod specs;
 
@@ -18,11 +18,12 @@ use serde::Serialize;
 use tracing::{error, info, warn};
 use uuid::Uuid;
 
-use crate::application::state::App;
 use crate::config::APP_VERSION;
-use crate::adapters::postgres as db;
 use crate::domain::models::{JobEvent, JobKind, JobStatus, SimulationJob};
 use crate::domain::simulation::progress::Progress;
+
+use super::ports::{JobOutcome, JobStore, NewJob, StoreError};
+use super::state::App;
 
 #[derive(Debug, Clone)]
 pub struct Limits {
@@ -35,7 +36,7 @@ pub struct JobContext {
     pub progress: ProgressHandle,
 }
 
-/// A progress sink shared between the engine thread and the database flusher.
+/// A progress sink shared between the engine thread and the store flusher.
 #[derive(Clone, Default)]
 pub struct ProgressHandle {
     latest_bits: Arc<AtomicU64>,
@@ -44,7 +45,10 @@ pub struct ProgressHandle {
 
 impl ProgressHandle {
     pub fn new(cancel: Arc<AtomicBool>) -> Self {
-        Self { latest_bits: Arc::new(AtomicU64::new(0)), cancel }
+        Self {
+            latest_bits: Arc::new(AtomicU64::new(0)),
+            cancel,
+        }
     }
     pub fn latest(&self) -> f64 {
         f64::from_bits(self.latest_bits.load(Ordering::Relaxed))
@@ -56,8 +60,27 @@ impl ProgressHandle {
 
 impl Progress for ProgressHandle {
     fn report(&self, fraction: f64) -> bool {
-        self.latest_bits.store(fraction.to_bits(), Ordering::Relaxed);
+        self.latest_bits
+            .store(fraction.to_bits(), Ordering::Relaxed);
         !self.is_cancelled()
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum JobError {
+    #[error("invalid parameters: {0}")]
+    Invalid(String),
+    #[error("stored parameters do not match the job kind: {0}")]
+    Params(String),
+    #[error(transparent)]
+    Store(#[from] StoreError),
+    #[error("{0}")]
+    Execution(String),
+}
+
+impl From<anyhow::Error> for JobError {
+    fn from(e: anyhow::Error) -> Self {
+        JobError::Execution(e.to_string())
     }
 }
 
@@ -72,29 +95,37 @@ pub trait JobSpec: Serialize + DeserializeOwned + Send + Sync + 'static {
         None
     }
 
-    fn execute(self, ctx: JobContext) -> impl Future<Output = anyhow::Result<Self::Output>> + Send;
+    fn execute(
+        self,
+        ctx: JobContext,
+    ) -> impl Future<Output = Result<Self::Output, JobError>> + Send;
 }
 
-#[derive(Debug, thiserror::Error)]
-pub enum SubmitError {
-    #[error("invalid parameters: {0}")]
-    Invalid(String),
-    #[error(transparent)]
-    Other(#[from] anyhow::Error),
-}
-
-/// Blanket extension: every `JobSpec` can be submitted.
+/// Blanket extension: every `JobSpec` can be submitted through any `JobStore`.
 pub trait Submit: JobSpec {
-    fn submit(self, app: &App, name: Option<String>) -> impl Future<Output = Result<SimulationJob, SubmitError>> + Send
+    fn submit<S: JobStore>(
+        self,
+        store: &S,
+        limits: &Limits,
+        name: Option<String>,
+    ) -> impl Future<Output = Result<SimulationJob, JobError>>
     where
         Self: Sized,
     {
         async move {
-            self.validate(&Limits { max_iterations: app.config.max_iterations }).map_err(SubmitError::Invalid)?;
-            let params = serde_json::to_value(&self).map_err(|e| SubmitError::Other(e.into()))?;
-            let job = db::jobs::create(&app.pool, Self::KIND, name.as_deref(), &params, self.seed(), APP_VERSION, Self::MODEL_VERSION)
+            self.validate(limits).map_err(JobError::Invalid)?;
+            let params =
+                serde_json::to_value(&self).map_err(|e| JobError::Params(e.to_string()))?;
+            let job = store
+                .create_job(&NewJob {
+                    kind: Self::KIND,
+                    name: name.as_deref(),
+                    params: &params,
+                    seed: self.seed(),
+                    app_version: APP_VERSION,
+                    model_version: Self::MODEL_VERSION,
+                })
                 .await?;
-            app.job_notify.notify_one();
             Ok(job)
         }
     }
@@ -102,13 +133,18 @@ pub trait Submit: JobSpec {
 
 impl<T: JobSpec> Submit for T {}
 
-/// Execute one claimed job of type `T` end to end.
-async fn run_job<T: JobSpec>(app: Arc<App>, job: SimulationJob) -> anyhow::Result<()> {
-    let spec: T = serde_json::from_value(job.params.clone())?;
+/// Execute one claimed job of type `T` end to end and record its outcome.
+async fn run_job<T: JobSpec>(app: Arc<App>, job: SimulationJob) -> Result<(), JobError> {
+    let spec: T =
+        serde_json::from_value(job.params.clone()).map_err(|e| JobError::Params(e.to_string()))?;
     let cancel = app.cancel_flag(job.id);
     let progress = ProgressHandle::new(cancel.clone());
-    let ctx = JobContext { app: app.clone(), job_id: job.id, progress: progress.clone() };
-    // Flush progress to the database while the job runs.
+    let ctx = JobContext {
+        app: app.clone(),
+        job_id: job.id,
+        progress: progress.clone(),
+    };
+    // Flush progress to the store while the job runs.
     let flusher = {
         let app = app.clone();
         let progress = progress.clone();
@@ -120,49 +156,52 @@ async fn run_job<T: JobSpec>(app: Arc<App>, job: SimulationJob) -> anyhow::Resul
                 let p = progress.latest();
                 if (p - last).abs() > 0.005 {
                     last = p;
-                    if let Err(e) = db::jobs::set_progress(&app.pool, id, p).await {
+                    if let Err(e) = app.store.set_job_progress(id, p).await {
                         warn!(error = %e, "progress update failed");
                     }
                 }
             }
         })
     };
-    let shutdown = app.shutdown.clone();
     let cancel_on_shutdown = {
+        let shutdown = app.shutdown.clone();
         let cancel = cancel.clone();
         tokio::spawn(async move {
             shutdown.cancelled().await;
             cancel.store(true, Ordering::Relaxed);
         })
     };
-    let outcome = spec.execute(ctx).await;
+    let result = spec.execute(ctx).await;
     flusher.abort();
     cancel_on_shutdown.abort();
     app.clear_cancel_flag(job.id);
-    match outcome {
-        Ok(output) if !cancel.load(Ordering::Relaxed) => {
-            let value = serde_json::to_value(&output)?;
-            db::jobs::complete(&app.pool, job.id, &value).await?;
-            info!(job = %job.id, kind = %job.kind, "job completed");
-        }
+    let outcome = match result {
+        Ok(output) if !cancel.load(Ordering::Relaxed) => JobOutcome::Completed(
+            serde_json::to_value(&output).map_err(|e| JobError::Params(e.to_string()))?,
+        ),
         Ok(_) if app.shutdown.is_cancelled() => {
-            db::jobs::set_status(&app.pool, job.id, JobStatus::Interrupted, Some("interrupted by shutdown")).await?;
-            warn!(job = %job.id, "job interrupted by shutdown; retry to resume");
+            JobOutcome::Interrupted("interrupted by shutdown".into())
         }
-        Ok(_) => {
-            db::jobs::set_status(&app.pool, job.id, JobStatus::Cancelled, Some("cancelled by user")).await?;
-            info!(job = %job.id, "job cancelled");
+        Ok(_) => JobOutcome::Cancelled("cancelled by user".into()),
+        Err(e) => JobOutcome::Failed(e.to_string()),
+    };
+    let applied = app.store.finish_job(job.id, &outcome).await?;
+    match (&outcome, applied) {
+        (_, false) => {
+            warn!(job = %job.id, "job was no longer running when its outcome arrived; outcome discarded")
         }
-        Err(e) => {
-            db::jobs::fail(&app.pool, job.id, &e.to_string()).await?;
-            error!(job = %job.id, error = %e, "job failed");
+        (JobOutcome::Completed(_), true) => info!(job = %job.id, kind = %job.kind, "job completed"),
+        (JobOutcome::Interrupted(_), true) => {
+            warn!(job = %job.id, "job interrupted by shutdown; retry to resume")
         }
+        (JobOutcome::Cancelled(_), true) => info!(job = %job.id, "job cancelled"),
+        (JobOutcome::Failed(e), true) => error!(job = %job.id, error = %e, "job failed"),
     }
     Ok(())
 }
 
 /// Dispatch on the stored kind.
-async fn dispatch(app: Arc<App>, job: SimulationJob) -> anyhow::Result<()> {
+async fn dispatch(app: Arc<App>, job: SimulationJob) -> Result<(), JobError> {
     match job.kind {
         JobKind::Alpha => run_job::<specs::AlphaJob>(app, job).await,
         JobKind::Playoff => run_job::<specs::PlayoffJob>(app, job).await,
@@ -179,19 +218,20 @@ pub async fn runner(app: Arc<App>) {
         if app.shutdown.is_cancelled() {
             break;
         }
-        match db::jobs::claim_next(&app.pool).await {
+        match app.store.claim_next_job().await {
             Ok(Some(job)) => {
                 info!(job = %job.id, kind = %job.kind, attempt = job.attempts, "job claimed");
                 if let Err(e) = dispatch(app.clone(), job.clone()).await {
                     error!(job = %job.id, error = %e, "job bookkeeping failed");
-                    let _ = db::jobs::fail(&app.pool, job.id, &e.to_string()).await;
+                    let _ = app
+                        .store
+                        .finish_job(job.id, &JobOutcome::Failed(e.to_string()))
+                        .await;
                 }
                 continue;
             }
             Ok(None) => {}
-            Err(e) => {
-                warn!(error = %e, "could not poll jobs; database unavailable?");
-            }
+            Err(e) => warn!(error = %e, "could not poll jobs; store unavailable?"),
         }
         tokio::select! {
             _ = app.job_notify.notified() => {}
@@ -203,17 +243,23 @@ pub async fn runner(app: Arc<App>) {
 }
 
 /// Request cancellation of a running job (or cancel a queued one directly).
-pub async fn cancel(app: &App, id: Uuid) -> anyhow::Result<Option<JobStatus>> {
-    if let Some(flag) = app.cancel_flags.lock().expect("cancel lock").get(&id) {
+pub async fn cancel(app: &App, id: Uuid) -> Result<Option<JobStatus>, StoreError> {
+    let running_here = app
+        .cancel_flags
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get(&id)
+        .cloned();
+    if let Some(flag) = running_here {
         flag.store(true, Ordering::Relaxed);
         return Ok(Some(JobStatus::Running));
     }
     // Not running in this process: the state machine decides (only Queued -> Cancelled applies).
-    db::jobs::apply_event(&app.pool, id, JobEvent::Cancel).await
+    app.store.apply_job_event(id, JobEvent::Cancel).await
 }
 
-pub async fn retry(app: &App, id: Uuid) -> anyhow::Result<Option<JobStatus>> {
-    let requeued = db::jobs::retry(&app.pool, id).await?;
+pub async fn retry(app: &App, id: Uuid) -> Result<Option<JobStatus>, StoreError> {
+    let requeued = app.store.retry_job(id).await?;
     if requeued {
         app.job_notify.notify_one();
     }
