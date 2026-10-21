@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use uuid::Uuid;
 
+use crate::application::continuation::{self, ContinuationUseCaseError};
 use crate::application::imports::{self, Provenance};
 use crate::application::jobs::specs::{AlphaJob, BacktestJob, PlayoffJob, SeasonJob};
 use crate::application::jobs::{self, Limits, Submit};
@@ -639,6 +640,80 @@ pub async fn upload(State(app): State<AppState>, mut multipart: Multipart) -> Ap
     Ok(Json(json!(outcome)))
 }
 
+#[derive(Deserialize)]
+pub struct ProjectBody {
+    pub season: SeasonYear,
+}
+
+fn continuation_error(e: ContinuationUseCaseError) -> ApiError {
+    match e {
+        ContinuationUseCaseError::Store(s) => s.into(),
+        other => ApiError::bad_request(other.to_string()),
+    }
+}
+
+/// Preseason projection of a season the dataset does not cover (reverted ratings, synthetic schedule).
+pub async fn project_season(
+    State(app): State<AppState>,
+    Json(body): Json<ProjectBody>,
+) -> ApiResult<Value> {
+    let outcome = continuation::project_season(&app.store, body.season)
+        .await
+        .map_err(continuation_error)?;
+    app.invalidate_cache();
+    Ok(Json(json!(outcome)))
+}
+
+/// Results or schedule CSV for a season beyond the dataset; the application computes the Elo.
+pub async fn upload_results(
+    State(app): State<AppState>,
+    mut multipart: Multipart,
+) -> ApiResult<Value> {
+    let mut file: Option<(String, Vec<u8>)> = None;
+    let mut season: Option<SeasonYear> = None;
+    while let Some(field) = multipart
+        .next_field()
+        .await
+        .map_err(|e| ApiError::bad_request(e.to_string()))?
+    {
+        match field.name() {
+            Some("file") => {
+                let name: String = field
+                    .file_name()
+                    .unwrap_or("results.csv")
+                    .chars()
+                    .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_'))
+                    .take(120)
+                    .collect();
+                let bytes = field
+                    .bytes()
+                    .await
+                    .map_err(|e| ApiError::bad_request(e.to_string()))?;
+                file = Some((name, bytes.to_vec()));
+            }
+            Some("season") => {
+                let v = field.text().await.unwrap_or_default();
+                season = Some(
+                    v.trim()
+                        .parse()
+                        .map_err(|_| ApiError::bad_request("invalid season"))?,
+                );
+            }
+            _ => {}
+        }
+    }
+    let (name, bytes) = file.ok_or_else(|| ApiError::bad_request("missing 'file' field"))?;
+    let season = season
+        .ok_or_else(|| ApiError::bad_request("missing 'season' field (end year, e.g. 2026)"))?;
+    let bytes = imports::maybe_gunzip(bytes)
+        .map_err(|e| ApiError::bad_request(format!("could not decompress: {e}")))?;
+    let outcome = continuation::import_results(&app.store, season, &bytes, Some(&name))
+        .await
+        .map_err(continuation_error)?;
+    app.invalidate_cache();
+    Ok(Json(json!(outcome)))
+}
+
 pub async fn coverage(State(app): State<AppState>) -> ApiResult<Value> {
     let seasons = app.store.seasons().await?;
     let champs = app
@@ -654,6 +729,7 @@ pub async fn coverage(State(app): State<AppState>) -> ApiResult<Value> {
             json!({
                 "season": s.season, "label": s.label, "teams": s.team_count, "games": s.game_count,
                 "playoff_games": s.playoff_game_count, "play_in_games": s.play_in_game_count, "cup_final_games": s.cup_final_game_count,
+                "computed_games": s.computed_game_count, "scheduled_games": s.scheduled_game_count,
                 "regular_season_end": s.regular_season_end, "playoffs_start": s.playoffs_start, "playoffs_end": s.playoffs_end,
                 "complete": s.complete, "champion": c.map(|c| c.franchise_key.clone()), "champion_source": c.map(|c| c.source.clone()),
                 "bracket_supported": s.season >= SeasonYear::FIRST_MODERN,
@@ -667,7 +743,13 @@ pub async fn coverage(State(app): State<AppState>) -> ApiResult<Value> {
             .collect(),
         _ => vec![],
     };
-    Ok(Json(
-        json!({ "seasons": rows, "missing_seasons": missing, "source_url": app.config.data_source_url }),
-    ))
+    // The first season after the last one with data, as the default target for a projection.
+    let next_season = present.last().and_then(|s| s.next());
+    Ok(Json(json!({
+        "seasons": rows,
+        "missing_seasons": missing,
+        "source_url": app.config.data_source_url,
+        "next_season": next_season,
+        "results_example": continuation::results_example(),
+    })))
 }

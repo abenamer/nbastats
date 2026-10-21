@@ -7,9 +7,12 @@
   async function loadCoverage() {
     const c = await getJSON('/api/data/coverage');
     document.getElementById('sourceUrl').textContent = c.source_url;
+    if (c.next_season && !document.getElementById('nextSeason').value) document.getElementById('nextSeason').value = c.next_season;
     document.getElementById('coverage').innerHTML = table([
       { label: 'Season', value: 'label', left: true }, { label: 'Teams', value: 'teams' }, { label: 'Games', value: 'games' }, { label: 'Play-in', value: 'play_in_games' }, { label: 'Playoff games', value: 'playoff_games' },
       { label: 'Regular season end', value: r => r.regular_season_end || '–', left: true }, { label: 'Playoffs', value: r => r.playoffs_start ? `${r.playoffs_start} → ${r.playoffs_end}` : '–', left: true },
+      { label: 'Elo', value: r => r.computed_games ? `computed (${r.computed_games})` : 'imported', left: true, cls: r => r.computed_games ? 'warn' : '' },
+      { label: 'Scheduled', value: r => r.scheduled_games || '' },
       { label: 'Complete', value: r => r.complete ? 'yes' : 'no', cls: r => r.complete ? 'good' : 'warn' }, { label: 'Champion', value: r => r.champion ? `${r.champion} (${r.champion_source})` : '–', left: true },
       { label: 'Bracket model', value: r => r.bracket_supported ? 'yes' : 'no (pre-2003)', left: true }], c.seasons.slice().reverse())
       + (c.missing_seasons.length ? `<p class="warn">Missing seasons: ${c.missing_seasons.join(', ')}</p>` : '');
@@ -33,6 +36,19 @@
     const fd = new FormData(); fd.append('file', f); fd.append('force', document.getElementById('force').checked ? '1' : '0');
     document.getElementById('importResult').textContent = 'Uploading…';
     try { const r = await fetch('/api/data/upload', { method: 'POST', body: fd }); const body = await r.json(); document.getElementById('importResult').textContent = JSON.stringify(body, null, 2); await refreshAll(); }
+    catch (err) { document.getElementById('importResult').textContent = err.message; }
+  });
+  document.getElementById('project').addEventListener('click', async () => {
+    const season = parseInt(document.getElementById('nextSeason').value);
+    const btn = document.getElementById('project'); btn.disabled = true; document.getElementById('importResult').textContent = `Projecting ${season - 1}-${String(season % 100).padStart(2, '0')}…`;
+    try { const r = await postJSON('/api/data/project', { season }); document.getElementById('importResult').textContent = JSON.stringify(r, null, 2); await refreshAll(); }
+    catch (e) { document.getElementById('importResult').textContent = e.message; } finally { btn.disabled = false; }
+  });
+  document.getElementById('resultsForm').addEventListener('submit', async e => {
+    e.preventDefault(); const f = document.getElementById('resultsFile').files[0]; if (!f) return;
+    const fd = new FormData(); fd.append('season', document.getElementById('nextSeason').value); fd.append('file', f);
+    document.getElementById('importResult').textContent = 'Uploading and computing Elo…';
+    try { const r = await fetch('/api/data/results', { method: 'POST', body: fd }); const body = await r.json(); document.getElementById('importResult').textContent = JSON.stringify(body, null, 2); await refreshAll(); }
     catch (err) { document.getElementById('importResult').textContent = err.message; }
   });
   refreshAll();

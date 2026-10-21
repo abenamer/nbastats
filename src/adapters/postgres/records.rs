@@ -11,8 +11,8 @@ use uuid::Uuid;
 
 use crate::domain::ids::{FranchiseId, SeasonYear, TeamId};
 use crate::domain::models::{
-    ChampionshipView, Conference, DataImport, Franchise, Game, GameType, ImportStatus, JobKind,
-    JobStatus, PlayoffResult, Season, SimulationJob, Team, TeamSeason, TeamSeasonView,
+    ChampionshipView, Conference, DataImport, EloSource, Franchise, Game, GameType, ImportStatus,
+    JobKind, JobStatus, PlayoffResult, Season, SimulationJob, Team, TeamSeason, TeamSeasonView,
 };
 
 // ---------------------------------------------------------------------------------------
@@ -96,7 +96,8 @@ text_enum_sql!(
     PlayoffResult,
     JobKind,
     JobStatus,
-    ImportStatus
+    ImportStatus,
+    EloSource
 );
 
 // ---------------------------------------------------------------------------------------
@@ -137,6 +138,8 @@ impl FromRow<'_, PgRow> for Season {
             playoff_game_count: r.try_get("playoff_game_count")?,
             play_in_game_count: r.try_get("play_in_game_count")?,
             cup_final_game_count: r.try_get("cup_final_game_count")?,
+            computed_game_count: r.try_get("computed_game_count")?,
+            scheduled_game_count: r.try_get("scheduled_game_count")?,
             regular_season_end: r.try_get::<Option<NaiveDate>, _>("regular_season_end")?,
             playoffs_start: r.try_get("playoffs_start")?,
             playoffs_end: r.try_get("playoffs_end")?,
@@ -163,6 +166,7 @@ impl FromRow<'_, PgRow> for Game {
             home_elo_post: r.try_get("home_elo_post")?,
             away_elo_post: r.try_get("away_elo_post")?,
             home_win_prob: r.try_get("home_win_prob")?,
+            elo_source: r.try_get("elo_source")?,
         })
     }
 }

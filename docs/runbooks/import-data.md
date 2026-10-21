@@ -28,10 +28,38 @@ Command line alternative for a file on the host:
     docker compose cp ./my_file.csv nba-app:/tmp/my_file.csv
     docker compose exec nba-app nba-elo-simulator import /tmp/my_file.csv
 
+# Add a season after the archive
+
+The archive ends with 2024-25. For a later season, the application computes the Elo ratings itself (see [Elo continuation](../concepts/elo-continuation.md)).
+
+## Project a season before it starts
+
+1. Open the Data page.
+2. In **Seasons beyond the Elo dataset**, enter the season end year (2026 for 2025-26).
+3. Click **Project preseason (synthetic schedule)**.
+
+The application inserts the previous season's regular-season matchups one year later, with no scores, and the reverted ratings of the previous season. The Season Forecast page can then forecast that season.
+
+## Import results and the schedule
+
+1. Prepare a CSV file with this header: `date,home,away,home_score,away_score,neutral,playoff`.
+2. Use the team codes of the Elo Explorer (OKC, GSW, ...). Leave both scores empty for a game that is not played yet. Set `neutral` or `playoff` to 1 when they apply.
+3. On the Data page, enter the season end year, select the file and click **Upload results / schedule CSV for that season**.
+
+Example:
+
+    date,home,away,home_score,away_score,neutral,playoff
+    2025-10-21,OKC,HOU,125,124,0,0
+    2025-10-22,LAL,GSW,,,0,0
+
+Each upload replaces the computed games of that season. Rows with a tied score, one missing score, or an unknown team code are rejected and reported.
+
+The application refuses both operations for a season that has imported archive games.
+
 # After an import
 
 * The Data page shows the import with row counts and rejected rows.
-* The coverage table shows each season, its game counts, and whether the postseason is complete.
+* The coverage table shows each season, its game counts, whether its Elo is imported or computed, how many games are not played yet, and whether the postseason is complete.
 * Seasons without playoff records show no derived champion unless the curated table has one.
 
 # Limits

@@ -12,7 +12,7 @@ use tracing::{info, warn};
 
 use crate::adapters::csv::{self, ParseError, ParsedGame};
 use crate::domain::ids::SeasonYear;
-use crate::domain::models::GameType;
+use crate::domain::models::{EloSource, GameType};
 
 use super::ports::{
     DatasetSource, DownloadError, GameStore, ImportLog, ImportStart, ImportStats, NewGame,
@@ -228,6 +228,7 @@ async fn store_games<S: GameStore>(
                     home_elo_post: g.home_elo_post,
                     away_elo_post: g.away_elo_post,
                     home_win_prob: g.home_win_prob,
+                    elo_source: EloSource::Imported,
                 });
             }
             _ => {

@@ -9,6 +9,16 @@
     <pre id="importResult" class="small"></pre>
   </div>
 </section>
+<section class="panel"><h2>Seasons beyond the Elo dataset</h2>
+  <p class="small">The Elo archive ends with the 2024-25 regular season. For later seasons the application computes ratings itself with FiveThirtyEight's formulas (25% reversion toward 1505 between seasons, K = 20 with the margin-of-victory multiplier), starting from the previous season's final ratings. These games are marked <code>computed</code>.</p>
+  <div class="row">
+    <label>Season (end year) <input id="nextSeason" type="number" min="1948" max="2100" style="width:6rem"></label>
+    <button id="project" class="primary">Project preseason (synthetic schedule)</button>
+    <span class="muted small">Repeats the previous season's regular-season matchups one year later with no results, so the Season Forecast page can run a preseason forecast.</span>
+  </div>
+  <form id="resultsForm" class="row"><input type="file" id="resultsFile" accept=".csv,.gz"><button type="submit">Upload results / schedule CSV for that season</button></form>
+  <p class="muted small">CSV layout: <code>date,home,away,home_score,away_score,neutral,playoff</code>. Leave the scores empty for games not yet played. Team codes as in the Elo Explorer (OKC, GSW, …). Uploading again replaces the computed games of that season.</p>
+</section>
 <section class="panel"><h2>Season coverage</h2><div id="coverage" class="table-wrap"></div></section>
 <section class="panel"><h2>Import history</h2><div id="imports" class="table-wrap"></div></section>
 {% endblock %}

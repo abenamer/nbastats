@@ -3,6 +3,49 @@
 
 /// Default home-court advantage in Elo points (FiveThirtyEight's NBA model uses 100).
 pub const DEFAULT_HOME_ADVANTAGE: f64 = 100.0;
+/// FiveThirtyEight's K-factor.
+pub const FIVETHIRTYEIGHT_K: f64 = 20.0;
+/// Rating every team is pulled toward between seasons.
+pub const SEASON_MEAN: f64 = 1505.0;
+/// Share of last season's deviation from the mean that carries over.
+pub const SEASON_CARRYOVER: f64 = 0.75;
+
+/// FiveThirtyEight's between-season reversion: 75% of the previous rating, 25% of 1505.
+/// Verified against the dataset: every team's first pre-game rating of a season equals this
+/// function of its last post-game rating of the previous season.
+pub fn season_reversion(previous_end: f64) -> f64 {
+    SEASON_CARRYOVER * previous_end + (1.0 - SEASON_CARRYOVER) * SEASON_MEAN
+}
+
+/// FiveThirtyEight's margin-of-victory multiplier: ((margin + 3)^0.8) / (7.5 + 0.006 × d),
+/// where `d` is the winner's rating advantage including home court (negative for an upset).
+pub fn margin_multiplier(margin: i32, winner_advantage: f64) -> f64 {
+    (f64::from(margin.abs()) + 3.0).powf(0.8) / (7.5 + 0.006 * winner_advantage)
+}
+
+/// One game's rating change for the home team under FiveThirtyEight's model. Returns
+/// (home_post, away_post). Verified to reproduce the dataset to four decimals.
+pub fn fivethirtyeight_update(
+    home_elo: f64,
+    away_elo: f64,
+    home_score: i32,
+    away_score: i32,
+    neutral: bool,
+) -> (f64, f64) {
+    let bonus = if neutral { 0.0 } else { DEFAULT_HOME_ADVANTAGE };
+    let p_home = win_probability(home_elo + bonus, away_elo);
+    let home_won = home_score > away_score;
+    let margin = home_score - away_score;
+    let winner_advantage = if home_won {
+        (home_elo + bonus) - away_elo
+    } else {
+        away_elo - (home_elo + bonus)
+    };
+    let delta = FIVETHIRTYEIGHT_K
+        * margin_multiplier(margin, winner_advantage)
+        * (if home_won { 1.0 } else { 0.0 } - p_home);
+    (home_elo + delta, away_elo - delta)
+}
 
 /// Probability that a team rated `elo_a` beats a team rated `elo_b` on a neutral floor.
 ///
@@ -195,6 +238,24 @@ mod tests {
             epsilon = 1e-12
         );
         assert!(series_probability(&a) > 0.5);
+    }
+
+    #[test]
+    fn fivethirtyeight_update_matches_dataset_rows() {
+        // 2016 Finals game 7: GSW (home) 1764.828667 vs CLE 1749.839437, 89-93 -> 1755.639 / 1759.029104
+        let (h, a) = fivethirtyeight_update(1764.828667, 1749.839437, 89, 93, false);
+        assert_abs_diff_eq!(h, 1755.639, epsilon = 1e-3);
+        assert_abs_diff_eq!(a, 1759.029104, epsilon = 1e-3);
+        // 2025-03-17: UTA (home) 1324.006775 vs CHI 1429.289651, 97-111 -> 1311.393947 / 1441.902479
+        let (h, a) = fivethirtyeight_update(1324.006775, 1429.289651, 97, 111, false);
+        assert_abs_diff_eq!(h, 1311.393947, epsilon = 1e-3);
+        assert_abs_diff_eq!(a, 1441.902479, epsilon = 1e-3);
+    }
+
+    #[test]
+    fn season_reversion_is_three_quarters() {
+        assert_abs_diff_eq!(season_reversion(1705.0), 1655.0, epsilon = 1e-12);
+        assert_abs_diff_eq!(season_reversion(1505.0), 1505.0, epsilon = 1e-12);
     }
 
     #[test]

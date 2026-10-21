@@ -1,6 +1,12 @@
 (async () => {
-  const { pct, num, esc, runJob, table, setStatus, chart, RESULT } = NBA;
+  const { pct, num, esc, runJob, table, setStatus, chart, RESULT, getJSON } = NBA;
   const status = document.getElementById('status');
+  const seasons = await getJSON('/api/seasons').catch(() => []);
+  const provenance = (season) => {
+    const s = seasons.find(x => x.season === season);
+    if (!s || !s.computed_game_count) return '';
+    return ` Elo for this season is computed by the application (${s.computed_game_count.toLocaleString()} games, ${s.scheduled_game_count.toLocaleString()} not yet played), not imported from the FiveThirtyEight archive.`;
+  };
   document.getElementById('preseason').addEventListener('change', e => document.getElementById('asOf').disabled = e.target.checked);
   document.getElementById('asOf').disabled = true;
   document.getElementById('run').addEventListener('click', async () => {
@@ -13,7 +19,7 @@
     try {
       const job = await runJob('/api/jobs/season', p, j => setStatus(status, `${j.status} ${pct(j.progress, 0)}`));
       const r = job.result;
-      document.getElementById('note').textContent = `${r.information_cutoff_note} Games used: ${r.games_played}; regular-season games simulated: ${r.games_remaining}; qualification format: ${r.qualification}. ${r.iterations.toLocaleString()} simulated seasons in ${r.elapsed_ms} ms.`;
+      document.getElementById('note').textContent = `${r.information_cutoff_note} Games used: ${r.games_played}; regular-season games simulated: ${r.games_remaining}; qualification format: ${r.qualification}. ${r.iterations.toLocaleString()} simulated seasons in ${r.elapsed_ms} ms.${provenance(p.season)}`;
       const cols = [
         { label: 'Team', value: t => `${t.code} · ${t.name}`, left: true }, { label: 'Conf', value: 'conference', left: true }, { label: 'Elo', value: t => num(t.elo_as_of, 0) },
         { label: 'Record', value: t => `${t.wins}-${t.losses}` }, { label: 'Exp. wins', value: t => num(t.expected_wins, 1) },

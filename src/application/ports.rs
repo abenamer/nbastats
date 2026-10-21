@@ -15,8 +15,8 @@ use uuid::Uuid;
 
 use crate::domain::ids::{FranchiseId, SeasonYear, TeamId};
 use crate::domain::models::{
-    ChampionshipView, DataImport, Franchise, Game, GameType, JobEvent, JobKind, JobStatus,
-    PlayoffResult, Season, SimulationJob, Team, TeamSeason, TeamSeasonView,
+    ChampionshipView, DataImport, EloSource, Franchise, Game, GameType, JobEvent, JobKind,
+    JobStatus, PlayoffResult, Season, SimulationJob, Team, TeamSeason, TeamSeasonView,
 };
 
 /// Error from any store port. Adapters convert their own errors into these variants.
@@ -102,6 +102,7 @@ pub struct NewGame {
     pub home_elo_post: f64,
     pub away_elo_post: f64,
     pub home_win_prob: Option<f64>,
+    pub elo_source: EloSource,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -119,6 +120,8 @@ pub struct SeasonSummary {
     pub playoff_game_count: i32,
     pub play_in_game_count: i32,
     pub cup_final_game_count: i32,
+    pub computed_game_count: i32,
+    pub scheduled_game_count: i32,
     pub regular_season_end: Option<NaiveDate>,
     pub playoffs_start: Option<NaiveDate>,
     pub playoffs_end: Option<NaiveDate>,
@@ -159,7 +162,10 @@ pub trait GameStore: GameLog {
     async fn sync_alignments(&self) -> StoreResult<()>;
     async fn ensure_season(&self, season: SeasonYear) -> StoreResult<()>;
     /// Upsert all rows in one transaction. Unchanged rows are neither inserted nor updated.
+    /// A computed row never overwrites an imported row for the same game.
     async fn upsert_games(&self, import_id: i64, rows: &[NewGame]) -> StoreResult<UpsertCounts>;
+    /// Delete the games of a season that carry computed ratings (before recomputing them).
+    async fn delete_computed_games(&self, season: SeasonYear) -> StoreResult<u64>;
     async fn set_game_types(&self, ids: &[i64], game_type: GameType) -> StoreResult<()>;
     async fn update_season_summary(&self, summary: &SeasonSummary) -> StoreResult<()>;
     async fn upsert_team_season(&self, ts: &TeamSeason) -> StoreResult<()>;

@@ -22,7 +22,7 @@ sources:
 
 | Table | Key | Content |
 |-------|-----|---------|
-| `games` | (date, home, away, seq) | One row per game: scores, Elo before and after, source forecast, type. |
+| `games` | (date, home, away, seq) | One row per game: scores, Elo before and after, source forecast, type, Elo source (`imported` or `computed`). |
 | `data_imports` | id | Source, file checksum, row counts, status, timestamps. |
 
 # Derived data
@@ -31,7 +31,7 @@ The import rebuilds these tables for every season it touches.
 
 | Table | Key | Content |
 |-------|-----|---------|
-| `seasons` | season | Counts, dates, completeness. |
+| `seasons` | season | Counts (including computed and scheduled games), dates, completeness. |
 | `team_seasons` | (season, team) | Record, Elo milestones, seed, playoff result. |
 | `championships` | season | Champion, runner-up, source (`derived` or `curated`). |
 
@@ -44,4 +44,4 @@ The import rebuilds these tables for every season it touches.
 
 # Indexes
 
-Games are indexed by (season, date), by home team and by away team. Jobs are indexed by status and by kind. The parameters column has a GIN index for containment queries.
+Games are indexed by (season, date), by (season, Elo source), by home team and by away team. Jobs are indexed by status and by kind. The parameters column has a GIN index for containment queries.

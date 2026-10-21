@@ -302,3 +302,94 @@ async fn job_lifecycle_survives_restart(pool: PgPool) {
     assert_eq!(scenarios.len(), 1);
     assert_eq!(scenarios[0].name.as_deref(), Some("scenario"));
 }
+
+#[sqlx::test(migrations = "./migrations")]
+async fn computed_elo_continues_from_the_previous_season(pool: PgPool) {
+    use nba_elo_simulator::application::continuation;
+    use nba_elo_simulator::domain::elo;
+    use nba_elo_simulator::domain::models::EloSource;
+    let (store, teams) = common::setup(pool).await;
+    imports::import_bytes(
+        &store,
+        common::FIXTURE.as_bytes(),
+        prov("mini_2016.csv"),
+        false,
+    )
+    .await
+    .unwrap();
+    let s2017 = SeasonYear::of(2017);
+    // Imported seasons cannot be overwritten with computed ratings.
+    let err =
+        continuation::import_results(&store, S2016, b"date,home,away\n2016-01-01,GSW,CLE\n", None)
+            .await;
+    assert!(matches!(
+        err,
+        Err(continuation::ContinuationUseCaseError::SeasonHasImportedElo(_))
+    ));
+    // Projection: synthetic schedule, reverted ratings, no results.
+    let projected = continuation::project_season(&store, s2017).await.unwrap();
+    assert_eq!(projected.games_inserted, 1230);
+    let games = store.season_games(s2017).await.unwrap();
+    assert!(games
+        .iter()
+        .all(|g| g.elo_source == EloSource::Computed && !g.is_played()));
+    let gsw = teams["GSW"].id;
+    let gsw_2016_end = store
+        .season_games(S2016)
+        .await
+        .unwrap()
+        .iter()
+        .rfind(|g| g.involves(gsw))
+        .unwrap()
+        .elo_of(gsw)
+        .1;
+    let gsw_2017_start = games
+        .iter()
+        .find(|g| g.involves(gsw))
+        .unwrap()
+        .elo_of(gsw)
+        .0;
+    assert!((gsw_2017_start - elo::season_reversion(gsw_2016_end)).abs() < 1e-9);
+    let summary = store
+        .seasons()
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|s| s.season == s2017)
+        .unwrap();
+    assert_eq!(summary.scheduled_game_count, 1230);
+    assert_eq!(summary.computed_game_count, 1230);
+    assert!(!summary.complete);
+    // A season forecast runs on the projection.
+    let by_id = store.team_map().await.unwrap();
+    let params = SeasonParams {
+        season: s2017,
+        as_of: None,
+        iterations: 200,
+        seed: 1,
+        home_advantage: 100.0,
+        regular_season_k: Some(20.0),
+        playoff_k: None,
+        playoff_scale: 1.0,
+    };
+    let forecast = season::run(&params, &games, &by_id, &Silent).unwrap();
+    assert_eq!(forecast.games_remaining, 1230);
+    assert!((forecast.teams.iter().map(|t| t.p_champion).sum::<f64>() - 1.0).abs() < 1e-9);
+    // Results replace the projection and chain ratings through played games.
+    let csv = "date,home,away,home_score,away_score,neutral,playoff\n2016-10-25,GSW,SAS,100,129,0,0\n2016-10-28,GSW,NOP,122,114,0,0\n2016-10-30,DAL,GSW,,,0,0\n";
+    let outcome = continuation::import_results(&store, s2017, csv.as_bytes(), Some("results.csv"))
+        .await
+        .unwrap();
+    assert_eq!(outcome.games_inserted, 3);
+    let games = store.season_games(s2017).await.unwrap();
+    assert_eq!(games.len(), 3);
+    let first = &games[0];
+    assert_eq!((first.home_score, first.away_score), (Some(100), Some(129)));
+    assert!(first.home_elo_post < first.home_elo_pre);
+    assert!((games[1].home_elo_pre - first.home_elo_post).abs() < 1e-9);
+    assert!(!games[2].is_played());
+    assert_eq!(games[2].elo_of(gsw).0, games[1].elo_of(gsw).1);
+    let ts = store.team_seasons(s2017).await.unwrap();
+    let gsw_ts = ts.iter().find(|t| t.code == "GSW").unwrap();
+    assert_eq!((gsw_ts.wins, gsw_ts.losses), (1, 1));
+}

@@ -7,15 +7,15 @@ use crate::application::ports::{
     UpsertCounts,
 };
 use crate::domain::ids::{FranchiseId, SeasonYear, TeamId};
-use crate::domain::models::{Franchise, Game, GameType, Season, Team, TeamSeason};
+use crate::domain::models::{EloSource, Franchise, Game, GameType, Season, Team, TeamSeason};
 use crate::domain::reference;
 
 use super::PostgresStore;
 
 const GAME_COLS: &str = "id, season, game_date, seq, home_team_id, away_team_id, neutral, game_type, home_score, away_score,
-    home_elo_pre, away_elo_pre, home_elo_post, away_elo_post, home_win_prob";
+    home_elo_pre, away_elo_pre, home_elo_post, away_elo_post, home_win_prob, elo_source";
 const SEASON_COLS: &str = "season, label, team_count, game_count, playoff_game_count, play_in_game_count, cup_final_game_count,
-    regular_season_end, playoffs_start, playoffs_end, complete";
+    computed_game_count, scheduled_game_count, regular_season_end, playoffs_start, playoffs_end, complete";
 
 impl GameLog for PostgresStore {
     async fn teams(&self) -> StoreResult<Vec<Team>> {
@@ -221,13 +221,14 @@ impl GameStore for PostgresStore {
             let hpost: Vec<f64> = chunk.iter().map(|r| r.home_elo_post).collect();
             let apost: Vec<f64> = chunk.iter().map(|r| r.away_elo_post).collect();
             let prob: Vec<Option<f64>> = chunk.iter().map(|r| r.home_win_prob).collect();
+            let src: Vec<EloSource> = chunk.iter().map(|r| r.elo_source).collect();
             let returned: Vec<(bool,)> = sqlx::query_as(
                 "INSERT INTO games (season, game_date, seq, home_team_id, away_team_id, neutral, game_type, home_score, away_score,
-                    home_elo_pre, away_elo_pre, home_elo_post, away_elo_post, home_win_prob, import_id)
-                 SELECT s, d, q, h, a, n, t, hs, as_, hpre, apre, hpost, apost, p, $15
+                    home_elo_pre, away_elo_pre, home_elo_post, away_elo_post, home_win_prob, import_id, elo_source)
+                 SELECT s, d, q, h, a, n, t, hs, as_, hpre, apre, hpost, apost, p, $15, src
                  FROM UNNEST($1::int4[], $2::date[], $3::int2[], $4::int4[], $5::int4[], $6::bool[], $7::text[], $8::int4[], $9::int4[],
-                             $10::float8[], $11::float8[], $12::float8[], $13::float8[], $14::float8[])
-                      AS u(s, d, q, h, a, n, t, hs, as_, hpre, apre, hpost, apost, p)
+                             $10::float8[], $11::float8[], $12::float8[], $13::float8[], $14::float8[], $16::text[])
+                      AS u(s, d, q, h, a, n, t, hs, as_, hpre, apre, hpost, apost, p, src)
                  ON CONFLICT (game_date, home_team_id, away_team_id, seq) DO UPDATE SET
                     season = EXCLUDED.season, neutral = EXCLUDED.neutral,
                     game_type = CASE WHEN games.game_type IN ('play_in', 'cup_final') AND EXCLUDED.game_type = 'regular'
@@ -235,13 +236,16 @@ impl GameStore for PostgresStore {
                     home_score = EXCLUDED.home_score, away_score = EXCLUDED.away_score,
                     home_elo_pre = EXCLUDED.home_elo_pre, away_elo_pre = EXCLUDED.away_elo_pre,
                     home_elo_post = EXCLUDED.home_elo_post, away_elo_post = EXCLUDED.away_elo_post,
-                    home_win_prob = EXCLUDED.home_win_prob, import_id = EXCLUDED.import_id, updated_at = now()
-                 WHERE (games.season, games.neutral, games.home_score, games.away_score, games.home_elo_pre, games.away_elo_pre,
-                        games.home_elo_post, games.away_elo_post, games.home_win_prob,
+                    home_win_prob = EXCLUDED.home_win_prob, import_id = EXCLUDED.import_id, elo_source = EXCLUDED.elo_source,
+                    updated_at = now()
+                 WHERE NOT (games.elo_source = 'imported' AND EXCLUDED.elo_source = 'computed')
+                   AND (games.season, games.neutral, games.home_score, games.away_score, games.home_elo_pre, games.away_elo_pre,
+                        games.home_elo_post, games.away_elo_post, games.home_win_prob, games.elo_source,
                         CASE WHEN games.game_type IN ('play_in', 'cup_final') THEN 'regular' ELSE games.game_type END)
                        IS DISTINCT FROM
                        (EXCLUDED.season, EXCLUDED.neutral, EXCLUDED.home_score, EXCLUDED.away_score, EXCLUDED.home_elo_pre,
-                        EXCLUDED.away_elo_pre, EXCLUDED.home_elo_post, EXCLUDED.away_elo_post, EXCLUDED.home_win_prob, EXCLUDED.game_type)
+                        EXCLUDED.away_elo_pre, EXCLUDED.home_elo_post, EXCLUDED.away_elo_post, EXCLUDED.home_win_prob,
+                        EXCLUDED.elo_source, EXCLUDED.game_type)
                  RETURNING (xmax = 0) AS inserted",
             )
             .bind(&season)
@@ -259,6 +263,7 @@ impl GameStore for PostgresStore {
             .bind(&apost)
             .bind(&prob)
             .bind(import_id)
+            .bind(&src)
             .fetch_all(&mut *tx)
             .await?;
             let inserted = returned.iter().filter(|r| r.0).count() as i64;
@@ -268,6 +273,15 @@ impl GameStore for PostgresStore {
         }
         tx.commit().await?;
         Ok(counts)
+    }
+
+    async fn delete_computed_games(&self, season: SeasonYear) -> StoreResult<u64> {
+        let r = sqlx::query("DELETE FROM games WHERE season = $1 AND elo_source = $2")
+            .bind(season)
+            .bind(EloSource::Computed)
+            .execute(&self.pool)
+            .await?;
+        Ok(r.rows_affected())
     }
 
     async fn set_game_types(&self, ids: &[i64], game_type: GameType) -> StoreResult<()> {
@@ -286,7 +300,7 @@ impl GameStore for PostgresStore {
         sqlx::query(
             "UPDATE seasons SET team_count = $2, game_count = $3, playoff_game_count = $4, play_in_game_count = $5,
                 cup_final_game_count = $6, regular_season_end = $7, playoffs_start = $8, playoffs_end = $9, complete = $10,
-                updated_at = now() WHERE season = $1",
+                computed_game_count = $11, scheduled_game_count = $12, updated_at = now() WHERE season = $1",
         )
         .bind(s.season)
         .bind(s.team_count)
@@ -298,6 +312,8 @@ impl GameStore for PostgresStore {
         .bind(s.playoffs_start)
         .bind(s.playoffs_end)
         .bind(s.complete)
+        .bind(s.computed_game_count)
+        .bind(s.scheduled_game_count)
         .execute(&self.pool)
         .await?;
         Ok(())

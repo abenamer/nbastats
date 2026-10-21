@@ -60,6 +60,12 @@ text_enum! {
     Conference { East => "East", West => "West" }
 }
 
+text_enum! {
+    /// Where a game's Elo ratings come from: the source dataset, or the application's own
+    /// calculation with the FiveThirtyEight formulas from game results.
+    EloSource { Imported => "imported", Computed => "computed" }
+}
+
 impl Conference {
     pub const fn index(self) -> usize {
         match self {
@@ -270,6 +276,10 @@ pub struct Season {
     pub playoff_game_count: i32,
     pub play_in_game_count: i32,
     pub cup_final_game_count: i32,
+    /// Games whose Elo the application computed itself (seasons beyond the dataset).
+    pub computed_game_count: i32,
+    /// Games without a result (future schedule or projection).
+    pub scheduled_game_count: i32,
     pub regular_season_end: Option<NaiveDate>,
     pub playoffs_start: Option<NaiveDate>,
     pub playoffs_end: Option<NaiveDate>,
@@ -293,6 +303,7 @@ pub struct Game {
     pub home_elo_post: f64,
     pub away_elo_post: f64,
     pub home_win_prob: Option<f64>,
+    pub elo_source: EloSource,
 }
 
 /// Outcome of a played game from the home team's perspective.
@@ -503,6 +514,7 @@ mod tests {
             home_elo_post: 1755.6,
             away_elo_post: 1759.0,
             home_win_prob: Some(0.66),
+            elo_source: EloSource::Imported,
         };
         assert_eq!(g.outcome(), Some(Outcome::AwayWin { margin: 4 }));
         assert_eq!(g.elo_of(TeamId::new(2)), (1749.8, 1759.0));

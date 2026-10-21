@@ -33,6 +33,7 @@ The bundled file is `data/nba_elo_neil_paine.csv.gz` (SHA-256 of the uncompresse
 * Playoff records are complete for 1946-47 to 2023-24.
 * 2024-25 has the regular season only. Its champion (Oklahoma City) comes from a curated table, marked `curated`.
 * Bracket reconstruction and forecasts cover 2002-03 and later, because conference alignment data starts there.
+* Seasons after 2024-25 are not in the archive. The application can compute them from results, or project them. See [Elo continuation](elo-continuation.md).
 
 # Franchise identity
 
@@ -54,3 +55,4 @@ Elo ratings flow through every game. The pre-playoff rating is the rating after 
 * Each game has a unique key (date, home team, away team, sequence). Repeated imports update changed rows and skip unchanged rows.
 * The application stores the file checksum, source, row counts and timestamps for each import.
 * Rows with unknown team codes or bad values are counted and reported, never silently dropped.
+* Each game records its Elo source: `imported` from an archive file, or `computed` by the application. An archive import replaces computed games. A computed game never replaces an imported game.

@@ -23,6 +23,7 @@ This project follows the [REAS engineering standard](https://github.com/abenamer
 * [Backtesting method](concepts/backtesting.md) - How forecasts are scored and how parameters are tuned without leakage.
 * [Dynasty analysis](concepts/dynasty-analysis.md) - How the application judges a title run against season-specific strength.
 * [Historical data](concepts/historical-data.md) - Data sources, coverage, franchise identity and game classification.
+* [Elo continuation](concepts/elo-continuation.md) - How the application computes ratings for seasons after the archive ends, and projects a season that has not started.
 * [Persistence model](concepts/persistence.md) - Which state is durable, where it lives and which commands keep it.
 * [Security model](concepts/security.md) - Threat model of the local-only deployment and the controls in place.
 

@@ -41,7 +41,7 @@ pub struct ParseReport {
 
 #[derive(Debug, thiserror::Error)]
 pub enum ParseError {
-    #[error("unrecognised CSV layout: header {0:?} is neither nba_elo.csv nor nbaallelo.csv")]
+    #[error("unrecognised CSV layout: header {0:?} is not nba_elo.csv, nbaallelo.csv or the results layout")]
     UnknownFormat(Vec<String>),
     #[error("CSV error: {0}")]
     Csv(#[from] csv::Error),
@@ -67,9 +67,125 @@ pub fn detect_format(header: &[String]) -> Option<&'static str> {
         && has("game_location")
     {
         Some("fivethirtyeight_nbaallelo")
+    } else if has("date") && has("home") && has("away") {
+        Some("results")
     } else {
         None
     }
+}
+
+/// One row of the `results` layout: a played or scheduled game without Elo columns.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ResultRow {
+    pub date: NaiveDate,
+    pub home: String,
+    pub away: String,
+    pub neutral: bool,
+    pub playoff: bool,
+    pub home_score: Option<i32>,
+    pub away_score: Option<i32>,
+}
+
+#[derive(Debug, Default)]
+pub struct ResultsReport {
+    pub rows_read: i64,
+    pub rows_rejected: i64,
+    pub rejections: Vec<String>,
+    pub games: Vec<ResultRow>,
+}
+
+/// Parse the `results` layout (`date,home,away,home_score,away_score,neutral,playoff`).
+/// Scores are optional as a pair: a row with no scores is a scheduled game.
+pub fn parse_results<R: Read>(reader: R) -> Result<ResultsReport, ParseError> {
+    let mut rdr = csv::ReaderBuilder::new()
+        .flexible(true)
+        .trim(csv::Trim::All)
+        .from_reader(reader);
+    let header: Vec<String> = rdr
+        .headers()?
+        .iter()
+        .map(|h| h.trim().to_ascii_lowercase())
+        .collect();
+    if header.is_empty() {
+        return Err(ParseError::Empty);
+    }
+    if detect_format(&header) != Some("results") {
+        return Err(ParseError::UnknownFormat(header));
+    }
+    let col: HashMap<&str, usize> = header
+        .iter()
+        .enumerate()
+        .map(|(i, h)| (h.as_str(), i))
+        .collect();
+    let get = |rec: &csv::StringRecord, name: &str| -> String {
+        col.get(name)
+            .and_then(|&i| rec.get(i))
+            .unwrap_or("")
+            .to_string()
+    };
+    let mut report = ResultsReport::default();
+    for (line_no, rec) in rdr.records().enumerate() {
+        let rec = match rec {
+            Ok(r) => r,
+            Err(e) => {
+                report.rows_read += 1;
+                report.rows_rejected += 1;
+                report.rejections.push(format!("line {}: {e}", line_no + 2));
+                continue;
+            }
+        };
+        report.rows_read += 1;
+        let reject = |report: &mut ResultsReport, why: &str| {
+            report.rows_rejected += 1;
+            if report.rejections.len() < 50 {
+                report
+                    .rejections
+                    .push(format!("line {}: {why}", line_no + 2));
+            }
+        };
+        let Some(date) = parse_date(&get(&rec, "date")) else {
+            reject(&mut report, "invalid date");
+            continue;
+        };
+        let home = get(&rec, "home").to_ascii_uppercase();
+        let away = get(&rec, "away").to_ascii_uppercase();
+        if home.is_empty() || away.is_empty() || home == away {
+            reject(
+                &mut report,
+                "home and away must be two different team codes",
+            );
+            continue;
+        }
+        let home_score = parse_i32(&get(&rec, "home_score"));
+        let away_score = parse_i32(&get(&rec, "away_score"));
+        match (home_score, away_score) {
+            (None, None) => {}
+            (Some(h), Some(a)) => {
+                if h == a {
+                    reject(&mut report, "NBA games cannot end tied");
+                    continue;
+                }
+                if !(0..=250).contains(&h) || !(0..=250).contains(&a) {
+                    reject(&mut report, "implausible score");
+                    continue;
+                }
+            }
+            _ => {
+                reject(&mut report, "both scores or neither must be present");
+                continue;
+            }
+        }
+        report.games.push(ResultRow {
+            date,
+            home,
+            away,
+            neutral: parse_bool(&get(&rec, "neutral")),
+            playoff: parse_bool(&get(&rec, "playoff")),
+            home_score,
+            away_score,
+        });
+    }
+    Ok(report)
 }
 
 fn parse_f64(s: &str) -> Option<f64> {
@@ -367,6 +483,19 @@ bad-date,2016,0,,BOS,NYK,1500,1500,0.5,0.5,1500,1500,1,2,1
         assert_eq!(r.games[1].home, "NYK");
         assert_eq!(r.games[1].home_score, Some(47));
         assert!((r.games[1].home_win_prob.unwrap() - 0.37).abs() < 1e-9);
+    }
+
+    #[test]
+    fn parses_results_layout() {
+        let csv = "date,home,away,home_score,away_score,neutral,playoff\n2025-10-21,OKC,HOU,125,124,0,\n2025-10-22,LAL,GSW,,,,\n2025-10-23,BOS,BOS,1,2,,\n2025-10-24,MIA,NYK,100,100,,\n";
+        let r = parse_results(csv.as_bytes()).unwrap();
+        assert_eq!(r.rows_read, 4);
+        assert_eq!(r.games.len(), 2);
+        assert_eq!(r.rows_rejected, 2);
+        assert_eq!(r.games[0].home_score, Some(125));
+        assert_eq!(r.games[1].home_score, None);
+        assert_eq!(r.games[1].home, "LAL");
+        assert!(parse_results("a,b\n1,2\n".as_bytes()).is_err());
     }
 
     #[test]

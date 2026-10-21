@@ -1,6 +1,7 @@
 # Bundle update log
 
 ## 2026-10-21
+* **Update**: Added [Elo continuation](/concepts/elo-continuation.md): computed ratings for seasons after the archive, the results layout, preseason projections, the Elo source of each game, and the new API routes.
 * **Update**: Security review. Added the [Security model](/concepts/security.md), the browser request guard, security headers, decompression and download size caps, the job work budget and container hardening.
 * **Update**: Aligned the project with REAS 1.2.0-draft: ports and adapters layout, identifier newtypes, typed errors, documentation checker, terminology, self-audit, STE review status and three decisions.
 
