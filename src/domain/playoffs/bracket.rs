@@ -756,8 +756,7 @@ pub fn play_bracket<M: SeriesModel, R: Rng>(
     let mut finalists = (0usize, 0usize);
     for round in Round::ALL {
         let mut next = Vec::with_capacity(alive.len() / 2);
-        for pair in alive.chunks_exact(2) {
-            let (a, b) = (pair[0], pair[1]);
+        for &[a, b] in alive.as_chunks::<2>().0 {
             let winner = match model.simulate_series(bracket, rng, a, b, round, elos) {
                 Side::A => a,
                 Side::B => b,
