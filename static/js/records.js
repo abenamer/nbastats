@@ -22,10 +22,12 @@
     document.getElementById('byDecade').innerHTML = table([
       { label: 'Decade', value: d => `${d.decade}s`, left: true }, { label: 'Team-seasons', value: 'teams' },
       { label: 'Highest', value: d => pair(d, 'best'), left: true, cls: () => 'good' }, { label: 'Lowest', value: d => pair(d, 'worst'), left: true, cls: () => 'bad' }], r.by_decade);
-    document.getElementById('byEra').innerHTML = table([
+    const eraCols = [
       { label: 'Era', value: e => e.first_season === e.last_season ? labelOf(e.first_season) : `${labelOf(e.first_season)} to ${labelOf(e.last_season)}`, left: true },
-      { label: 'League', value: e => league(e.league), left: true }, { label: 'Teams', value: 'teams' }, { label: 'Seasons', value: 'seasons' }, { label: '3-pt line', value: e => e.three_point ? 'yes' : 'no', left: true },
-      { label: 'Highest', value: e => pair(e, 'best'), left: true, cls: () => 'good' }, { label: 'Lowest', value: e => pair(e, 'worst'), left: true, cls: () => 'bad' }], r.by_era);
+      { label: 'Teams', value: 'teams' }, { label: 'Seasons', value: 'seasons' }, { label: '3-pt line', value: e => e.three_point ? 'yes' : 'no', left: true },
+      { label: 'Highest', value: e => pair(e, 'best'), left: true, cls: () => 'good' }, { label: 'Lowest', value: e => pair(e, 'worst'), left: true, cls: () => 'bad' }];
+    document.getElementById('byEraNba').innerHTML = table(eraCols, r.by_era.filter(e => e.league === 'nba'));
+    document.getElementById('byEraAba').innerHTML = table(eraCols, r.by_era.filter(e => e.league === 'aba'));
     document.getElementById('byLeague').innerHTML = table([
       { label: 'League', value: l => league(l.league), left: true }, { label: 'Seasons', value: l => `${labelOf(l.first_season)} to ${labelOf(l.last_season)}`, left: true },
       { label: 'Highest', value: l => pair(l, 'best'), left: true, cls: () => 'good' }, { label: 'Lowest', value: l => pair(l, 'worst'), left: true, cls: () => 'bad' }], r.by_league);

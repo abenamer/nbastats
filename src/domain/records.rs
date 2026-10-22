@@ -408,7 +408,14 @@ fn conference_seasons(stats: &[TeamSeasonStat]) -> Vec<ConferenceSeason> {
 }
 
 /// Build every record table from the team-season statistics and the largest game swings.
-pub fn compute(stats: &[TeamSeasonStat], swings: Vec<GameSwing>) -> Records {
+/// `rosters` lists every (season, team code) with a game on the schedule, played or not; it
+/// sets each league's size per season. Seasons missing from it fall back to the teams with
+/// played games.
+pub fn compute(
+    stats: &[TeamSeasonStat],
+    swings: Vec<GameSwing>,
+    rosters: &[(SeasonYear, String)],
+) -> Records {
     use std::collections::BTreeMap;
     let all = || stats.iter();
 
@@ -454,12 +461,18 @@ pub fn compute(stats: &[TeamSeasonStat], swings: Vec<GameSwing>) -> Records {
         .collect();
     by_league.sort_by_key(|r| r.first_season);
 
-    // League sizes: number of teams of that league in that season.
+    // League sizes: number of teams of that league in that season, from the schedule where
+    // it is known (an in-progress season has teams that have not played yet).
     let mut sizes: BTreeMap<(SeasonYear, League), usize> = BTreeMap::new();
+    for (season, code) in rosters {
+        *sizes.entry((*season, League::of_code(code))).or_default() += 1;
+    }
     for s in stats {
-        *sizes
-            .entry((s.season, League::of_code(&s.code)))
-            .or_default() += 1;
+        if !rosters.iter().any(|(season, _)| *season == s.season) {
+            *sizes
+                .entry((s.season, League::of_code(&s.code)))
+                .or_default() += 1;
+        }
     }
     let mut by_size_map: BTreeMap<(usize, &'static str), (League, Vec<&TeamSeasonStat>)> =
         BTreeMap::new();
@@ -611,7 +624,7 @@ mod tests {
                     })
                 })
                 .collect();
-        let r = compute(&stats, vec![]);
+        let r = compute(&stats, vec![], &[]);
         let nba: Vec<&EraRecord> = r
             .by_era
             .iter()
@@ -650,6 +663,49 @@ mod tests {
     }
 
     #[test]
+    fn league_size_comes_from_the_schedule_not_from_games_played() {
+        // Two days into 2026-27 only 28 teams have played, but the schedule lists 30; the
+        // season must not become a 28-team era of its own.
+        let mut stats: Vec<TeamSeasonStat> = (0..30)
+            .map(|i| {
+                stat(
+                    2026,
+                    &format!("T{i:02}"),
+                    1500.0 + i as f64,
+                    1400.0,
+                    PlayoffResult::Missed,
+                )
+            })
+            .collect();
+        stats.extend((0..28).map(|i| {
+            let mut s = stat(
+                2027,
+                &format!("T{i:02}"),
+                1500.0,
+                1450.0,
+                PlayoffResult::Missed,
+            );
+            s.games = 1;
+            s
+        }));
+        let rosters: Vec<(SeasonYear, String)> = (0..30)
+            .flat_map(|i| {
+                [
+                    (SeasonYear::of(2026), format!("T{i:02}")),
+                    (SeasonYear::of(2027), format!("T{i:02}")),
+                ]
+            })
+            .collect();
+        let r = compute(&stats, vec![], &rosters);
+        assert_eq!(r.by_era.len(), 1);
+        assert_eq!((r.by_era[0].teams, r.by_era[0].seasons), (30, 2));
+        assert_eq!(r.by_league_size.len(), 1);
+        assert_eq!(r.by_league_size[0].teams, 30);
+        // Without rosters the played games decide, and the seasons split.
+        assert_eq!(compute(&stats, vec![], &[]).by_era.len(), 2);
+    }
+
+    #[test]
     fn league_follows_the_aba_code_list() {
         assert_eq!(League::of_code("KEN"), League::Aba);
         assert_eq!(League::of_code("INA"), League::Aba);
@@ -667,7 +723,7 @@ mod tests {
             stat(1976, "KEN", 1700.0, 1400.0, PlayoffResult::Missed),
             stat(1976, "WGS", 1600.0, 1300.0, PlayoffResult::Champion),
         ];
-        let r = compute(&stats, vec![]);
+        let r = compute(&stats, vec![], &[]);
         assert_eq!(r.all_time_high[0].value, 1865.0);
         assert_eq!(r.all_time_high[0].code, "WGS");
         assert_eq!(r.all_time_low[0].value, 1300.0);
@@ -704,7 +760,7 @@ mod tests {
             stat(2017, "ECL", 1750.0, 1600.0, PlayoffResult::Finals),
         ];
         stats[1].games = 10; // an unfinished season does not count
-        let r = compute(&stats, vec![]);
+        let r = compute(&stats, vec![], &[]);
         assert_eq!(r.conference_seasons.len(), 1);
         let c = &r.conference_seasons[0];
         assert_eq!((c.east_teams, c.west_teams), (2, 2));

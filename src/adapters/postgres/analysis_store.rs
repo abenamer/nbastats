@@ -185,6 +185,16 @@ impl AnalysisStore for PostgresStore {
             .collect())
     }
 
+    async fn season_rosters(&self) -> StoreResult<Vec<(SeasonYear, String)>> {
+        Ok(sqlx::query_as(
+            "SELECT DISTINCT g.season, t.code
+             FROM games g JOIN teams t ON t.id IN (g.home_team_id, g.away_team_id)
+             ORDER BY g.season, t.code",
+        )
+        .fetch_all(&self.pool)
+        .await?)
+    }
+
     async fn insert_forecast(&self, f: &NewForecast<'_>) -> StoreResult<()> {
         sqlx::query(
             "INSERT INTO forecasts (job_id, model, season, team_id, seed, p_second_round, p_conf_finals, p_finals, p_champion,
