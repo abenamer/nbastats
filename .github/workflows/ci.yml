@@ -1,6 +1,9 @@
 name: CI
 on:
+  # Pushes run only on main (the merge commit). Every other branch is covered by its
+  # pull request, so one commit no longer starts two identical runs.
   push:
+    branches: [main]
   pull_request:
   workflow_dispatch:
 
