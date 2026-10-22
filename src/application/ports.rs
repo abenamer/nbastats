@@ -392,10 +392,37 @@ pub enum SourceError {
     InvalidPayload(String),
 }
 
+/// Progress of one fetch: reported after every request and before every wait.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct FetchProgress {
+    pub requests: u32,
+    pub games: usize,
+    /// Time until the next request may start, when the source is waiting.
+    pub waiting: Option<std::time::Duration>,
+    /// The last wait was imposed by the source (HTTP 429), not by pacing.
+    pub rate_limited: bool,
+}
+
+/// Receives fetch progress. Any `Fn(FetchProgress)` is a sink; `&|_| {}` ignores it.
+pub trait FetchProgressSink: Sync {
+    fn report(&self, progress: FetchProgress);
+}
+
+impl<F: Fn(FetchProgress) + Sync> FetchProgressSink for F {
+    fn report(&self, progress: FetchProgress) {
+        self(progress)
+    }
+}
+
 #[allow(async_fn_in_trait)]
 pub trait ResultsSource: Send + Sync {
     /// Human-readable source name for the import log (for example `balldontlie`).
     fn name(&self) -> &'static str;
-    /// Every game of `season` the source knows: played games with scores, scheduled games without.
-    async fn season_results(&self, season: SeasonYear) -> Result<ResultsFetch, SourceError>;
+    /// Every game of `season` the source knows: played games with scores, scheduled games
+    /// without. Progress is reported to `progress` as pages arrive.
+    async fn season_results(
+        &self,
+        season: SeasonYear,
+        progress: &dyn FetchProgressSink,
+    ) -> Result<ResultsFetch, SourceError>;
 }

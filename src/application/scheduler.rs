@@ -8,13 +8,14 @@ use std::time::Duration;
 
 use chrono::{DateTime, Datelike, NaiveTime, TimeZone, Utc};
 use chrono_tz::Tz;
-use tracing::{error, info, warn};
+use tracing::{info, warn};
 
 use crate::domain::ids::SeasonYear;
 use crate::domain::models::ImportStatus;
 
-use super::continuation::{self, ContinuationUseCaseError};
+use super::continuation::ContinuationUseCaseError;
 use super::ports::{ImportLog, ResultsSource};
+use super::results_sync::{self, Trigger};
 use super::state::App;
 
 /// When the daily sync runs, as a wall-clock time in a named time zone.
@@ -104,19 +105,15 @@ pub async fn sync_current<R: ResultsSource>(app: &App, source: &R) -> Option<Sea
             .with_timezone(&app.sync_schedule?.zone)
             .date_naive(),
     );
+    let Ok(_guard) = app.sync_lock.clone().try_lock_owned() else {
+        info!("a manual results sync is running; the scheduled sync waits for the next run");
+        return None;
+    };
     // At most two seasons back: the archive ends one season before the first computed one.
     let mut pending = vec![season];
     while let Some(target) = pending.pop() {
-        match continuation::sync_results(&app.store, source, target).await {
-            Ok(outcome) => {
-                app.invalidate_cache();
-                info!(
-                    season = %target,
-                    inserted = outcome.games_inserted,
-                    updated = outcome.games_updated,
-                    unchanged = outcome.games_unchanged,
-                    "scheduled results sync completed"
-                );
+        match results_sync::run_tracked(app, source, target, Trigger::Scheduled).await {
+            Ok(_) => {
                 if target == season {
                     return Some(season);
                 }
@@ -130,10 +127,7 @@ pub async fn sync_current<R: ResultsSource>(app: &App, source: &R) -> Option<Sea
                 info!(season = %s, "scheduled results sync skipped: season has imported Elo");
                 return None;
             }
-            Err(e) => {
-                error!(season = %target, error = %e, "scheduled results sync failed");
-                return None;
-            }
+            Err(_) => return None,
         }
     }
     None

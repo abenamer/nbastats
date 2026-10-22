@@ -61,11 +61,42 @@
     try { const r = await postJSON('/api/data/project', { season }); document.getElementById('importResult').textContent = JSON.stringify(r, null, 2); await refreshAll(); }
     catch (e) { document.getElementById('importResult').textContent = e.message; } finally { btn.disabled = false; }
   });
+  // Live sync status: the sync runs in the background; this polls /api/data/sync/status.
+  const label = s => `${s - 1}-${String(s % 100).padStart(2, '0')}`;
+  let lastShown = null, pollTimer = null;
+  function describe(st) {
+    const who = st.trigger === 'scheduled' ? 'Scheduled sync' : 'Sync';
+    const secs = d => `${Math.round((Date.now() - new Date(d)) / 1000)} s`;
+    switch (st.phase) {
+      case 'fetching': {
+        const wait = st.waiting_secs != null ? ` · ${st.rate_limited ? 'rate limited by the API, retrying' : 'next request'} in ${st.waiting_secs} s` : '';
+        return `⏳ ${who} of ${label(st.season)} from BALLDONTLIE: ${st.requests} request${st.requests === 1 ? '' : 's'}, ${st.games.toLocaleString()} games so far${wait} · running ${secs(st.started_at)}`;
+      }
+      case 'done': return `✓ ${who} of ${label(st.season)} finished ${new Date(st.finished_at).toLocaleString()}: ${st.outcome.games_inserted} inserted, ${st.outcome.games_updated} updated, ${st.outcome.games_unchanged} unchanged.`;
+      case 'failed': return `✗ ${who} of ${label(st.season)} failed ${new Date(st.finished_at).toLocaleString()}: ${st.error}`;
+      default: return '';
+    }
+  }
+  async function pollSync() {
+    let st; try { st = await getJSON('/api/data/sync/status'); } catch (e) { return; }
+    const el = document.getElementById('syncStatus'); el.textContent = describe(st);
+    el.className = 'small ' + (st.phase === 'failed' ? 'bad' : st.phase === 'done' ? 'good' : '');
+    const running = st.phase === 'fetching';
+    document.getElementById('sync').disabled = running || !document.getElementById('sync').title;
+    const key = `${st.phase}:${st.finished_at || ''}`;
+    if (!running && lastShown && lastShown.startsWith('fetching') && key !== lastShown) {
+      if (st.phase === 'done') document.getElementById('importResult').textContent = JSON.stringify(st.outcome, null, 2);
+      await refreshAll();
+    }
+    lastShown = running ? 'fetching' : key;
+    clearTimeout(pollTimer); if (running) pollTimer = setTimeout(pollSync, 1500);
+  }
   document.getElementById('sync').addEventListener('click', async () => {
     const season = parseInt(document.getElementById('nextSeason').value);
-    const btn = document.getElementById('sync'); btn.disabled = true; document.getElementById('importResult').textContent = `Fetching ${season - 1}-${String(season % 100).padStart(2, '0')} from BALLDONTLIE and computing Elo… this can take a few minutes on the free tier.`;
-    try { const r = await postJSON('/api/data/sync', { season }); document.getElementById('importResult').textContent = JSON.stringify(r, null, 2); await refreshAll(); }
-    catch (e) { document.getElementById('importResult').textContent = e.message; } finally { btn.disabled = false; }
+    const btn = document.getElementById('sync'); btn.disabled = true;
+    document.getElementById('importResult').textContent = '';
+    try { await postJSON('/api/data/sync', { season }); lastShown = 'fetching'; await pollSync(); }
+    catch (e) { document.getElementById('importResult').textContent = e.message; btn.disabled = false; }
   });
   document.getElementById('resultsForm').addEventListener('submit', async e => {
     e.preventDefault(); const f = document.getElementById('resultsFile').files[0]; if (!f) return;
@@ -74,5 +105,5 @@
     try { const r = await fetch('/api/data/results', { method: 'POST', body: fd }); const body = await r.json(); document.getElementById('importResult').textContent = JSON.stringify(body, null, 2); await refreshAll(); }
     catch (err) { document.getElementById('importResult').textContent = err.message; }
   });
-  refreshAll();
+  refreshAll().then(pollSync);
 })();

@@ -134,7 +134,17 @@ async fn main() -> anyhow::Result<()> {
                     "BALLDONTLIE_API_KEY must be set to sync results (see .env.example)"
                 )
             })?;
-            let outcome = continuation::sync_results(&store, &results, season).await?;
+            let progress = |p: nba_elo_simulator::application::ports::FetchProgress| {
+                eprintln!(
+                    "requests: {} games: {}{}",
+                    p.requests,
+                    p.games,
+                    p.waiting
+                        .map(|w| format!(" (next request in {}s)", w.as_secs()))
+                        .unwrap_or_default()
+                );
+            };
+            let outcome = continuation::sync_results(&store, &results, season, &progress).await?;
             println!("{}", serde_json::to_string_pretty(&outcome)?);
             Ok(())
         }

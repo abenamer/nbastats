@@ -47,7 +47,7 @@ The application inserts the previous season's regular-season matchups one year l
 3. Restart the application: `docker compose up -d`.
 4. On the Data page, enter the season end year and click **Sync results from BALLDONTLIE**.
 
-The application fetches every game of the season (results and schedule) and recomputes the Elo. On the free tier a full season takes about three minutes. Each run replaces the computed games of that season.
+The sync runs in the background. The line under the button shows its progress: requests made, games received, and the seconds until the next request when the application waits for the API quota. On the free tier a full season takes about three minutes. When the sync ends, the page shows the outcome and refreshes the coverage table. Only one sync runs at a time; the daily sync shows the same line while it runs.
 
 ## Daily automatic sync
 

@@ -22,8 +22,8 @@ use crate::domain::models::{EloSource, Game, GameType};
 
 use super::imports::{self, derived, ImportOutcome};
 use super::ports::{
-    GameStore, ImportLog, ImportStart, ImportStats, NewGame, ResultRecord, ResultsSource,
-    SourceError, StoreError,
+    FetchProgressSink, GameStore, ImportLog, ImportStart, ImportStats, NewGame, ResultRecord,
+    ResultsSource, SourceError, StoreError,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -387,8 +387,9 @@ pub async fn sync_results<S: GameStore + ImportLog, R: ResultsSource>(
     store: &S,
     source: &R,
     season: SeasonYear,
+    progress: &dyn FetchProgressSink,
 ) -> Result<ImportOutcome, ContinuationUseCaseError> {
-    let fetch = source.season_results(season).await?;
+    let fetch = source.season_results(season, progress).await?;
     info!(
         season = %season,
         games = fetch.records.len(),

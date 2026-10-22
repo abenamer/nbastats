@@ -13,6 +13,7 @@ use uuid::Uuid;
 use crate::adapters::balldontlie::BalldontlieSource;
 use crate::adapters::dataset::HttpDatasetSource;
 use crate::adapters::postgres::PostgresStore;
+use crate::application::results_sync::SyncPhase;
 use crate::application::scheduler::SyncSchedule;
 use crate::config::Config;
 use crate::domain::ids::{SeasonYear, TeamId};
@@ -53,6 +54,9 @@ pub struct App {
     pub results: Option<BalldontlieSource>,
     /// Daily sync schedule; `None` when disabled or when there is no results source.
     pub sync_schedule: Option<SyncSchedule>,
+    /// Held while a results sync runs (manual or scheduled); at most one at a time.
+    pub sync_lock: Arc<tokio::sync::Mutex<()>>,
+    sync_phase: std::sync::Mutex<SyncPhase>,
     pub started_at: chrono::DateTime<chrono::Utc>,
     /// Wakes the job runner when a job is queued.
     pub job_notify: Notify,
@@ -78,6 +82,8 @@ impl App {
             source,
             results,
             sync_schedule,
+            sync_lock: Arc::new(tokio::sync::Mutex::new(())),
+            sync_phase: std::sync::Mutex::new(SyncPhase::Idle),
             started_at: chrono::Utc::now(),
             job_notify: Notify::new(),
             cancel_flags: std::sync::Mutex::new(HashMap::new()),
@@ -128,6 +134,17 @@ impl App {
     }
 
     /// Drop cached data after an import.
+    pub fn sync_phase(&self) -> SyncPhase {
+        self.sync_phase
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+    }
+
+    pub fn set_sync_phase(&self, phase: SyncPhase) {
+        *self.sync_phase.lock().unwrap_or_else(|e| e.into_inner()) = phase;
+    }
+
     pub fn invalidate_cache(&self) {
         self.seasons
             .write()

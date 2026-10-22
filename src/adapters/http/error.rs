@@ -16,6 +16,7 @@ use crate::domain::validation::ValidationError;
 pub enum ApiError {
     BadRequest(String),
     NotFound(String),
+    Conflict(String),
     Unavailable(String),
     Internal(String),
 }
@@ -26,6 +27,9 @@ impl ApiError {
     }
     pub fn not_found(msg: impl Into<String>) -> Self {
         ApiError::NotFound(msg.into())
+    }
+    pub fn conflict(msg: impl Into<String>) -> Self {
+        ApiError::Conflict(msg.into())
     }
 }
 
@@ -92,6 +96,7 @@ impl IntoResponse for ApiError {
         let (status, message) = match self {
             ApiError::BadRequest(m) => (StatusCode::BAD_REQUEST, m),
             ApiError::NotFound(m) => (StatusCode::NOT_FOUND, m),
+            ApiError::Conflict(m) => (StatusCode::CONFLICT, m),
             ApiError::Unavailable(m) => {
                 tracing::error!(error = %m, "store unavailable");
                 (

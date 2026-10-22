@@ -12,7 +12,9 @@ use serde::Deserialize;
 use tokio::sync::Mutex;
 use tokio::time::Instant;
 
-use crate::application::ports::{ResultRecord, ResultsFetch, ResultsSource, SourceError};
+use crate::application::ports::{
+    FetchProgress, FetchProgressSink, ResultRecord, ResultsFetch, ResultsSource, SourceError,
+};
 use crate::domain::ids::SeasonYear;
 
 const PER_PAGE: u32 = 100;
@@ -69,10 +71,15 @@ impl BalldontlieSource {
     }
 
     /// Wait for the next request slot, then reserve the one after it.
-    async fn pace(&self) {
+    async fn pace(&self, progress: &dyn FetchProgressSink, so_far: FetchProgress) {
         let mut slot = self.next_slot.lock().await;
         let now = Instant::now();
         if *slot > now {
+            progress.report(FetchProgress {
+                waiting: Some(*slot - now),
+                rate_limited: false,
+                ..so_far
+            });
             tokio::time::sleep_until(*slot).await;
         }
         *slot = Instant::now() + self.interval();
@@ -82,12 +89,14 @@ impl BalldontlieSource {
         &self,
         season: SeasonYear,
         cursor: Option<i64>,
+        progress: &dyn FetchProgressSink,
+        so_far: FetchProgress,
     ) -> Result<Vec<u8>, SourceError> {
         let url = format!("{}/games", self.config.base_url.trim_end_matches('/'));
         let start_year = (season.end_year() - 1).to_string();
         let mut retries = 0;
         loop {
-            self.pace().await;
+            self.pace(progress, so_far).await;
             let mut req = self
                 .client
                 .get(&url)
@@ -117,6 +126,11 @@ impl BalldontlieSource {
                     .map(Duration::from_secs)
                     .unwrap_or_else(|| self.interval() * 2);
                 tracing::warn!(?wait, retries, "balldontlie rate limit hit; waiting");
+                progress.report(FetchProgress {
+                    waiting: Some(wait),
+                    rate_limited: true,
+                    ..so_far
+                });
                 tokio::time::sleep(wait).await;
                 continue;
             }
@@ -152,7 +166,11 @@ impl ResultsSource for BalldontlieSource {
         "balldontlie"
     }
 
-    async fn season_results(&self, season: SeasonYear) -> Result<ResultsFetch, SourceError> {
+    async fn season_results(
+        &self,
+        season: SeasonYear,
+        progress: &dyn FetchProgressSink,
+    ) -> Result<ResultsFetch, SourceError> {
         let mut fetch = ResultsFetch {
             source_url: format!(
                 "{}/games?seasons[]={}",
@@ -163,10 +181,20 @@ impl ResultsSource for BalldontlieSource {
         };
         let mut cursor = None;
         for _ in 0..MAX_PAGES {
-            let body = self.fetch_page(season, cursor).await?;
+            let so_far = FetchProgress {
+                requests: fetch.requests,
+                games: fetch.records.len(),
+                ..Default::default()
+            };
+            let body = self.fetch_page(season, cursor, progress, so_far).await?;
             fetch.requests += 1;
             let page = parse_games_page(&body)?;
             fetch.records.extend(page.records);
+            progress.report(FetchProgress {
+                requests: fetch.requests,
+                games: fetch.records.len(),
+                ..Default::default()
+            });
             match page.next_cursor {
                 Some(c) => cursor = Some(c),
                 None => return Ok(fetch),

@@ -7,8 +7,8 @@ mod common;
 use chrono::NaiveDate;
 use nba_elo_simulator::application::imports::{self, Provenance};
 use nba_elo_simulator::application::ports::{
-    AnalysisStore, GameLog, GameStore, ImportLog, JobOutcome, JobStore, NewJob, ResultRecord,
-    ResultsFetch, ResultsSource, SourceError,
+    AnalysisStore, FetchProgress, FetchProgressSink, GameLog, GameStore, ImportLog, JobOutcome,
+    JobStore, NewJob, ResultRecord, ResultsFetch, ResultsSource, SourceError,
 };
 use nba_elo_simulator::domain::ids::{SeasonYear, TeamId};
 use nba_elo_simulator::domain::models::{
@@ -358,7 +358,7 @@ async fn computed_elo_continues_from_the_previous_season(pool: PgPool) {
         ],
     };
     let before = imported_2016.len();
-    let outcome = continuation::sync_results(&store, &completion, S2016)
+    let outcome = continuation::sync_results(&store, &completion, S2016, &|_| {})
         .await
         .unwrap();
     assert_eq!(outcome.games_inserted, 1);
@@ -463,7 +463,7 @@ async fn computed_elo_continues_from_the_previous_season(pool: PgPool) {
             record("2016-11-01", "GSW", "BRK", None),
         ],
     };
-    let outcome = continuation::sync_results(&store, &source, s2017)
+    let outcome = continuation::sync_results(&store, &source, s2017, &|_| {})
         .await
         .unwrap();
     assert_eq!(outcome.games_inserted, 4);
@@ -486,7 +486,7 @@ async fn computed_elo_continues_from_the_previous_season(pool: PgPool) {
     let bad = FakeResults {
         records: vec![record("2016-10-25", "GSW", "XXX", None)],
     };
-    let err = continuation::sync_results(&store, &bad, s2017).await;
+    let err = continuation::sync_results(&store, &bad, s2017, &|_| {}).await;
     assert!(matches!(
         err,
         Err(continuation::ContinuationUseCaseError::UnknownTeams(c)) if c == "XXX"
@@ -496,7 +496,7 @@ async fn computed_elo_continues_from_the_previous_season(pool: PgPool) {
     let s2018 = SeasonYear::of(2018);
     let empty = FakeResults { records: vec![] };
     assert!(matches!(
-        continuation::sync_results(&store, &empty, s2018).await,
+        continuation::sync_results(&store, &empty, s2018, &|_| {}).await,
         Err(continuation::ContinuationUseCaseError::NoGames(s)) if s == s2018
     ));
     assert!(!store
@@ -528,7 +528,16 @@ impl ResultsSource for FakeResults {
     fn name(&self) -> &'static str {
         "fake-results"
     }
-    async fn season_results(&self, _season: SeasonYear) -> Result<ResultsFetch, SourceError> {
+    async fn season_results(
+        &self,
+        _season: SeasonYear,
+        progress: &dyn FetchProgressSink,
+    ) -> Result<ResultsFetch, SourceError> {
+        progress.report(FetchProgress {
+            requests: 1,
+            games: self.records.len(),
+            ..Default::default()
+        });
         Ok(ResultsFetch {
             records: self.records.clone(),
             source_url: "fake://games".to_string(),

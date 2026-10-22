@@ -42,7 +42,8 @@ sources:
 | `POST /api/data/project` | Preseason projection with computed Elo. Body: `{"season": 2026}`. Refused when the season has imported games. |
 | `POST /api/data/results` | Multipart upload in the results layout with computed Elo. Fields: `file`, `season`. |
 | `DELETE /api/data/seasons/{season}` | Remove a season that holds only computed games or no games. Status 400 for a season with imported games. |
-| `POST /api/data/sync` | Fetch a season from BALLDONTLIE and compute its Elo; for a season with archive games, add only the games after the archive. Body: `{"season": 2026}`. Status 400 when `BALLDONTLIE_API_KEY` is not set. |
+| `POST /api/data/sync` | Start a background sync of a season from BALLDONTLIE; for a season with archive games, only the games after the archive are added. Body: `{"season": 2026}`. Returns at once. Status 400 when `BALLDONTLIE_API_KEY` is not set, 409 when a sync is already running. |
+| `GET /api/data/sync/status` | State of the last or current sync: `idle`, `fetching` (season, trigger, requests, games, seconds until the next request), `done` (outcome) or `failed` (error). |
 
 # Jobs
 

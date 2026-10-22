@@ -15,8 +15,8 @@ use crate::application::imports::{self, Provenance};
 use crate::application::jobs::specs::{AlphaJob, BacktestJob, PlayoffJob, SeasonJob};
 use crate::application::jobs::{self, Limits, Submit};
 use crate::application::ports::{AnalysisStore, GameLog, ImportLog, JobStore, ResultsSource};
-use crate::application::scheduler;
 use crate::application::{dashboard, dynasty};
+use crate::application::{results_sync, scheduler};
 use crate::config::APP_VERSION;
 use crate::domain::backtesting::BacktestParams;
 use crate::domain::elo;
@@ -670,16 +670,20 @@ pub async fn sync_results(
     State(app): State<AppState>,
     Json(body): Json<ProjectBody>,
 ) -> ApiResult<Value> {
-    let Some(source) = app.results.as_ref() else {
-        return Err(ApiError::bad_request(
-            "results sync is not configured: set BALLDONTLIE_API_KEY and restart",
-        ));
-    };
-    let outcome = continuation::sync_results(&app.store, source, body.season)
-        .await
-        .map_err(continuation_error)?;
-    app.invalidate_cache();
-    Ok(Json(json!(outcome)))
+    match results_sync::start(app.clone(), body.season) {
+        Ok(()) => Ok(Json(
+            json!({ "started": true, "season": body.season, "status_url": "/api/data/sync/status" }),
+        )),
+        Err(results_sync::StartError::NotConfigured) => Err(ApiError::bad_request(
+            results_sync::StartError::NotConfigured.to_string(),
+        )),
+        Err(e @ results_sync::StartError::AlreadyRunning) => Err(ApiError::conflict(e.to_string())),
+    }
+}
+
+/// Live state of the results sync (manual or scheduled) for the Data page to poll.
+pub async fn sync_status(State(app): State<AppState>) -> ApiResult<Value> {
+    Ok(Json(json!(app.sync_phase())))
 }
 
 /// Remove a season that holds only computed games (or no games at all).

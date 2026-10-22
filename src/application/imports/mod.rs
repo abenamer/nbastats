@@ -19,7 +19,7 @@ use super::ports::{
     StoreError,
 };
 
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct ImportOutcome {
     pub import_id: i64,
     pub format: String,
