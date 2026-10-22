@@ -841,9 +841,70 @@ pub const CURATED_CHAMPIONS: &[(i32, &str, &str)] = &[
     (2025, "OKC", "IND"),
 ];
 
+/// Uniform colours of the active franchises as (primary, secondary) hex values, used by the
+/// charts. Primaries are dark enough for a white chart surface (the Spurs' silver is a
+/// secondary for that reason). Defunct franchises fall back to `DEFAULT_COLORS`.
+pub const FRANCHISE_COLORS: &[(&str, &str, &str)] = &[
+    ("ATL", "#C8102E", "#FDB927"),
+    ("BOS", "#007A33", "#BA9653"),
+    ("BRK", "#000000", "#A1A1A4"),
+    ("CHI", "#CE1141", "#000000"),
+    ("CHO", "#1D1160", "#00788C"),
+    ("CLE", "#860038", "#FDBB30"),
+    ("DAL", "#00538C", "#B8C4CA"),
+    ("DEN", "#0E2240", "#FEC524"),
+    ("DET", "#C8102E", "#1D42BA"),
+    ("GSW", "#1D428A", "#FFC72C"),
+    ("HOU", "#CE1141", "#000000"),
+    ("IND", "#002D62", "#FDBB30"),
+    ("LAC", "#C8102E", "#1D428A"),
+    ("LAL", "#552583", "#FDB927"),
+    ("MEM", "#12173F", "#5D76A9"),
+    ("MIA", "#98002E", "#F9A01B"),
+    ("MIL", "#00471B", "#EEE1C6"),
+    ("MIN", "#0C2340", "#78BE20"),
+    ("NOP", "#0C2340", "#C8102E"),
+    ("NYK", "#006BB6", "#F58426"),
+    ("OKC", "#007AC1", "#EF3B24"),
+    ("ORL", "#0077C0", "#C4CED4"),
+    ("PHI", "#006BB6", "#ED174C"),
+    ("PHO", "#1D1160", "#E56020"),
+    ("POR", "#E03A3E", "#000000"),
+    ("SAC", "#5A2D81", "#63727A"),
+    ("SAS", "#000000", "#C4CED4"),
+    ("TOR", "#CE1141", "#000000"),
+    ("UTA", "#002B5C", "#F9A01B"),
+    ("WAS", "#002B5C", "#E31837"),
+];
+
+pub const DEFAULT_COLORS: (&str, &str) = ("#475569", "#94A3B8");
+
+/// (primary, secondary) colours of a franchise key; defunct franchises get the default pair.
+pub fn franchise_colors(key: &str) -> (&'static str, &'static str) {
+    FRANCHISE_COLORS
+        .iter()
+        .find(|c| c.0 == key)
+        .map(|c| (c.1, c.2))
+        .unwrap_or(DEFAULT_COLORS)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_active_franchise_has_colours() {
+        for key in active_franchise_keys() {
+            assert_ne!(franchise_colors(key), DEFAULT_COLORS, "{key}");
+        }
+        assert_eq!(franchise_colors("CHS"), DEFAULT_COLORS);
+        for (key, p, s) in FRANCHISE_COLORS {
+            for c in [p, s] {
+                assert!(c.len() == 7 && c.starts_with('#'), "{key}: {c}");
+                assert!(i64::from_str_radix(&c[1..], 16).is_ok(), "{key}: {c}");
+            }
+        }
+    }
 
     #[test]
     fn thirty_active_franchises() {

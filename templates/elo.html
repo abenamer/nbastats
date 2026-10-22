@@ -8,7 +8,7 @@
 </section>
 <section class="grid2">
   <div class="panel"><h2>Team ratings</h2><div id="ratings" class="table-wrap"></div></div>
-  <div class="panel"><h2>Elo during the season</h2><canvas id="historyChart" height="300"></canvas></div>
+  <div class="panel"><h2>Elo during the season</h2><div class="chart-box"><canvas id="historyChart"></canvas></div><p class="muted small">Each point is a team's rating after a game: up for a win, down for a loss, bigger moves for bigger margins and upsets. Type team codes above to highlight a few teams and hover for the change per game.</p></div>
 </section>
 <section class="grid2">
   <div class="panel">
@@ -19,7 +19,7 @@
       <label>To <input id="fTo" type="number" value="2025" min="1947" max="2100"></label>
       <button id="loadFranchise">Load</button>
     </div>
-    <canvas id="franchiseChart" height="260"></canvas>
+    <div class="chart-box"><canvas id="franchiseChart"></canvas></div>
     <div id="franchiseSeasons" class="table-wrap"></div>
   </div>
   <div class="panel">

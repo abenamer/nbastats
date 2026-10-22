@@ -40,7 +40,7 @@ See the [Elo rating model](/concepts/elo-model.md), the [alpha lottery engine](/
 |------|------|---------|
 | Dashboard | `/` | Title distribution, concentration and the equal-strength comparison. |
 | Elo Explorer | `/elo` | Team ratings, Elo history charts, franchise trajectories and the matchup calculator. |
-| Franchise History | `/franchise` | A franchise's Elo after every game across all its seasons, with stars at NBA titles, hollow circles at lost Finals, rating bands, and an optional second franchise for comparison. |
+| Franchise History | `/franchise` | A franchise's Elo after every game across all its seasons, drawn in the franchise's uniform colours (primary line over a secondary trim), with stars at NBA titles, hollow circles at lost Finals, rating bands, and an optional second franchise for comparison. |
 | Alpha Simulator | `/alpha` | Editable strengths, scenario save and load, exact validation. |
 | Playoff Simulator | `/playoffs` | Historical bracket, exact and Monte Carlo probabilities, actual results. |
 | Season Forecast | `/season` | Every team's probability to reach the play-in, the playoffs, each round and the title. |
