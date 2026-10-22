@@ -75,7 +75,10 @@ pub async fn records(State(app): State<AppState>) -> ApiResult<Value> {
         .store
         .biggest_swings(crate::domain::records::LIST_LEN as i64)
         .await?;
-    Ok(Json(json!(crate::domain::records::compute(&stats, swings))))
+    let rosters = app.store.season_rosters().await?;
+    Ok(Json(json!(crate::domain::records::compute(
+        &stats, swings, &rosters
+    ))))
 }
 
 fn colors_json(key: &str) -> Value {

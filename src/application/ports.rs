@@ -333,6 +333,9 @@ pub trait AnalysisStore: Send + Sync {
     async fn team_season_stats(&self) -> StoreResult<Vec<TeamSeasonStat>>;
     /// The `limit` games with the largest rating gain for the winner.
     async fn biggest_swings(&self, limit: i64) -> StoreResult<Vec<GameSwing>>;
+    /// Every (season, team code) with at least one game, played or scheduled: the league's
+    /// membership for the season, which the played games alone understate early in a season.
+    async fn season_rosters(&self) -> StoreResult<Vec<(SeasonYear, String)>>;
     async fn table_counts(&self) -> StoreResult<Vec<(String, i64)>>;
     async fn health(&self) -> StoreHealth;
 }

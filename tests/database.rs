@@ -341,7 +341,10 @@ async fn records_queries_summarise_the_game_log(pool: PgPool) {
     assert!(swings
         .iter()
         .all(|s| s.points > s.opponent_points && s.elo_post > s.elo_pre));
-    let r = records::compute(&stats, swings);
+    let rosters = store.season_rosters().await.unwrap();
+    assert_eq!(rosters.len(), 30);
+    assert!(rosters.iter().all(|(s, _)| *s == S2016));
+    let r = records::compute(&stats, swings, &rosters);
     assert_eq!(r.all_time_high[0].code, "GSW");
     assert_eq!(r.best_champion[0].code, "CLE");
     assert_eq!(r.conference_seasons.len(), 1);
