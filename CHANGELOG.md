@@ -6,6 +6,7 @@
 - Aligned with REAS 1.2.0-draft: domain, application and adapters layout; six ports and one `PostgresStore` adapter; `TeamId`, `FranchiseId` and `SeasonYear` newtypes; typed errors; conditional job transitions; documentation checker, terminology, self-audit and decisions.
 
 - Curated champions and runner-ups for 1946-47 to 1959-60 and 1967-68 to 1982-83, where the archive's playoff data does not resolve a bracket; existing installations are backfilled at start.
+- Conference and division alignment curated back to 1946-47 (NBA and BAA), so standings, the East-West comparison and the division records cover every season; existing installations are updated at start. The full-season rule for the group records follows each season's median game count instead of a fixed 60 games, so the 48-game and lockout seasons count.
 - Records: a league's size per season comes from the schedule (played or not), so an in-progress season no longer appears as a smaller league of its own. The era table is split into NBA/BAA and ABA.
 - Records page: the conference table compares East and West season by season (mean, gap, stronger side) instead of a best/worst list the West filled alone.
 - Records page: best and worst by era, where an era starts when a league's team count changes and, for the NBA, at the 3-point line in 1979-80.

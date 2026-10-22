@@ -32,7 +32,8 @@ The bundled file is `data/nba_elo_neil_paine.csv.gz` (SHA-256 of the uncompresse
 * 1946-47 to 2024-25: 75,913 games.
 * Playoff records are present for 1946-47 to 2023-24. The bracket model resolves the champion from the games for 1960-61 to 1966-67 and 1983-84 onward. For the other seasons (byes and formats the model does not resolve) the champion and runner-up come from the curated table in `src/domain/reference.rs`, marked `curated`.
 * 2024-25 has the regular season only. Its champion (Oklahoma City) comes from a curated table, marked `curated`.
-* Bracket reconstruction and forecasts cover 2002-03 and later, because conference alignment data starts there.
+* Conference and division alignment is curated in `src/domain/reference.rs` for every NBA and BAA season from 1946-47. Before 1970-71 the league had two divisions (three in 1949-50) and no conferences; the Eastern Division is filed under the East, the Western and the 1949-50 Central under the West. ABA teams have no alignment. A unit test checks that every team of every season is listed once.
+* Bracket reconstruction and forecasts cover 2002-03 and later, the 16-team era the bracket model supports.
 * Seasons after 2024-25 are not in the archive. The application can compute them from results, or project them. See [Elo continuation](elo-continuation.md).
 
 # Franchise identity

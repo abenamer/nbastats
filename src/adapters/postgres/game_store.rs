@@ -164,9 +164,8 @@ impl GameStore for PostgresStore {
         let rows: Vec<(SeasonYear, TeamId)> = sqlx::query_as(
             "SELECT DISTINCT season, team_id FROM (
                 SELECT season, home_team_id AS team_id FROM games
-                UNION SELECT season, away_team_id FROM games) s WHERE season >= $1",
+                UNION SELECT season, away_team_id FROM games) s",
         )
-        .bind(SeasonYear::FIRST_MODERN)
         .fetch_all(&self.pool)
         .await?;
         let mut tx = self.pool.begin().await?;
@@ -187,6 +186,15 @@ impl GameStore for PostgresStore {
                 .await?;
             }
         }
+        // Derived standings carry a copy of the alignment; keep it in step without a rebuild.
+        sqlx::query(
+            "UPDATE team_seasons ts SET conference = a.conference, division = a.division
+             FROM alignments a
+             WHERE a.season = ts.season AND a.team_id = ts.team_id
+               AND (ts.conference IS DISTINCT FROM a.conference OR ts.division IS DISTINCT FROM a.division)",
+        )
+        .execute(&mut *tx)
+        .await?;
         tx.commit().await?;
         Ok(())
     }

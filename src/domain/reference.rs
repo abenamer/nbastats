@@ -750,12 +750,830 @@ pub fn lookup_team(
     TEAM_LINEAGE.iter().find(|t| t.0 == code)
 }
 
-/// Conference / division alignment of a team code for a season.
-/// Only seasons from 2002-03 onward are covered; earlier seasons return `None`.
+/// Division membership of the BAA and NBA from 1946-47 to 2001-02, as (first end year, last
+/// end year, conference, division, team codes of those seasons). Curated from the league's
+/// standings; checked against the game log so that every team of every season is listed once.
+/// Before 1970-71 the league had two divisions (three in 1949-50) and no conferences; the
+/// Eastern Division is filed under the East, the Western and the 1949-50 Central under the
+/// West. ABA teams have no alignment data.
+pub const HISTORICAL_ALIGNMENT: &[(i32, i32, Conference, &str, &[&str])] = &[
+    (
+        1947,
+        1947,
+        Conference::East,
+        "Eastern",
+        &["WSC", "PHW", "NYK", "PRO", "TRH", "BOS"],
+    ),
+    (
+        1947,
+        1947,
+        Conference::West,
+        "Western",
+        &["CHS", "STB", "CLR", "DTF", "PIT"],
+    ),
+    (
+        1948,
+        1948,
+        Conference::East,
+        "Eastern",
+        &["PHW", "NYK", "BOS", "PRO"],
+    ),
+    (
+        1948,
+        1948,
+        Conference::West,
+        "Western",
+        &["STB", "BLB", "CHS", "WSC"],
+    ),
+    (
+        1949,
+        1949,
+        Conference::East,
+        "Eastern",
+        &["WSC", "NYK", "BLB", "PHW", "BOS", "PRO"],
+    ),
+    (
+        1949,
+        1949,
+        Conference::West,
+        "Western",
+        &["ROC", "MNL", "CHS", "STB", "FTW", "INJ"],
+    ),
+    (
+        1950,
+        1950,
+        Conference::East,
+        "Eastern",
+        &["SYR", "NYK", "WSC", "PHW", "BLB", "BOS"],
+    ),
+    (
+        1950,
+        1950,
+        Conference::West,
+        "Central",
+        &["MNL", "ROC", "FTW", "CHS", "STB"],
+    ),
+    (
+        1950,
+        1950,
+        Conference::West,
+        "Western",
+        &["INO", "AND", "TRI", "SHE", "WAT", "DNN"],
+    ),
+    (
+        1951,
+        1951,
+        Conference::East,
+        "Eastern",
+        &["PHW", "BOS", "NYK", "SYR", "BLB", "WSC"],
+    ),
+    (
+        1951,
+        1951,
+        Conference::West,
+        "Western",
+        &["MNL", "ROC", "FTW", "INO", "TRI"],
+    ),
+    (
+        1952,
+        1953,
+        Conference::East,
+        "Eastern",
+        &["SYR", "BOS", "NYK", "PHW", "BLB"],
+    ),
+    (
+        1952,
+        1953,
+        Conference::West,
+        "Western",
+        &["ROC", "MNL", "INO", "FTW", "MLH"],
+    ),
+    (
+        1954,
+        1954,
+        Conference::East,
+        "Eastern",
+        &["NYK", "BOS", "SYR", "PHW", "BLB"],
+    ),
+    (
+        1954,
+        1954,
+        Conference::West,
+        "Western",
+        &["MNL", "ROC", "FTW", "MLH"],
+    ),
+    (
+        1955,
+        1955,
+        Conference::East,
+        "Eastern",
+        &["SYR", "NYK", "BOS", "PHW"],
+    ),
+    (
+        1955,
+        1955,
+        Conference::West,
+        "Western",
+        &["FTW", "MNL", "ROC", "MLH"],
+    ),
+    (
+        1956,
+        1957,
+        Conference::East,
+        "Eastern",
+        &["PHW", "BOS", "SYR", "NYK"],
+    ),
+    (
+        1956,
+        1957,
+        Conference::West,
+        "Western",
+        &["FTW", "MNL", "STL", "ROC"],
+    ),
+    (
+        1958,
+        1960,
+        Conference::East,
+        "Eastern",
+        &["BOS", "SYR", "PHW", "NYK"],
+    ),
+    (
+        1958,
+        1960,
+        Conference::West,
+        "Western",
+        &["STL", "DET", "CIN", "MNL"],
+    ),
+    (
+        1961,
+        1961,
+        Conference::East,
+        "Eastern",
+        &["BOS", "PHW", "SYR", "NYK"],
+    ),
+    (
+        1961,
+        1961,
+        Conference::West,
+        "Western",
+        &["STL", "LAL", "DET", "CIN"],
+    ),
+    (
+        1962,
+        1962,
+        Conference::East,
+        "Eastern",
+        &["BOS", "PHW", "SYR", "NYK"],
+    ),
+    (
+        1962,
+        1962,
+        Conference::West,
+        "Western",
+        &["LAL", "CIN", "DET", "STL", "CHP"],
+    ),
+    (
+        1963,
+        1963,
+        Conference::East,
+        "Eastern",
+        &["BOS", "SYR", "NYK", "CIN"],
+    ),
+    (
+        1963,
+        1963,
+        Conference::West,
+        "Western",
+        &["LAL", "STL", "DET", "SFW", "CHZ"],
+    ),
+    (
+        1964,
+        1966,
+        Conference::East,
+        "Eastern",
+        &["BOS", "CIN", "PHI", "NYK"],
+    ),
+    (
+        1964,
+        1966,
+        Conference::West,
+        "Western",
+        &["SFW", "STL", "LAL", "BAL", "DET"],
+    ),
+    (
+        1967,
+        1967,
+        Conference::East,
+        "Eastern",
+        &["PHI", "BOS", "CIN", "NYK", "BAL"],
+    ),
+    (
+        1967,
+        1967,
+        Conference::West,
+        "Western",
+        &["SFW", "STL", "LAL", "CHI", "DET"],
+    ),
+    (
+        1968,
+        1968,
+        Conference::East,
+        "Eastern",
+        &["PHI", "BOS", "NYK", "DET", "CIN", "BAL"],
+    ),
+    (
+        1968,
+        1968,
+        Conference::West,
+        "Western",
+        &["STL", "LAL", "SFW", "CHI", "SEA", "SDR"],
+    ),
+    (
+        1969,
+        1970,
+        Conference::East,
+        "Eastern",
+        &["BAL", "PHI", "NYK", "BOS", "CIN", "DET", "MIL"],
+    ),
+    (
+        1969,
+        1970,
+        Conference::West,
+        "Western",
+        &["LAL", "ATL", "SFW", "SDR", "CHI", "SEA", "PHO"],
+    ),
+    (
+        1971,
+        1971,
+        Conference::East,
+        "Atlantic",
+        &["NYK", "PHI", "BOS", "BUF"],
+    ),
+    (
+        1971,
+        1971,
+        Conference::East,
+        "Central",
+        &["BAL", "ATL", "CIN", "CLE"],
+    ),
+    (
+        1971,
+        1971,
+        Conference::West,
+        "Midwest",
+        &["MIL", "CHI", "PHO", "DET"],
+    ),
+    (
+        1971,
+        1971,
+        Conference::West,
+        "Pacific",
+        &["LAL", "SFW", "SDR", "SEA", "POR"],
+    ),
+    (
+        1972,
+        1972,
+        Conference::East,
+        "Atlantic",
+        &["BOS", "NYK", "PHI", "BUF"],
+    ),
+    (
+        1972,
+        1972,
+        Conference::East,
+        "Central",
+        &["BAL", "ATL", "CIN", "CLE"],
+    ),
+    (
+        1972,
+        1972,
+        Conference::West,
+        "Midwest",
+        &["MIL", "CHI", "PHO", "DET"],
+    ),
+    (
+        1972,
+        1972,
+        Conference::West,
+        "Pacific",
+        &["LAL", "GSW", "SEA", "HOU", "POR"],
+    ),
+    (
+        1973,
+        1973,
+        Conference::East,
+        "Atlantic",
+        &["BOS", "NYK", "BUF", "PHI"],
+    ),
+    (
+        1973,
+        1973,
+        Conference::East,
+        "Central",
+        &["BAL", "ATL", "HOU", "CLE"],
+    ),
+    (
+        1973,
+        1973,
+        Conference::West,
+        "Midwest",
+        &["MIL", "CHI", "DET", "KCO"],
+    ),
+    (
+        1973,
+        1973,
+        Conference::West,
+        "Pacific",
+        &["LAL", "GSW", "PHO", "SEA", "POR"],
+    ),
+    (
+        1974,
+        1974,
+        Conference::East,
+        "Atlantic",
+        &["BOS", "NYK", "BUF", "PHI"],
+    ),
+    (
+        1974,
+        1974,
+        Conference::East,
+        "Central",
+        &["CAP", "ATL", "HOU", "CLE"],
+    ),
+    (
+        1974,
+        1974,
+        Conference::West,
+        "Midwest",
+        &["MIL", "CHI", "DET", "KCO"],
+    ),
+    (
+        1974,
+        1974,
+        Conference::West,
+        "Pacific",
+        &["LAL", "GSW", "SEA", "PHO", "POR"],
+    ),
+    (
+        1975,
+        1975,
+        Conference::East,
+        "Atlantic",
+        &["BOS", "BUF", "NYK", "PHI"],
+    ),
+    (
+        1975,
+        1975,
+        Conference::East,
+        "Central",
+        &["WSB", "HOU", "CLE", "ATL", "NOJ"],
+    ),
+    (
+        1975,
+        1975,
+        Conference::West,
+        "Midwest",
+        &["CHI", "KCO", "DET", "MIL"],
+    ),
+    (
+        1975,
+        1975,
+        Conference::West,
+        "Pacific",
+        &["GSW", "SEA", "POR", "PHO", "LAL"],
+    ),
+    (
+        1976,
+        1976,
+        Conference::East,
+        "Atlantic",
+        &["BOS", "BUF", "PHI", "NYK"],
+    ),
+    (
+        1976,
+        1976,
+        Conference::East,
+        "Central",
+        &["CLE", "WSB", "HOU", "NOJ", "ATL"],
+    ),
+    (
+        1976,
+        1976,
+        Conference::West,
+        "Midwest",
+        &["MIL", "DET", "KCK", "CHI"],
+    ),
+    (
+        1976,
+        1976,
+        Conference::West,
+        "Pacific",
+        &["GSW", "SEA", "PHO", "LAL", "POR"],
+    ),
+    (
+        1977,
+        1977,
+        Conference::East,
+        "Atlantic",
+        &["PHI", "BOS", "NYK", "BUF", "NYN"],
+    ),
+    (
+        1977,
+        1977,
+        Conference::East,
+        "Central",
+        &["HOU", "WSB", "SAS", "CLE", "NOJ", "ATL"],
+    ),
+    (
+        1977,
+        1977,
+        Conference::West,
+        "Midwest",
+        &["DEN", "DET", "CHI", "KCK", "IND", "MIL"],
+    ),
+    (
+        1977,
+        1977,
+        Conference::West,
+        "Pacific",
+        &["LAL", "POR", "GSW", "SEA", "PHO"],
+    ),
+    (
+        1978,
+        1978,
+        Conference::East,
+        "Atlantic",
+        &["PHI", "NYK", "BOS", "BUF", "NJN"],
+    ),
+    (
+        1978,
+        1978,
+        Conference::East,
+        "Central",
+        &["SAS", "WSB", "CLE", "ATL", "NOJ", "HOU"],
+    ),
+    (
+        1978,
+        1978,
+        Conference::West,
+        "Midwest",
+        &["DEN", "MIL", "CHI", "DET", "IND", "KCK"],
+    ),
+    (
+        1978,
+        1978,
+        Conference::West,
+        "Pacific",
+        &["POR", "PHO", "SEA", "LAL", "GSW"],
+    ),
+    (
+        1979,
+        1979,
+        Conference::East,
+        "Atlantic",
+        &["WSB", "PHI", "NJN", "NYK", "BOS"],
+    ),
+    (
+        1979,
+        1979,
+        Conference::East,
+        "Central",
+        &["SAS", "HOU", "ATL", "CLE", "DET", "NOJ"],
+    ),
+    (
+        1979,
+        1979,
+        Conference::West,
+        "Midwest",
+        &["KCK", "DEN", "IND", "MIL", "CHI"],
+    ),
+    (
+        1979,
+        1979,
+        Conference::West,
+        "Pacific",
+        &["SEA", "PHO", "LAL", "POR", "SDC", "GSW"],
+    ),
+    (
+        1980,
+        1980,
+        Conference::East,
+        "Atlantic",
+        &["BOS", "PHI", "WSB", "NYK", "NJN"],
+    ),
+    (
+        1980,
+        1980,
+        Conference::East,
+        "Central",
+        &["ATL", "HOU", "SAS", "IND", "CLE", "DET"],
+    ),
+    (
+        1980,
+        1980,
+        Conference::West,
+        "Midwest",
+        &["MIL", "KCK", "DEN", "CHI", "UTA"],
+    ),
+    (
+        1980,
+        1980,
+        Conference::West,
+        "Pacific",
+        &["LAL", "SEA", "PHO", "POR", "SDC", "GSW"],
+    ),
+    (
+        1981,
+        1984,
+        Conference::East,
+        "Atlantic",
+        &["BOS", "PHI", "NYK", "WSB", "NJN"],
+    ),
+    (
+        1981,
+        1984,
+        Conference::East,
+        "Central",
+        &["MIL", "CHI", "IND", "ATL", "CLE", "DET"],
+    ),
+    (
+        1981,
+        1984,
+        Conference::West,
+        "Midwest",
+        &["SAS", "KCK", "HOU", "DEN", "UTA", "DAL"],
+    ),
+    (
+        1981,
+        1984,
+        Conference::West,
+        "Pacific",
+        &["PHO", "LAL", "POR", "GSW", "SDC", "SEA"],
+    ),
+    (
+        1985,
+        1985,
+        Conference::East,
+        "Atlantic",
+        &["BOS", "PHI", "NYK", "WSB", "NJN"],
+    ),
+    (
+        1985,
+        1985,
+        Conference::East,
+        "Central",
+        &["MIL", "CHI", "IND", "ATL", "CLE", "DET"],
+    ),
+    (
+        1985,
+        1985,
+        Conference::West,
+        "Midwest",
+        &["SAS", "KCK", "HOU", "DEN", "UTA", "DAL"],
+    ),
+    (
+        1985,
+        1985,
+        Conference::West,
+        "Pacific",
+        &["PHO", "LAL", "POR", "GSW", "LAC", "SEA"],
+    ),
+    (
+        1986,
+        1988,
+        Conference::East,
+        "Atlantic",
+        &["BOS", "PHI", "WSB", "NJN", "NYK"],
+    ),
+    (
+        1986,
+        1988,
+        Conference::East,
+        "Central",
+        &["MIL", "ATL", "DET", "CHI", "CLE", "IND"],
+    ),
+    (
+        1986,
+        1988,
+        Conference::West,
+        "Midwest",
+        &["HOU", "DEN", "DAL", "UTA", "SAC", "SAS"],
+    ),
+    (
+        1986,
+        1988,
+        Conference::West,
+        "Pacific",
+        &["LAL", "POR", "LAC", "PHO", "SEA", "GSW"],
+    ),
+    (
+        1989,
+        1989,
+        Conference::East,
+        "Atlantic",
+        &["NYK", "PHI", "BOS", "WSB", "NJN", "CHH"],
+    ),
+    (
+        1989,
+        1989,
+        Conference::East,
+        "Central",
+        &["DET", "CLE", "ATL", "MIL", "CHI", "IND"],
+    ),
+    (
+        1989,
+        1989,
+        Conference::West,
+        "Midwest",
+        &["UTA", "HOU", "DEN", "DAL", "SAS", "MIA"],
+    ),
+    (
+        1989,
+        1989,
+        Conference::West,
+        "Pacific",
+        &["LAL", "PHO", "SEA", "GSW", "POR", "SAC", "LAC"],
+    ),
+    (
+        1990,
+        1990,
+        Conference::East,
+        "Atlantic",
+        &["PHI", "BOS", "NYK", "WSB", "MIA", "NJN"],
+    ),
+    (
+        1990,
+        1990,
+        Conference::East,
+        "Central",
+        &["DET", "CHI", "MIL", "ATL", "CLE", "IND", "ORL"],
+    ),
+    (
+        1990,
+        1990,
+        Conference::West,
+        "Midwest",
+        &["SAS", "UTA", "DAL", "DEN", "HOU", "MIN", "CHH"],
+    ),
+    (
+        1990,
+        1990,
+        Conference::West,
+        "Pacific",
+        &["LAL", "POR", "PHO", "SEA", "GSW", "LAC", "SAC"],
+    ),
+    (
+        1991,
+        1991,
+        Conference::East,
+        "Atlantic",
+        &["BOS", "PHI", "NYK", "WSB", "NJN", "MIA"],
+    ),
+    (
+        1991,
+        1991,
+        Conference::East,
+        "Central",
+        &["CHI", "DET", "MIL", "ATL", "IND", "CLE", "CHH"],
+    ),
+    (
+        1991,
+        1991,
+        Conference::West,
+        "Midwest",
+        &["SAS", "UTA", "HOU", "ORL", "MIN", "DAL", "DEN"],
+    ),
+    (
+        1991,
+        1991,
+        Conference::West,
+        "Pacific",
+        &["POR", "LAL", "PHO", "GSW", "SEA", "LAC", "SAC"],
+    ),
+    (
+        1992,
+        1995,
+        Conference::East,
+        "Atlantic",
+        &["BOS", "NYK", "NJN", "MIA", "PHI", "WSB", "ORL"],
+    ),
+    (
+        1992,
+        1995,
+        Conference::East,
+        "Central",
+        &["CHI", "CLE", "DET", "IND", "ATL", "CHH", "MIL"],
+    ),
+    (
+        1992,
+        1995,
+        Conference::West,
+        "Midwest",
+        &["UTA", "SAS", "HOU", "DEN", "DAL", "MIN"],
+    ),
+    (
+        1992,
+        1995,
+        Conference::West,
+        "Pacific",
+        &["POR", "GSW", "PHO", "SEA", "LAC", "LAL", "SAC"],
+    ),
+    (
+        1996,
+        1997,
+        Conference::East,
+        "Atlantic",
+        &["ORL", "NYK", "MIA", "WSB", "BOS", "PHI", "NJN"],
+    ),
+    (
+        1996,
+        1997,
+        Conference::East,
+        "Central",
+        &["CHI", "IND", "CLE", "ATL", "DET", "CHH", "MIL", "TOR"],
+    ),
+    (
+        1996,
+        1997,
+        Conference::West,
+        "Midwest",
+        &["SAS", "UTA", "HOU", "DEN", "DAL", "MIN", "VAN"],
+    ),
+    (
+        1996,
+        1997,
+        Conference::West,
+        "Pacific",
+        &["SEA", "LAL", "POR", "PHO", "SAC", "GSW", "LAC"],
+    ),
+    (
+        1998,
+        2001,
+        Conference::East,
+        "Atlantic",
+        &["ORL", "NYK", "MIA", "WAS", "BOS", "PHI", "NJN"],
+    ),
+    (
+        1998,
+        2001,
+        Conference::East,
+        "Central",
+        &["CHI", "IND", "CLE", "ATL", "DET", "CHH", "MIL", "TOR"],
+    ),
+    (
+        1998,
+        2001,
+        Conference::West,
+        "Midwest",
+        &["SAS", "UTA", "HOU", "DEN", "DAL", "MIN", "VAN"],
+    ),
+    (
+        1998,
+        2001,
+        Conference::West,
+        "Pacific",
+        &["SEA", "LAL", "POR", "PHO", "SAC", "GSW", "LAC"],
+    ),
+    (
+        2002,
+        2002,
+        Conference::East,
+        "Atlantic",
+        &["ORL", "NYK", "MIA", "WAS", "BOS", "PHI", "NJN"],
+    ),
+    (
+        2002,
+        2002,
+        Conference::East,
+        "Central",
+        &["CHI", "IND", "CLE", "ATL", "DET", "CHH", "MIL", "TOR"],
+    ),
+    (
+        2002,
+        2002,
+        Conference::West,
+        "Midwest",
+        &["SAS", "UTA", "HOU", "DEN", "DAL", "MIN", "MEM"],
+    ),
+    (
+        2002,
+        2002,
+        Conference::West,
+        "Pacific",
+        &["SEA", "LAL", "POR", "PHO", "SAC", "GSW", "LAC"],
+    ),
+];
+
+/// Conference / division alignment of a team code for a season. From 2002-03 the layout is
+/// keyed by franchise; before that `HISTORICAL_ALIGNMENT` lists the team codes of the season.
 pub fn alignment(season: SeasonYear, code: &str) -> Option<(Conference, &'static str)> {
     use Conference::{East, West};
     if season < SeasonYear::FIRST_MODERN {
-        return None;
+        let y = season.end_year();
+        return HISTORICAL_ALIGNMENT
+            .iter()
+            .find(|(a, b, _, _, codes)| *a <= y && y <= *b && codes.contains(&code))
+            .map(|(_, _, conf, div, _)| (*conf, *div));
     }
     // Map any historical code to the franchise's "modern" code first.
     let fran = lookup_team(code).map(|t| t.1).unwrap_or(code);
@@ -904,6 +1722,43 @@ mod tests {
     use super::*;
 
     #[test]
+    fn historical_alignment_lists_every_team_of_every_season_once() {
+        // NBA/BAA teams per season, 1946-47 to 2001-02, from the game log.
+        const TEAMS: [usize; 56] = [
+            11, 8, 12, 17, 11, 10, 10, 9, 8, 8, 8, 8, 8, 8, 8, 9, 9, 9, 9, 9, 10, 12, 14, 14, 17,
+            17, 17, 17, 18, 18, 22, 22, 22, 22, 23, 23, 23, 23, 23, 23, 23, 23, 25, 27, 27, 27, 27,
+            27, 27, 29, 29, 29, 29, 29, 29, 29,
+        ];
+        for (i, expected) in TEAMS.iter().enumerate() {
+            let y = 1947 + i as i32;
+            let mut codes: Vec<&str> = HISTORICAL_ALIGNMENT
+                .iter()
+                .filter(|(a, b, _, _, _)| *a <= y && y <= *b)
+                .flat_map(|(_, _, _, _, codes)| codes.iter().copied())
+                .collect();
+            let n = codes.len();
+            codes.sort_unstable();
+            codes.dedup();
+            assert_eq!(n, codes.len(), "duplicate code in {y}");
+            assert_eq!(n, *expected, "team count in {y}");
+            for code in &codes {
+                let t = lookup_team(code).unwrap_or_else(|| panic!("unknown code {code} in {y}"));
+                assert!(t.4 <= y && y <= t.5, "{code} did not play in {y}");
+                assert!(!is_aba_code(code), "{code} is an ABA code");
+            }
+        }
+        assert_eq!(
+            alignment(SeasonYear::of(1991), "ORL"),
+            Some((Conference::West, "Midwest"))
+        );
+        assert_eq!(
+            alignment(SeasonYear::of(1947), "PHW"),
+            Some((Conference::East, "Eastern"))
+        );
+        assert_eq!(alignment(SeasonYear::of(1975), "KEN"), None);
+    }
+
+    #[test]
     fn aba_codes_exist_in_the_lineage_and_active_codes_are_not_aba() {
         for code in ABA_TEAM_CODES {
             assert!(TEAM_LINEAGE.iter().any(|t| t.0 == *code), "{code}");
@@ -969,6 +1824,10 @@ mod tests {
             alignment(SeasonYear::of(2007), "NOK"),
             Some((Conference::West, "Southwest"))
         );
-        assert_eq!(alignment(SeasonYear::of(2002), "LAL"), None);
+        assert_eq!(
+            alignment(SeasonYear::of(2002), "LAL"),
+            Some((Conference::West, "Pacific"))
+        );
+        assert_eq!(alignment(SeasonYear::of(2002), "KEN"), None);
     }
 }
