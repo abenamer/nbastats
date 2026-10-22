@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block content %}
+<p class="muted">A franchise's Elo after every game it has played, from its first season to today. Stars mark NBA titles, hollow circles a lost Finals. The dashed lines are rating bands: 1500 is an average team, 1700 an all-time great one.</p>
+<section class="controls">
+  <label>Franchise <select id="franchise">{% for f in franchises %}<option value="{{ f.key }}" {% if f.key == "GSW" %}selected{% endif %}>{{ f.name }}</option>{% endfor %}</select></label>
+  <label>Compare with <select id="compare"><option value="">none</option>{% for f in franchises %}<option value="{{ f.key }}">{{ f.name }}</option>{% endfor %}</select></label>
+  <label>From <input id="from" type="number" min="1947" max="2100" placeholder="first" style="width:5.5rem"></label>
+  <label>To <input id="to" type="number" min="1947" max="2100" placeholder="latest" style="width:5.5rem"></label>
+  <button id="load" class="primary">Draw</button>
+  <span id="status" class="muted"></span>
+</section>
+<section class="panel">
+  <div id="summary" class="cards"></div>
+  <canvas id="historyChart" height="420"></canvas>
+</section>
+<section class="grid2">
+  <div class="panel"><h2>Title and Finals seasons</h2><div id="titles" class="table-wrap"></div></div>
+  <div class="panel"><h2>Peaks and valleys</h2><div id="extremes" class="table-wrap"></div></div>
+</section>
+{% endblock %}
+{% block scripts %}<script src="/static/js/franchise.js" defer></script>{% endblock %}

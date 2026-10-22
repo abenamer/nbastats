@@ -96,6 +96,7 @@ async fn main() -> anyhow::Result<()> {
     .await?;
     store.migrate().await?;
     store.sync_reference().await?;
+    imports::derived::backfill_curated_championships(&store).await?;
     info!("migrations applied and reference data synced");
     let source = HttpDatasetSource::new()?;
     // Composition root: the adapter is built here from plain configuration values.

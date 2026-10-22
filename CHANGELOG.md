@@ -5,6 +5,8 @@
 - Initial application: Engines A, B and C, backtesting, dynasty laboratory, nine pages, PostgreSQL 17 persistence, Docker Compose, backup and restore scripts.
 - Aligned with REAS 1.2.0-draft: domain, application and adapters layout; six ports and one `PostgresStore` adapter; `TeamId`, `FranchiseId` and `SeasonYear` newtypes; typed errors; conditional job transitions; documentation checker, terminology, self-audit and decisions.
 
+- Curated champions and runner-ups for 1946-47 to 1959-60 and 1967-68 to 1982-83, where the archive's playoff data does not resolve a bracket; existing installations are backfilled at start.
+- Franchise History page (`/franchise`): full-career Elo chart per franchise with title stars, lost-Finals markers, rating bands, hover crosshair and an optional comparison franchise.
 - Completing an archive season matches games by date and unordered team pair, so the neutral-site NBA Cup final no longer blocks the 2024-25 sync. Compact Remove button with an Actions header in the coverage table.
 - The results sync runs in the background; `GET /api/data/sync/status` and the Data page show live progress (requests, games, wait for the quota).
 - A sync or upload of a season the archive covers only in part (2024-25) keeps the archive games and appends the later games with computed Elo, so the 2024-25 play-in and playoffs can be filled in.

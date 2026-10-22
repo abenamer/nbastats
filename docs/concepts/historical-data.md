@@ -30,7 +30,7 @@ The bundled file is `data/nba_elo_neil_paine.csv.gz` (SHA-256 of the uncompresse
 # Coverage
 
 * 1946-47 to 2024-25: 75,913 games.
-* Playoff records are complete for 1946-47 to 2023-24.
+* Playoff records are present for 1946-47 to 2023-24. The bracket model resolves the champion from the games for 1960-61 to 1966-67 and 1983-84 onward. For the other seasons (byes and formats the model does not resolve) the champion and runner-up come from the curated table in `src/domain/reference.rs`, marked `curated`.
 * 2024-25 has the regular season only. Its champion (Oklahoma City) comes from a curated table, marked `curated`.
 * Bracket reconstruction and forecasts cover 2002-03 and later, because conference alignment data starts there.
 * Seasons after 2024-25 are not in the archive. The application can compute them from results, or project them. See [Elo continuation](elo-continuation.md).

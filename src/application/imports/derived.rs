@@ -6,7 +6,7 @@ use chrono::{Datelike, NaiveDate};
 use tracing::{info, warn};
 
 use crate::application::ports::{
-    ChampionshipSource, GameStore, NewChampionship, SeasonSummary, StoreError,
+    AnalysisStore, ChampionshipSource, GameStore, NewChampionship, SeasonSummary, StoreError,
 };
 use crate::domain::ids::{SeasonYear, TeamId};
 use crate::domain::models::{
@@ -231,7 +231,7 @@ pub async fn rebuild_seasons<S: GameStore>(
                 .await?;
             if let Some((ck, _)) = curated.get(&season) {
                 let wk = teams[&winner].franchise_key();
-                if wk != *ck {
+                if wk != *ck && teams[&winner].code != *ck {
                     warn!(%season, derived = wk, curated = ck, "derived champion disagrees with curated record");
                 }
             }
@@ -328,5 +328,78 @@ fn team_season(team: &Team, ctx: &TeamSeasonInputs<'_>) -> TeamSeason {
         made_playoffs,
         seed: ctx.seeds.get(&tid).copied(),
         playoff_result,
+    }
+}
+
+/// Seasons in `present` that have a curated champion but no championship row yet.
+pub fn missing_curated(
+    present: &[SeasonYear],
+    have: &HashSet<SeasonYear>,
+) -> Vec<(SeasonYear, &'static str, &'static str)> {
+    reference::CURATED_CHAMPIONS
+        .iter()
+        .map(|c| (SeasonYear::of(c.0), c.1, c.2))
+        .filter(|(s, _, _)| present.contains(s) && !have.contains(s))
+        .collect()
+}
+
+/// Insert curated championships for stored seasons that have none (for installations whose
+/// derived data predates a curated record). Derived rows are never replaced.
+pub async fn backfill_curated_championships<S: GameStore + AnalysisStore>(
+    store: &S,
+) -> Result<usize, StoreError> {
+    let present: Vec<SeasonYear> = store
+        .seasons()
+        .await?
+        .into_iter()
+        .map(|s| s.season)
+        .collect();
+    let have: HashSet<SeasonYear> = store
+        .championships(SeasonYear::MIN, SeasonYear::MAX)
+        .await?
+        .into_iter()
+        .map(|c| c.season)
+        .collect();
+    let teams = store.teams().await?;
+    let mut inserted = 0;
+    for (season, ck, rk) in missing_curated(&present, &have) {
+        let Some(champ) = teams.iter().find(|t| t.code == ck) else {
+            warn!(%season, code = ck, "curated champion code unknown; skipped");
+            continue;
+        };
+        let runner_up = teams.iter().find(|t| t.code == rk);
+        store
+            .upsert_championship(&NewChampionship {
+                season,
+                champion: champ.id,
+                champion_franchise: champ.franchise_id,
+                runner_up: runner_up.map(|t| t.id),
+                source: ChampionshipSource::Curated,
+            })
+            .await?;
+        inserted += 1;
+    }
+    if inserted > 0 {
+        info!(inserted, "curated championships backfilled");
+    }
+    Ok(inserted)
+}
+
+#[cfg(test)]
+mod curated_tests {
+    use super::*;
+
+    #[test]
+    fn missing_curated_fills_only_stored_seasons_without_a_row() {
+        let present = vec![
+            SeasonYear::of(1947),
+            SeasonYear::of(1948),
+            SeasonYear::of(2016),
+        ];
+        let have: HashSet<SeasonYear> = [SeasonYear::of(1948), SeasonYear::of(2016)]
+            .into_iter()
+            .collect();
+        let missing = missing_curated(&present, &have);
+        assert_eq!(missing, vec![(SeasonYear::of(1947), "PHW", "CHS")]);
     }
 }

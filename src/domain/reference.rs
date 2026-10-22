@@ -782,8 +782,40 @@ pub fn alignment(season: SeasonYear, code: &str) -> Option<(Conference, &'static
 }
 
 /// Curated championship records used to validate derived results and to cover seasons whose
-/// playoff games are not present in the imported data. Winner codes are franchise keys.
+/// playoff games are incomplete in the imported data (1946-47 to 1959-60 and 1967-68 to
+/// 1982-83 have byes or formats the bracket model does not resolve). Codes are the team code
+/// of that season, which equals the franchise key for current teams.
 pub const CURATED_CHAMPIONS: &[(i32, &str, &str)] = &[
+    (1947, "PHW", "CHS"),
+    (1948, "BLB", "PHW"),
+    (1949, "MNL", "WSC"),
+    (1950, "MNL", "SYR"),
+    (1951, "ROC", "NYK"),
+    (1952, "MNL", "NYK"),
+    (1953, "MNL", "NYK"),
+    (1954, "MNL", "SYR"),
+    (1955, "SYR", "FTW"),
+    (1956, "PHW", "FTW"),
+    (1957, "BOS", "STL"),
+    (1958, "STL", "BOS"),
+    (1959, "BOS", "MNL"),
+    (1960, "BOS", "STL"),
+    (1968, "BOS", "LAL"),
+    (1969, "BOS", "LAL"),
+    (1970, "NYK", "LAL"),
+    (1971, "MIL", "BAL"),
+    (1972, "LAL", "NYK"),
+    (1973, "NYK", "LAL"),
+    (1974, "BOS", "MIL"),
+    (1975, "GSW", "WSB"),
+    (1976, "BOS", "PHO"),
+    (1977, "POR", "PHI"),
+    (1978, "WSB", "SEA"),
+    (1979, "SEA", "WSB"),
+    (1980, "LAL", "PHI"),
+    (1981, "BOS", "HOU"),
+    (1982, "LAL", "PHI"),
+    (1983, "PHI", "LAL"),
     (2003, "SAS", "BRK"),
     (2004, "DET", "LAL"),
     (2005, "SAS", "DET"),

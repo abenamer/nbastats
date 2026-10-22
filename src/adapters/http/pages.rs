@@ -91,6 +91,28 @@ pub async fn elo(State(app): State<AppState>) -> Response {
 }
 
 #[derive(Template)]
+#[template(path = "franchise.html")]
+pub struct FranchisePage {
+    pub layout: Layout,
+    pub franchises: Vec<Franchise>,
+}
+
+pub async fn franchise(State(app): State<AppState>) -> Response {
+    // Every franchise, including the defunct ones: their histories are part of the chart.
+    let franchises = match app.store.franchises(false).await {
+        Ok(f) => f,
+        Err(e) => {
+            tracing::warn!(error = %e, "franchise list unavailable");
+            vec![]
+        }
+    };
+    render(FranchisePage {
+        layout: Layout::new("Franchise History", "franchise"),
+        franchises,
+    })
+}
+
+#[derive(Template)]
 #[template(path = "alpha.html")]
 pub struct AlphaPage {
     pub layout: Layout,

@@ -60,6 +60,7 @@ pub fn router(app: State) -> Router {
     Router::new()
         .route("/", get(pages::dashboard))
         .route("/elo", get(pages::elo))
+        .route("/franchise", get(pages::franchise))
         .route("/alpha", get(pages::alpha))
         .route("/playoffs", get(pages::playoffs))
         .route("/season", get(pages::season))

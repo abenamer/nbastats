@@ -305,6 +305,53 @@ async fn job_lifecycle_survives_restart(pool: PgPool) {
 }
 
 #[sqlx::test(migrations = "./migrations")]
+async fn curated_championships_backfill_only_missing_seasons(pool: PgPool) {
+    use nba_elo_simulator::application::imports::derived;
+    let (store, _teams) = common::setup(pool).await;
+    imports::import_bytes(
+        &store,
+        common::FIXTURE.as_bytes(),
+        prov("mini_2016.csv"),
+        false,
+    )
+    .await
+    .unwrap();
+    // 2016 is derived from complete playoff data; 1947 and 1956 have no games here yet.
+    store.ensure_season(SeasonYear::of(1947)).await.unwrap();
+    store.ensure_season(SeasonYear::of(1956)).await.unwrap();
+    let inserted = derived::backfill_curated_championships(&store)
+        .await
+        .unwrap();
+    assert_eq!(inserted, 2);
+    let champs = store
+        .championships(SeasonYear::MIN, SeasonYear::MAX)
+        .await
+        .unwrap();
+    let c1947 = champs
+        .iter()
+        .find(|c| c.season == SeasonYear::of(1947))
+        .unwrap();
+    assert_eq!(
+        (c1947.champion_code.as_str(), c1947.franchise_key.as_str()),
+        ("PHW", "GSW")
+    );
+    assert_eq!(c1947.runner_up_code.as_deref(), Some("CHS"));
+    assert_eq!(c1947.source, "curated");
+    let c2016 = champs.iter().find(|c| c.season == S2016).unwrap();
+    assert_eq!(
+        (c2016.champion_code.as_str(), c2016.source.as_str()),
+        ("CLE", "derived")
+    );
+    // Running it again changes nothing.
+    assert_eq!(
+        derived::backfill_curated_championships(&store)
+            .await
+            .unwrap(),
+        0
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
 async fn computed_elo_continues_from_the_previous_season(pool: PgPool) {
     use nba_elo_simulator::application::continuation;
     use nba_elo_simulator::domain::elo;
