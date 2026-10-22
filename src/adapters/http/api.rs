@@ -1,6 +1,6 @@
 //! JSON API handlers.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use axum::extract::{Multipart, Path, Query, State};
 use axum::http::StatusCode;
@@ -165,9 +165,31 @@ pub async fn franchise_elo(
     }
     let points = app.store.franchise_elo_history(f.id, from, to).await?;
     let seasons = app.store.franchise_seasons(f.id, from, to).await?;
-    Ok(Json(
-        json!({ "franchise": f, "points": points, "seasons": seasons }),
-    ))
+    // Titles and lost Finals of this franchise, from the championships table (derived from
+    // complete playoff data, or curated for seasons the archive covers only in part).
+    let codes: HashSet<String> = app
+        .store
+        .teams()
+        .await?
+        .into_iter()
+        .filter(|t| t.franchise_id == f.id)
+        .map(|t| t.code)
+        .collect();
+    let championships: Vec<_> = app
+        .store
+        .championships(from, to)
+        .await?
+        .into_iter()
+        .filter(|c| {
+            c.franchise_key == f.key || c.runner_up_code.as_ref().is_some_and(|r| codes.contains(r))
+        })
+        .collect();
+    Ok(Json(json!({
+        "franchise": f,
+        "points": points,
+        "seasons": seasons,
+        "championships": championships,
+    })))
 }
 
 #[derive(Deserialize)]

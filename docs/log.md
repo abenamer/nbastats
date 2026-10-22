@@ -1,6 +1,8 @@
 # Bundle update log
 
 ## 2026-10-22
+* **Update**: Curated champions now cover every season the archive has; [Historical data](/concepts/historical-data.md) says which seasons are derived and which are curated.
+* **Update**: Added the Franchise History page to the [Application overview](/concepts/application.md).
 * **Update**: Archive matching ignores home and away order; noted in [Elo continuation](/concepts/elo-continuation.md).
 * **Update**: The results sync runs in the background with a status route; the import runbook and the API reference describe the live progress line.
 * **Update**: Syncs and uploads now complete a season that the archive covers only in part (2024-25 playoffs). [Elo continuation](/concepts/elo-continuation.md) and the import runbook describe the rule.
