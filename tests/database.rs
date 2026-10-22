@@ -344,7 +344,8 @@ async fn records_queries_summarise_the_game_log(pool: PgPool) {
     let r = records::compute(&stats, swings);
     assert_eq!(r.all_time_high[0].code, "GSW");
     assert_eq!(r.best_champion[0].code, "CLE");
-    assert_eq!(r.conferences.best.len(), 2);
+    assert_eq!(r.conference_seasons.len(), 1);
+    assert!(r.conference_seasons[0].west_mean > 0.0 && r.conference_seasons[0].east_mean > 0.0);
     assert_eq!(r.divisions.best.len(), 6);
 }
 

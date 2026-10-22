@@ -22,13 +22,22 @@
     document.getElementById('byDecade').innerHTML = table([
       { label: 'Decade', value: d => `${d.decade}s`, left: true }, { label: 'Team-seasons', value: 'teams' },
       { label: 'Highest', value: d => pair(d, 'best'), left: true, cls: () => 'good' }, { label: 'Lowest', value: d => pair(d, 'worst'), left: true, cls: () => 'bad' }], r.by_decade);
+    document.getElementById('byEra').innerHTML = table([
+      { label: 'Era', value: e => e.first_season === e.last_season ? labelOf(e.first_season) : `${labelOf(e.first_season)} to ${labelOf(e.last_season)}`, left: true },
+      { label: 'League', value: e => league(e.league), left: true }, { label: 'Teams', value: 'teams' }, { label: 'Seasons', value: 'seasons' }, { label: '3-pt line', value: e => e.three_point ? 'yes' : 'no', left: true },
+      { label: 'Highest', value: e => pair(e, 'best'), left: true, cls: () => 'good' }, { label: 'Lowest', value: e => pair(e, 'worst'), left: true, cls: () => 'bad' }], r.by_era);
     document.getElementById('byLeague').innerHTML = table([
       { label: 'League', value: l => league(l.league), left: true }, { label: 'Seasons', value: l => `${labelOf(l.first_season)} to ${labelOf(l.last_season)}`, left: true },
       { label: 'Highest', value: l => pair(l, 'best'), left: true, cls: () => 'good' }, { label: 'Lowest', value: l => pair(l, 'worst'), left: true, cls: () => 'bad' }], r.by_league);
     document.getElementById('bySize').innerHTML = table([
       { label: 'Teams', value: 'teams' }, { label: 'League', value: s => league(s.league), left: true }, { label: 'Seasons', value: s => `${s.seasons} (${labelOf(s.first_season)} to ${labelOf(s.last_season)})`, left: true },
       { label: 'Highest', value: s => pair(s, 'best'), left: true, cls: () => 'good' }, { label: 'Lowest', value: s => pair(s, 'worst'), left: true, cls: () => 'bad' }], r.by_league_size);
-    group('confBest', r.conferences.best); group('confWorst', r.conferences.worst); group('divBest', r.divisions.best); group('divWorst', r.divisions.worst);
+    document.getElementById('confSeasons').innerHTML = table([
+      { label: 'Season', value: c => labelOf(c.season), left: true },
+      { label: 'East mean', value: c => num(c.east_mean, 0), cls: c => c.gap < 0 ? 'good' : '' }, { label: 'West mean', value: c => num(c.west_mean, 0), cls: c => c.gap > 0 ? 'good' : '' },
+      { label: 'Gap (W − E)', value: c => `${c.gap >= 0 ? '+' : ''}${num(c.gap, 0)}` }, { label: 'Stronger', value: c => Math.abs(c.gap) < 5 ? 'even' : (c.gap > 0 ? 'West' : 'East'), left: true },
+      { label: 'East best', value: 'east_best_code', left: true }, { label: 'West best', value: 'west_best_code', left: true }], r.conference_seasons);
+    group('divBest', r.divisions.best); group('divWorst', r.divisions.worst);
     list('bestChampion', r.best_champion, 'Peak Elo'); list('worstChampion', r.worst_champion, 'Peak Elo'); list('bestUncrowned', r.best_uncrowned, 'Peak Elo');
     list('bestEnd', r.best_end, 'End Elo', false); list('worstEnd', r.worst_end, 'End Elo', false);
     list('rise', r.biggest_rise, 'Change', false); list('fall', r.biggest_fall, 'Change', false);
