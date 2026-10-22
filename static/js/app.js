@@ -45,7 +45,17 @@ window.NBA = (() => {
   function setStatus(el, msg, isError) { el.textContent = msg || ''; el.style.color = isError ? '#b91c1c' : ''; }
   const charts = {};
   function chart(id, config) { if (charts[id]) charts[id].destroy(); const ctx = document.getElementById(id); if (!ctx) return null; charts[id] = new Chart(ctx, config); return charts[id]; }
+  // Dates on a linear axis: x is days since the epoch; ticks read as months for one season, years for longer spans.
+  const DAY = 86400000;
+  const dayOf = d => Date.parse(d + 'T00:00:00Z') / DAY;
+  const dateOf = x => new Date(x * DAY).toISOString().slice(0, 10);
+  function dateScale(days, extra = {}) {
+    const min = Math.min(...days), max = Math.max(...days), span = max - min;
+    const fmt = span > 800 ? x => new Date(x * DAY).getUTCFullYear()
+      : x => new Date(x * DAY).toLocaleDateString(undefined, { month: 'short', day: 'numeric', timeZone: 'UTC' });
+    return { type: 'linear', min: min - span * 0.01, max: max + span * 0.01, ticks: { maxTicksLimit: 12, callback: v => fmt(v) }, grid: { color: '#f1f3f6' }, ...extra };
+  }
   const palette = ['#2563eb','#dc2626','#16a34a','#d97706','#7c3aed','#0891b2','#db2777','#4b5563','#65a30d','#9333ea','#ea580c','#0d9488','#1e3a8a','#991b1b','#166534','#92400e'];
   function color(i) { return palette[i % palette.length]; }
-  return { pct, num, esc, labelOf, RESULT, getJSON, postJSON, runJob, table, bar, cards, setStatus, chart, color };
+  return { pct, num, esc, labelOf, RESULT, getJSON, postJSON, runJob, table, bar, cards, setStatus, chart, color, dayOf, dateOf, dateScale };
 })();

@@ -29,8 +29,8 @@ sources:
 | `GET /api/seasons/{season}/teams` | Team-season rows: record, Elo milestones, seed, result. |
 | `GET /api/seasons/{season}/elo-history?teams=GSW,CLE` | Elo after each game. |
 | `GET /api/seasons/{season}/bracket?home_advantage=100&scale=1` | Reconstructed bracket with exact probabilities. |
-| `GET /api/franchises` | Franchise list. |
-| `GET /api/franchises/{key}/elo?from=2003&to=2025` | Elo trajectory and season rows of a franchise. |
+| `GET /api/franchises` | Franchise list with uniform colours (`colors.primary`, `colors.secondary`; defunct franchises get a neutral pair). |
+| `GET /api/franchises/{key}/elo?from=2003&to=2025` | Elo after every game of a franchise, its season rows, its championships (won and lost) and its colours. |
 | `GET /api/matchup?elo_a=1700&elo_b=1600&home=a` | Game and series probabilities. |
 | `GET /api/exact/alpha?franchises=30&seasons=22&threshold=4` | Exact equal-strength occupancy probabilities. |
 | `GET /api/dashboard?from=2004&to=2025` | Title distribution and concentration. |

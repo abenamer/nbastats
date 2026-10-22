@@ -24,6 +24,7 @@ use crate::domain::ids::SeasonYear;
 use crate::domain::models::{JobKind, SimulationJob};
 use crate::domain::playoffs::bracket::ModelSpec;
 use crate::domain::playoffs::season::SeasonParams;
+use crate::domain::reference;
 use crate::domain::simulation::alpha::AlphaParams;
 use crate::domain::simulation::exact;
 
@@ -66,8 +67,23 @@ pub async fn seasons(State(app): State<AppState>) -> ApiResult<Value> {
     Ok(Json(json!(app.store.seasons().await?)))
 }
 
+fn colors_json(key: &str) -> Value {
+    let (primary, secondary) = reference::franchise_colors(key);
+    json!({ "primary": primary, "secondary": secondary })
+}
+
 pub async fn franchises(State(app): State<AppState>) -> ApiResult<Value> {
-    Ok(Json(json!(app.store.franchises(false).await?)))
+    let rows: Vec<Value> = app
+        .store
+        .franchises(false)
+        .await?
+        .into_iter()
+        .map(|f| {
+            let colors = colors_json(&f.key);
+            json!({ "id": f.id, "key": f.key, "name": f.name, "active": f.active, "colors": colors })
+        })
+        .collect();
+    Ok(Json(json!(rows)))
 }
 
 // ---------------------------------------------------------------------------------------
@@ -184,8 +200,10 @@ pub async fn franchise_elo(
             c.franchise_key == f.key || c.runner_up_code.as_ref().is_some_and(|r| codes.contains(r))
         })
         .collect();
+    let colors = colors_json(&f.key);
     Ok(Json(json!({
         "franchise": f,
+        "colors": colors,
         "points": points,
         "seasons": seasons,
         "championships": championships,

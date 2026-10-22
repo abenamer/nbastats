@@ -1,5 +1,10 @@
 (async () => {
-  const { pct, num, esc, getJSON, table, setStatus, chart, color, RESULT } = NBA;
+  const { pct, num, esc, getJSON, table, setStatus, chart, color, RESULT, dayOf, dateOf, dateScale, labelOf } = NBA;
+  // Tooltip for a rating series: date, team, Elo after the game and the change from the previous game.
+  const eloTooltip = {
+    title: items => items.length ? dateOf(items[0].raw.x) : '',
+    label: item => { const ds = item.dataset, p = item.raw, prev = ds.data[item.dataIndex - 1]; const delta = prev ? p.y - prev.y : null;
+      return `${ds.label}: ${num(p.y, 0)}${delta == null ? ' (first game)' : ` (${delta >= 0 ? '+' : ''}${num(delta, 1)})`}${p.type === 'playoff' ? ' · playoffs' : p.type === 'play_in' ? ' · play-in' : ''}`; } };
   const status = document.getElementById('status');
   async function loadSeason() {
     const season = document.getElementById('season').value;
@@ -14,9 +19,11 @@
         { label: 'End', value: r => num(r.elo_end, 0) }, { label: 'Peak', value: r => num(r.elo_peak, 0) }, { label: 'Seed', value: r => r.seed || '' },
         { label: 'Result', value: r => RESULT[r.playoff_result] || r.playoff_result, left: true, cls: r => r.playoff_result === 'champion' ? 'good' : '' }],
         t.teams.slice().sort((a, b) => (b.elo_pre_playoffs || 0) - (a.elo_pre_playoffs || 0)));
-      const sel = teams ? h.series : h.series;
-      chart('historyChart', { type: 'line', data: { datasets: sel.map((s, i) => ({ label: s.code, data: s.points.map(p => ({ x: p[0], y: p[1] })), borderColor: color(i), borderWidth: teams ? 2 : 1, pointRadius: 0, tension: .2 })) },
-        options: { parsing: false, interaction: { mode: 'nearest', intersect: false }, plugins: { legend: { display: sel.length <= 12 } }, scales: { x: { type: 'category', ticks: { maxTicksLimit: 10 } } } } });
+      const sel = h.series;
+      const days = sel.flatMap(s => s.points.map(p => dayOf(p[0])));
+      chart('historyChart', { type: 'line', data: { datasets: sel.map((s, i) => ({ label: s.code, data: s.points.map(p => ({ x: dayOf(p[0]), y: p[1], type: p[2] })), borderColor: color(i), borderWidth: teams ? 2 : 1.2, pointRadius: teams ? 2 : 0, pointHitRadius: 6, tension: 0 })) },
+        options: { responsive: true, maintainAspectRatio: false, parsing: false, animation: false, interaction: { mode: 'nearest', axis: 'x', intersect: false }, plugins: { legend: { display: sel.length <= 12 }, tooltip: { callbacks: eloTooltip } },
+          scales: { x: dateScale(days), y: { title: { display: true, text: 'Elo after the game' } } } } });
       setStatus(status, '');
     } catch (e) { setStatus(status, e.message, true); }
   }
@@ -24,8 +31,14 @@
     const key = document.getElementById('franchise').value, from = document.getElementById('fFrom').value, to = document.getElementById('fTo').value;
     try {
       const d = await getJSON(`/api/franchises/${key}/elo?from=${from}&to=${to}`);
-      chart('franchiseChart', { type: 'line', data: { datasets: [{ label: `${d.franchise.name} Elo after each game`, data: d.points.map(p => ({ x: p.game_date, y: p.elo_post })), borderColor: '#2563eb', pointRadius: 0, borderWidth: 1 }] },
-        options: { parsing: false, plugins: { legend: { display: true } }, scales: { x: { type: 'category', ticks: { maxTicksLimit: 12 } } } } });
+      const pts = d.points.map(p => ({ x: dayOf(p.game_date), y: p.elo_post, type: p.game_type, season: p.season })), c = d.colors || { primary: '#2563eb', secondary: '#cbd5e1' };
+      chart('franchiseChart', { type: 'line', data: { datasets: [
+          { label: 'trim', data: pts, borderColor: c.secondary, pointRadius: 0, pointHitRadius: 0, borderWidth: 3.4, order: 2 },
+          { label: d.franchise.name, data: pts, borderColor: c.primary, pointRadius: 0, pointHitRadius: 6, borderWidth: 1.3, order: 1 }] },
+        options: { responsive: true, maintainAspectRatio: false, parsing: false, animation: false, interaction: { mode: 'nearest', axis: 'x', intersect: false },
+          plugins: { legend: { display: true, labels: { filter: i => i.text !== 'trim' } }, decimation: { enabled: true, algorithm: 'lttb', samples: 1500 },
+            tooltip: { filter: i => i.datasetIndex === 1, callbacks: { ...eloTooltip, label: item => `${eloTooltip.label(item)} · ${labelOf(item.raw.season)}` } } },
+          scales: { x: dateScale(pts.map(p => p.x)), y: { title: { display: true, text: 'Elo after the game' } } } } });
       document.getElementById('franchiseSeasons').innerHTML = table([
         { label: 'Season', value: r => NBA.labelOf(r.season), left: true }, { label: 'Code', value: 'code', left: true }, { label: 'W', value: 'wins' }, { label: 'L', value: 'losses' },
         { label: 'Pre-playoffs Elo', value: r => num(r.elo_pre_playoffs, 0) }, { label: 'Peak', value: r => num(r.elo_peak, 0) }, { label: 'Seed', value: r => r.seed || '' },
