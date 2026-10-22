@@ -343,15 +343,12 @@ async fn computed_elo_continues_from_the_previous_season(pool: PgPool) {
     let after = last_imported + chrono::Duration::days(3);
     let completion = FakeResults {
         records: vec![
-            // one game that is already in the archive: skipped, not changed
+            // one game that is already in the archive, listed with home and away swapped
+            // (sources disagree at neutral sites): skipped, not changed
             record(
                 &last_gsw.game_date.to_string(),
-                &imported_2016
-                    .iter()
-                    .find(|g| g.id == last_gsw.id)
-                    .map(|g| store_code(&teams, g.home_team_id))
-                    .unwrap(),
                 &store_code(&teams, last_gsw.away_team_id),
+                &store_code(&teams, last_gsw.home_team_id),
                 Some((1, 2)),
             ),
             record(&after.to_string(), "GSW", "CLE", Some((110, 100))),

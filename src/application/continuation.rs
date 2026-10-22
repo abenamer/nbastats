@@ -36,7 +36,7 @@ pub enum ContinuationUseCaseError {
     UnknownTeams(String),
     #[error("no games for season {0}: the source has nothing for it yet, so nothing was stored")]
     NoGames(SeasonYear),
-    #[error("season {season}: a game on {date} is not in the archive but predates its last game ({last_imported}); the archive part of a season cannot be changed")]
+    #[error("season {season}: a game on {date} is not in the archive (matched by date and the two teams) but predates its last archive game ({last_imported}); the archive part of a season cannot be changed")]
     InsideImportedRange {
         season: SeasonYear,
         date: NaiveDate,
@@ -138,9 +138,20 @@ async fn baseline<S: GameStore>(
         ratings,
         imported_keys: imported
             .iter()
-            .map(|g| (g.game_date, g.home_team_id, g.away_team_id))
+            .map(|g| game_key(g.game_date, g.home_team_id, g.away_team_id))
             .collect(),
     })
+}
+
+/// Identity of a game for matching a source against the archive: the date and the two teams
+/// as an unordered pair. Sources disagree on which team is "home" at a neutral site (the NBA
+/// Cup final), so orientation is not part of the key.
+fn game_key(date: NaiveDate, a: TeamId, b: TeamId) -> (NaiveDate, TeamId, TeamId) {
+    if a <= b {
+        (date, a, b)
+    } else {
+        (date, b, a)
+    }
 }
 
 /// Keep the games the baseline does not cover. For a completion, games already in the
@@ -161,7 +172,7 @@ fn games_to_rate(
             let mut kept = Vec::with_capacity(games.len());
             let mut skipped = 0usize;
             for g in games {
-                if imported_keys.contains(&(g.date, g.home, g.away)) {
+                if imported_keys.contains(&game_key(g.date, g.home, g.away)) {
                     skipped += 1;
                 } else if g.date <= *last_imported {
                     return Err(ContinuationUseCaseError::InsideImportedRange {
