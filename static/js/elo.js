@@ -31,13 +31,16 @@
     const key = document.getElementById('franchise').value, from = document.getElementById('fFrom').value, to = document.getElementById('fTo').value;
     try {
       const d = await getJSON(`/api/franchises/${key}/elo?from=${from}&to=${to}`);
-      const pts = d.points.map(p => ({ x: dayOf(p.game_date), y: p.elo_post, type: p.game_type, season: p.season })), c = d.colors || { primary: '#2563eb', secondary: '#cbd5e1' };
+      const pts = d.points.map(p => ({ x: dayOf(p.game_date), y: p.elo_post, type: p.game_type, season: p.season }));
+      const c = d.colors || { primary: '#2563eb', secondary: '#cbd5e1' };
+      const lum = h => { const v = [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16) / 255).map(v => v <= .03928 ? v / 12.92 : ((v + .055) / 1.055) ** 2.4); return .2126 * v[0] + .7152 * v[1] + .0722 * v[2]; };
+      const [line, area] = lum(c.primary) <= lum(c.secondary) ? [c.primary, c.secondary] : [c.secondary, c.primary];
+      const rgba = (h, a) => `rgba(${[1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16)).join(',')},${a})`;
       chart('franchiseChart', { type: 'line', data: { datasets: [
-          { label: 'trim', data: pts, borderColor: c.secondary, pointRadius: 0, pointHitRadius: 0, borderWidth: 3.4, order: 2 },
-          { label: d.franchise.name, data: pts, borderColor: c.primary, pointRadius: 0, pointHitRadius: 6, borderWidth: 1.3, order: 1 }] },
+          { label: d.franchise.name, data: pts, borderColor: line, backgroundColor: rgba(area, 0.28), fill: 'origin', pointRadius: 0, pointHitRadius: 6, borderWidth: 1.3 }] },
         options: { responsive: true, maintainAspectRatio: false, parsing: false, animation: false, interaction: { mode: 'nearest', axis: 'x', intersect: false },
-          plugins: { legend: { display: true, labels: { filter: i => i.text !== 'trim' } }, decimation: { enabled: true, algorithm: 'lttb', samples: 1500 },
-            tooltip: { filter: i => i.datasetIndex === 1, callbacks: { ...eloTooltip, label: item => `${eloTooltip.label(item)} · ${labelOf(item.raw.season)}` } } },
+          plugins: { legend: { display: true }, decimation: { enabled: true, algorithm: 'lttb', samples: 1500 },
+            tooltip: { callbacks: { ...eloTooltip, label: item => `${eloTooltip.label(item)} · ${labelOf(item.raw.season)}` } } },
           scales: { x: dateScale(pts.map(p => p.x)), y: { title: { display: true, text: 'Elo after the game' } } } } });
       document.getElementById('franchiseSeasons').innerHTML = table([
         { label: 'Season', value: r => NBA.labelOf(r.season), left: true }, { label: 'Code', value: 'code', left: true }, { label: 'W', value: 'wins' }, { label: 'L', value: 'losses' },
