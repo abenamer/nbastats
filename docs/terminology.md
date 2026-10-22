@@ -21,6 +21,7 @@ These are project-specific technical terms. They are not a reproduction of the A
 | Composition root | `src/main.rs`. The one place that creates the concrete adapters and wires them to the application. |
 | Cup final | The NBA Cup (in-season tournament) final. An extra game that does not count in the standings. |
 | Current season | The season the daily sync targets: ends next year from September to December, ends this year from January to August. |
+| Decade | Ten seasons grouped by the start year of the season: 1959-60 belongs to the 1950s. |
 | Elo | A rating that gives game probabilities from the rating difference. |
 | Elo continuation | The computation of ratings by the application for seasons after the imported archive ends. |
 | Elo source | The origin of a game's ratings: `imported` from an archive file or `computed` by the application. |
@@ -31,10 +32,11 @@ These are project-specific technical terms. They are not a reproduction of the A
 | Game log | The imported list of games with Elo before and after each game. |
 | Information cutoff | The last date whose games a forecast may use. |
 | Job | A stored simulation request with parameters, seed, versions, progress and result. |
+| League size | The number of teams of one league (NBA/BAA or ABA) in one season. |
 | Play-in | The games that decide seeds 7 and 8 (2020-21 and later), or the 8 seed (2019-20). |
 | Port | A trait in `application::ports` that the application requires from the outside world. |
-| Results source | The `ResultsSource` port: game results and schedule of a season without Elo data. The adapter is `BalldontlieSource`. |
 | Projection | A placeholder season: the previous season's matchups one year later, no scores, reverted ratings. |
+| Results source | The `ResultsSource` port: game results and schedule of a season without Elo data. The adapter is `BalldontlieSource`. |
 | Scenario | A named, completed job that you can reopen and compare. |
 | Season | An NBA season named by its end year. `SeasonYear(2004)` is 2003-04. |
 | Seed | Playoff position 1 to 8 inside a conference. |

@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block content %}
+<p class="muted">The highest and lowest Elo ratings in the game log, 1946-47 to today. A team's rating after each game is the measure; "peak" and "low" are the best and worst single-game ratings of a season. Conference and division records use the mean pre-playoff rating of the teams and exist from 2002-03, when alignment data starts. <span id="status"></span></p>
+<section class="grid2">
+  <div class="panel"><h2>Highest ratings ever</h2><div id="allTimeHigh" class="table-wrap"></div></div>
+  <div class="panel"><h2>Lowest ratings ever</h2><div id="allTimeLow" class="table-wrap"></div></div>
+</section>
+<section class="grid2">
+  <div class="panel"><h2>Best and worst by decade</h2><div id="byDecade" class="table-wrap"></div></div>
+  <div class="panel"><h2>Best and worst by league</h2><div id="byLeague" class="table-wrap"></div><h2 style="margin-top:1rem">By league size</h2><div id="bySize" class="table-wrap"></div></div>
+</section>
+<section class="grid2">
+  <div class="panel"><h2>Best conferences</h2><div id="confBest" class="table-wrap"></div><h2 style="margin-top:1rem">Worst conferences</h2><div id="confWorst" class="table-wrap"></div></div>
+  <div class="panel"><h2>Best divisions</h2><div id="divBest" class="table-wrap"></div><h2 style="margin-top:1rem">Worst divisions</h2><div id="divWorst" class="table-wrap"></div></div>
+</section>
+<section class="grid2">
+  <div class="panel"><h2>Best champions</h2><p class="muted small">Champions by their season peak.</p><div id="bestChampion" class="table-wrap"></div><h2 style="margin-top:1rem">Weakest champions</h2><div id="worstChampion" class="table-wrap"></div></div>
+  <div class="panel"><h2>Best teams that did not win the title</h2><div id="bestUncrowned" class="table-wrap"></div><h2 style="margin-top:1rem">Highest and lowest season-end ratings</h2><div id="bestEnd" class="table-wrap"></div><div id="worstEnd" class="table-wrap" style="margin-top:.5rem"></div></div>
+</section>
+<section class="grid2">
+  <div class="panel"><h2>Biggest rises and falls in one season</h2><p class="muted small">Rating at the end of the season minus the rating at its start.</p><div id="rise" class="table-wrap"></div><div id="fall" class="table-wrap" style="margin-top:.5rem"></div></div>
+  <div class="panel"><h2>Biggest single-game swings</h2><p class="muted small">The winner's rating gain: the largest upsets in the log.</p><div id="swings" class="table-wrap"></div></div>
+</section>
+{% endblock %}
+{% block scripts %}<script src="/static/js/records.js" defer></script>{% endblock %}

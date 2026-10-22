@@ -6,6 +6,7 @@
 - Aligned with REAS 1.2.0-draft: domain, application and adapters layout; six ports and one `PostgresStore` adapter; `TeamId`, `FranchiseId` and `SeasonYear` newtypes; typed errors; conditional job transitions; documentation checker, terminology, self-audit and decisions.
 
 - Curated champions and runner-ups for 1946-47 to 1959-60 and 1967-68 to 1982-83, where the archive's playoff data does not resolve a bracket; existing installations are backfilled at start.
+- Records page (`/records`): highest and lowest ratings ever, by decade, by league and league size, best and worst conferences and divisions, best and weakest champions, best uncrowned teams, season-end extremes, biggest rises and falls, biggest single-game swings.
 - Franchise charts draw one line per franchise in the darker uniform colour with the lighter colour as the area under it; one tooltip line per game with the Elo change.
 - Fixed the Elo Explorer charts (season Elo history and franchise trajectory), which collapsed every series to a straight line: they now use a date axis with month or year ticks, fixed-height boxes, and a tooltip with the Elo after each game and the change from the previous game.
 - Franchise charts draw in each franchise's uniform colours: a primary line over a secondary trim, a faint secondary wash when shown alone, and a fallback when two franchises share a colour.

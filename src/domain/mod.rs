@@ -6,6 +6,7 @@ pub mod elo;
 pub mod ids;
 pub mod models;
 pub mod playoffs;
+pub mod records;
 pub mod reference;
 pub mod simulation;
 pub mod validation;

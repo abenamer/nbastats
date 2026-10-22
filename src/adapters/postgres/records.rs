@@ -14,6 +14,7 @@ use crate::domain::models::{
     ChampionshipView, Conference, DataImport, EloSource, Franchise, Game, GameType, ImportStatus,
     JobKind, JobStatus, PlayoffResult, Season, SimulationJob, Team, TeamSeason, TeamSeasonView,
 };
+use crate::domain::records::TeamSeasonStat;
 
 // ---------------------------------------------------------------------------------------
 // Identifier newtypes: stored as INTEGER
@@ -281,6 +282,32 @@ impl FromRow<'_, PgRow> for SimulationJob {
             started_at: r.try_get("started_at")?,
             finished_at: r.try_get("finished_at")?,
             updated_at: r.try_get("updated_at")?,
+        })
+    }
+}
+
+impl FromRow<'_, PgRow> for TeamSeasonStat {
+    fn from_row(r: &PgRow) -> Result<Self, sqlx::Error> {
+        Ok(Self {
+            season: r.try_get("season")?,
+            code: r.try_get("code")?,
+            name: r.try_get("name")?,
+            franchise_key: r.try_get("franchise_key")?,
+            games: r.try_get("games")?,
+            peak: r.try_get("peak")?,
+            peak_date: r.try_get("peak_date")?,
+            low: r.try_get("low")?,
+            low_date: r.try_get("low_date")?,
+            wins: r.try_get::<Option<i32>, _>("wins")?.unwrap_or(0),
+            losses: r.try_get::<Option<i32>, _>("losses")?.unwrap_or(0),
+            elo_start: r.try_get("elo_start")?,
+            elo_pre_playoffs: r.try_get("elo_pre_playoffs")?,
+            elo_end: r.try_get("elo_end")?,
+            playoff_result: r
+                .try_get::<Option<PlayoffResult>, _>("playoff_result")?
+                .unwrap_or(PlayoffResult::Missed),
+            conference: r.try_get("conference")?,
+            division: r.try_get("division")?,
         })
     }
 }

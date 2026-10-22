@@ -2,9 +2,12 @@
 
 use std::collections::HashMap;
 
+use chrono::NaiveDate;
+
 use crate::application::ports::{AnalysisStore, NewForecast, StoreHealth, StoreResult};
 use crate::domain::ids::{FranchiseId, SeasonYear};
 use crate::domain::models::{ChampionshipView, TeamSeasonView};
+use crate::domain::records::{GameSwing, TeamSeasonStat};
 
 use super::PostgresStore;
 
@@ -86,6 +89,100 @@ impl AnalysisStore for PostgresStore {
                 .fetch_all(&self.pool)
                 .await?;
         Ok(rows.into_iter().map(|r| r.0).collect())
+    }
+
+    async fn team_season_stats(&self) -> StoreResult<Vec<TeamSeasonStat>> {
+        Ok(sqlx::query_as::<_, TeamSeasonStat>(
+            "WITH p AS (
+                 SELECT g.season, t.id AS team_id, g.game_date,
+                        CASE WHEN g.home_team_id = t.id THEN g.home_elo_post ELSE g.away_elo_post END AS elo_post
+                 FROM games g JOIN teams t ON t.id IN (g.home_team_id, g.away_team_id)
+                 WHERE g.home_score IS NOT NULL
+             ), a AS (
+                 SELECT season, team_id, count(*) AS games, max(elo_post) AS peak, min(elo_post) AS low,
+                        (array_agg(game_date ORDER BY elo_post DESC, game_date))[1] AS peak_date,
+                        (array_agg(game_date ORDER BY elo_post ASC, game_date))[1] AS low_date
+                 FROM p GROUP BY season, team_id
+             )
+             SELECT a.season, t.code, t.name, f.key AS franchise_key, a.games, a.peak, a.peak_date, a.low, a.low_date,
+                    ts.wins, ts.losses, ts.elo_start, ts.elo_pre_playoffs, ts.elo_end, ts.playoff_result,
+                    ts.conference, ts.division
+             FROM a JOIN teams t ON t.id = a.team_id JOIN franchises f ON f.id = t.franchise_id
+             LEFT JOIN team_seasons ts ON ts.season = a.season AND ts.team_id = a.team_id
+             ORDER BY a.season, t.code",
+        )
+        .fetch_all(&self.pool)
+        .await?)
+    }
+
+    async fn biggest_swings(&self, limit: i64) -> StoreResult<Vec<GameSwing>> {
+        type Row = (
+            SeasonYear,
+            NaiveDate,
+            String,
+            String,
+            String,
+            i32,
+            i32,
+            bool,
+            bool,
+            f64,
+            f64,
+            f64,
+        );
+        let rows: Vec<Row> = sqlx::query_as(
+            "SELECT * FROM (
+                 SELECT g.season, g.game_date, w.code, w.name, l.code AS opponent_code,
+                        CASE WHEN g.home_score > g.away_score THEN g.home_score ELSE g.away_score END AS points,
+                        CASE WHEN g.home_score > g.away_score THEN g.away_score ELSE g.home_score END AS opp_points,
+                        g.home_score > g.away_score AS home,
+                        g.game_type = 'playoff' AS playoff,
+                        CASE WHEN g.home_score > g.away_score THEN g.home_elo_pre ELSE g.away_elo_pre END AS elo_pre,
+                        CASE WHEN g.home_score > g.away_score THEN g.home_elo_post ELSE g.away_elo_post END AS elo_post,
+                        CASE WHEN g.home_score > g.away_score THEN g.away_elo_pre ELSE g.home_elo_pre END AS opp_elo_pre
+                 FROM games g
+                 JOIN teams w ON w.id = CASE WHEN g.home_score > g.away_score THEN g.home_team_id ELSE g.away_team_id END
+                 JOIN teams l ON l.id = CASE WHEN g.home_score > g.away_score THEN g.away_team_id ELSE g.home_team_id END
+                 WHERE g.home_score IS NOT NULL AND g.home_score <> g.away_score
+             ) s
+             ORDER BY s.elo_post - s.elo_pre DESC, s.game_date
+             LIMIT $1",
+        )
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .into_iter()
+            .map(
+                |(
+                    season,
+                    game_date,
+                    code,
+                    name,
+                    opponent_code,
+                    points,
+                    opponent_points,
+                    home,
+                    playoff,
+                    elo_pre,
+                    elo_post,
+                    opponent_elo_pre,
+                )| GameSwing {
+                    season,
+                    game_date,
+                    code,
+                    name,
+                    opponent_code,
+                    points,
+                    opponent_points,
+                    home,
+                    playoff,
+                    elo_pre,
+                    elo_post,
+                    opponent_elo_pre,
+                },
+            )
+            .collect())
     }
 
     async fn insert_forecast(&self, f: &NewForecast<'_>) -> StoreResult<()> {

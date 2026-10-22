@@ -1,6 +1,7 @@
 # Bundle update log
 
 ## 2026-10-22
+* **Update**: Added the Records page to the [Application overview](/concepts/application.md), the `/api/records` route, and the terms Decade and League size.
 * **Update**: Elo Explorer charts repaired (date axis, per-game tooltip). Franchise charts use the franchise's uniform colours; the API reference lists the `colors` field.
 * **Update**: Curated champions now cover every season the archive has; [Historical data](/concepts/historical-data.md) says which seasons are derived and which are curated.
 * **Update**: Added the Franchise History page to the [Application overview](/concepts/application.md).

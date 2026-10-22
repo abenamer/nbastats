@@ -113,6 +113,18 @@ pub async fn franchise(State(app): State<AppState>) -> Response {
 }
 
 #[derive(Template)]
+#[template(path = "records.html")]
+pub struct RecordsPage {
+    pub layout: Layout,
+}
+
+pub async fn records() -> Response {
+    render(RecordsPage {
+        layout: Layout::new("Elo Records", "records"),
+    })
+}
+
+#[derive(Template)]
 #[template(path = "alpha.html")]
 pub struct AlphaPage {
     pub layout: Layout,
