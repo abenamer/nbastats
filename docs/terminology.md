@@ -28,6 +28,7 @@ These are project-specific technical terms. They are not a reproduction of the A
 | Engine A | The alpha lottery simulator (`domain::simulation::alpha`). |
 | Engine B | The playoff bracket simulator (`domain::playoffs::bracket`). |
 | Engine C | The full-season simulator with play-in (`domain::playoffs::season`). |
+| Era | Consecutive seasons of one league with the same number of teams. For the NBA a new era also starts in 1979-80 with the 3-point line. |
 | Franchise | The organisation, followed through relocations and renamings. Identified by `FranchiseId` and a key such as `GSW`. |
 | Game log | The imported list of games with Elo before and after each game. |
 | Information cutoff | The last date whose games a forecast may use. |

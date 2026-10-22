@@ -12,6 +12,8 @@ use crate::domain::reference;
 
 /// Games a team must have played in a season before its conference or division counts.
 pub const MIN_GAMES_FOR_GROUPS: i64 = 60;
+/// The NBA adopted the 3-point line in 1979-80. The ABA had it from its first season.
+pub const THREE_POINT_SEASON: SeasonYear = SeasonYear::of(1980);
 pub const LIST_LEN: usize = 10;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
@@ -117,6 +119,19 @@ pub struct SizeRecord {
     pub extremes: Extremes,
 }
 
+/// A run of seasons of one league with the same number of teams; the NBA's run is also cut
+/// at the 3-point line.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct EraRecord {
+    pub league: League,
+    pub first_season: SeasonYear,
+    pub last_season: SeasonYear,
+    pub seasons: usize,
+    pub teams: usize,
+    pub three_point: bool,
+    pub extremes: Extremes,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct LeagueRecord {
     pub league: League,
@@ -139,6 +154,20 @@ pub struct GroupEntry {
     pub worst_elo: f64,
 }
 
+/// East against West in one season: mean pre-playoff Elo of each conference.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct ConferenceSeason {
+    pub season: SeasonYear,
+    pub east_teams: usize,
+    pub west_teams: usize,
+    pub east_mean: f64,
+    pub west_mean: f64,
+    /// West mean minus East mean: positive when the West was stronger.
+    pub gap: f64,
+    pub east_best_code: String,
+    pub west_best_code: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct GroupRecords {
     pub best: Vec<GroupEntry>,
@@ -152,6 +181,7 @@ pub struct Records {
     pub by_decade: Vec<DecadeRecord>,
     pub by_league: Vec<LeagueRecord>,
     pub by_league_size: Vec<SizeRecord>,
+    pub by_era: Vec<EraRecord>,
     pub best_end: Vec<Entry>,
     pub worst_end: Vec<Entry>,
     pub biggest_rise: Vec<Entry>,
@@ -159,7 +189,8 @@ pub struct Records {
     pub best_champion: Vec<Entry>,
     pub worst_champion: Vec<Entry>,
     pub best_uncrowned: Vec<Entry>,
-    pub conferences: GroupRecords,
+    /// One row per season with both conferences, in season order.
+    pub conference_seasons: Vec<ConferenceSeason>,
     pub divisions: GroupRecords,
     pub swings: Vec<GameSwing>,
 }
@@ -213,6 +244,55 @@ fn extremes(stats: &[&TeamSeasonStat]) -> Option<Extremes> {
         best: peak(best),
         worst: low(worst),
     })
+}
+
+/// Eras of one league: consecutive seasons with the same number of teams, and for the NBA a
+/// new era at the 3-point line. `sizes` maps each season of the league to its team count.
+pub fn eras(
+    league: League,
+    stats: &[&TeamSeasonStat],
+    sizes: &std::collections::BTreeMap<SeasonYear, usize>,
+) -> Vec<EraRecord> {
+    let mut out: Vec<EraRecord> = Vec::new();
+    let mut current: Option<(SeasonYear, SeasonYear, usize)> = None; // (first, last, teams)
+    let flush = |era: Option<(SeasonYear, SeasonYear, usize)>, out: &mut Vec<EraRecord>| {
+        if let Some((first, last, teams)) = era {
+            let members: Vec<&TeamSeasonStat> = stats
+                .iter()
+                .copied()
+                .filter(|s| s.season >= first && s.season <= last)
+                .collect();
+            if let Some(extremes) = extremes(&members) {
+                out.push(EraRecord {
+                    league,
+                    first_season: first,
+                    last_season: last,
+                    seasons: (last.end_year() - first.end_year() + 1) as usize,
+                    teams,
+                    three_point: league == League::Aba || first >= THREE_POINT_SEASON,
+                    extremes,
+                });
+            }
+        }
+    };
+    for (&season, &teams) in sizes {
+        let starts_new = match current {
+            None => true,
+            Some((_, last, n)) => {
+                n != teams
+                    || last.next() != Some(season)
+                    || (league == League::Nba && season == THREE_POINT_SEASON)
+            }
+        };
+        if starts_new {
+            flush(current.take(), &mut out);
+            current = Some((season, season, teams));
+        } else if let Some(c) = current.as_mut() {
+            c.1 = season;
+        }
+    }
+    flush(current, &mut out);
+    out
 }
 
 /// Decade of the season's start year: 1959-60 (end year 1960) belongs to the 1950s.
@@ -274,6 +354,57 @@ fn group_records(
     let best: Vec<GroupEntry> = entries.iter().take(LIST_LEN).cloned().collect();
     let worst: Vec<GroupEntry> = entries.iter().rev().take(LIST_LEN).cloned().collect();
     GroupRecords { best, worst }
+}
+
+/// East against West for every season where both conferences have at least two rated teams
+/// with full seasons.
+fn conference_seasons(stats: &[TeamSeasonStat]) -> Vec<ConferenceSeason> {
+    use std::collections::BTreeMap;
+    let mut by_season: BTreeMap<SeasonYear, (Vec<&TeamSeasonStat>, Vec<&TeamSeasonStat>)> =
+        BTreeMap::new();
+    for s in stats {
+        if s.games < MIN_GAMES_FOR_GROUPS || s.elo_pre_playoffs.is_none() {
+            continue;
+        }
+        match s.conference {
+            Some(Conference::East) => by_season.entry(s.season).or_default().0.push(s),
+            Some(Conference::West) => by_season.entry(s.season).or_default().1.push(s),
+            None => {}
+        }
+    }
+    let mean = |v: &[&TeamSeasonStat]| {
+        v.iter()
+            .map(|s| s.elo_pre_playoffs.unwrap_or(0.0))
+            .sum::<f64>()
+            / v.len() as f64
+    };
+    let best = |v: &[&TeamSeasonStat]| {
+        v.iter()
+            .max_by(|a, b| {
+                a.elo_pre_playoffs
+                    .unwrap_or(0.0)
+                    .total_cmp(&b.elo_pre_playoffs.unwrap_or(0.0))
+            })
+            .map(|s| s.code.clone())
+            .unwrap_or_default()
+    };
+    by_season
+        .into_iter()
+        .filter(|(_, (e, w))| e.len() >= 2 && w.len() >= 2)
+        .map(|(season, (e, w))| {
+            let (east_mean, west_mean) = (mean(&e), mean(&w));
+            ConferenceSeason {
+                season,
+                east_teams: e.len(),
+                west_teams: w.len(),
+                east_mean,
+                west_mean,
+                gap: west_mean - east_mean,
+                east_best_code: best(&e),
+                west_best_code: best(&w),
+            }
+        })
+        .collect()
 }
 
 /// Build every record table from the team-season statistics and the largest game swings.
@@ -358,6 +489,21 @@ pub fn compute(stats: &[TeamSeasonStat], swings: Vec<GameSwing>) -> Records {
         })
         .collect();
 
+    // Eras per league: runs of equal team counts, the NBA's also cut at the 3-point line.
+    let mut by_era: Vec<EraRecord> = Vec::new();
+    for league in [League::Nba, League::Aba] {
+        let members: Vec<&TeamSeasonStat> = stats
+            .iter()
+            .filter(|s| League::of_code(&s.code) == league)
+            .collect();
+        let league_sizes: BTreeMap<SeasonYear, usize> = sizes
+            .iter()
+            .filter(|((_, l), _)| *l == league)
+            .map(|((s, _), n)| (*s, *n))
+            .collect();
+        by_era.extend(eras(league, &members, &league_sizes));
+    }
+
     let champions = || {
         stats
             .iter()
@@ -384,6 +530,7 @@ pub fn compute(stats: &[TeamSeasonStat], swings: Vec<GameSwing>) -> Records {
         by_decade,
         by_league,
         by_league_size,
+        by_era,
         best_end: top(all(), end, true, LIST_LEN),
         worst_end: top(all(), end, false, LIST_LEN),
         biggest_rise: top(all(), rise, true, LIST_LEN),
@@ -391,7 +538,7 @@ pub fn compute(stats: &[TeamSeasonStat], swings: Vec<GameSwing>) -> Records {
         best_champion: top(champions(), |s| Some(peak(s)), true, LIST_LEN),
         worst_champion: top(champions(), |s| Some(peak(s)), false, LIST_LEN),
         best_uncrowned: top(others(), |s| Some(peak(s)), true, LIST_LEN),
-        conferences: group_records(stats, |s| s.conference.map(|c| (c, None))),
+        conference_seasons: conference_seasons(stats),
         divisions: group_records(stats, |s| Some((s.conference?, Some(s.division.clone()?)))),
         swings,
     }
@@ -446,6 +593,63 @@ mod tests {
     }
 
     #[test]
+    fn eras_split_on_league_size_and_the_three_point_line() {
+        // 1978 and 1979: 22 teams; 1980: 22 teams but the 3-point line starts a new era;
+        // 1981: 23 teams (expansion) starts another; 1982 continues it.
+        let stats: Vec<TeamSeasonStat> =
+            [(1978, 22), (1979, 22), (1980, 22), (1981, 23), (1982, 23)]
+                .iter()
+                .flat_map(|&(season, n)| {
+                    (0..n).map(move |i| {
+                        stat(
+                            season,
+                            &format!("T{i:02}"),
+                            1500.0 + i as f64,
+                            1400.0 - i as f64,
+                            PlayoffResult::Missed,
+                        )
+                    })
+                })
+                .collect();
+        let r = compute(&stats, vec![]);
+        let nba: Vec<&EraRecord> = r
+            .by_era
+            .iter()
+            .filter(|e| e.league == League::Nba)
+            .collect();
+        assert_eq!(nba.len(), 3);
+        assert_eq!(
+            (
+                nba[0].first_season,
+                nba[0].last_season,
+                nba[0].teams,
+                nba[0].three_point
+            ),
+            (SeasonYear::of(1978), SeasonYear::of(1979), 22, false)
+        );
+        assert_eq!(
+            (
+                nba[1].first_season,
+                nba[1].last_season,
+                nba[1].teams,
+                nba[1].three_point
+            ),
+            (SeasonYear::of(1980), SeasonYear::of(1980), 22, true)
+        );
+        assert_eq!(
+            (
+                nba[2].first_season,
+                nba[2].last_season,
+                nba[2].teams,
+                nba[2].seasons
+            ),
+            (SeasonYear::of(1981), SeasonYear::of(1982), 23, 2)
+        );
+        assert_eq!(nba[2].extremes.best.value, 1522.0);
+        assert_eq!(nba[2].extremes.worst.value, 1400.0 - 22.0);
+    }
+
+    #[test]
     fn league_follows_the_aba_code_list() {
         assert_eq!(League::of_code("KEN"), League::Aba);
         assert_eq!(League::of_code("INA"), League::Aba);
@@ -486,9 +690,8 @@ mod tests {
         assert_eq!(r.worst_champion[0].value, 1600.0);
         assert_eq!(r.best_uncrowned[0].value, 1839.0);
         assert_eq!(r.biggest_rise[0].value, 1855.0 - 1500.0);
-        // Conference tables: 2017 West (WGS alone) has one team, so it is skipped; no group
-        // reaches two teams here.
-        assert!(r.conferences.best.is_empty());
+        // Conferences: no season here has two rated teams on both sides, so no comparison row.
+        assert!(r.conference_seasons.is_empty());
     }
 
     #[test]
@@ -496,20 +699,24 @@ mod tests {
         let mut stats = vec![
             stat(2017, "WGS", 1865.0, 1700.0, PlayoffResult::Champion),
             stat(2017, "WLA", 1500.0, 1400.0, PlayoffResult::Missed),
+            stat(2017, "WHO", 1700.0, 1500.0, PlayoffResult::SecondRound),
             stat(2017, "EBO", 1600.0, 1500.0, PlayoffResult::ConfFinals),
             stat(2017, "ECL", 1750.0, 1600.0, PlayoffResult::Finals),
         ];
         stats[1].games = 10; // an unfinished season does not count
         let r = compute(&stats, vec![]);
-        assert_eq!(r.conferences.best.len(), 1);
-        let east = &r.conferences.best[0];
-        assert_eq!(east.conference, Conference::East);
-        assert_eq!(east.teams, 2);
-        assert!((east.mean_elo - (1580.0 + 1730.0) / 2.0).abs() < 1e-9);
+        assert_eq!(r.conference_seasons.len(), 1);
+        let c = &r.conference_seasons[0];
+        assert_eq!((c.east_teams, c.west_teams), (2, 2));
+        assert!((c.east_mean - (1580.0 + 1730.0) / 2.0).abs() < 1e-9);
+        assert!((c.west_mean - (1845.0 + 1680.0) / 2.0).abs() < 1e-9);
+        assert!((c.gap - (c.west_mean - c.east_mean)).abs() < 1e-9);
         assert_eq!(
-            (east.best_code.as_str(), east.worst_code.as_str()),
-            ("ECL", "EBO")
+            (c.east_best_code.as_str(), c.west_best_code.as_str()),
+            ("ECL", "WGS")
         );
-        assert_eq!(r.divisions.best[0].division.as_deref(), Some("Atlantic"));
+        // Divisions keep the best/worst lists: the Pacific (West) outrates the Atlantic here.
+        assert_eq!(r.divisions.best[0].division.as_deref(), Some("Pacific"));
+        assert_eq!(r.divisions.worst[0].division.as_deref(), Some("Atlantic"));
     }
 }

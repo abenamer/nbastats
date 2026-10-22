@@ -40,7 +40,7 @@ See the [Elo rating model](/concepts/elo-model.md), the [alpha lottery engine](/
 |------|------|---------|
 | Dashboard | `/` | Title distribution, concentration and the equal-strength comparison. |
 | Elo Explorer | `/elo` | Team ratings, Elo history charts, franchise trajectories and the matchup calculator. |
-| Records | `/records` | Elo records: the highest and lowest ratings ever, by decade, by league (NBA/BAA and ABA) and by league size; the best and worst conferences and divisions by mean pre-playoff rating; the best and weakest champions, the best teams without a title, season-end extremes, the biggest rises and falls in a season, and the biggest single-game swings. |
+| Records | `/records` | Elo records: the highest and lowest ratings ever; by era (a new era when a league's team count changes, and for the NBA at the 3-point line in 1979-80), by decade, by league (NBA/BAA and ABA) and by league size; East against West by mean pre-playoff rating for every season, and the best and worst divisions; the best and weakest champions, the best teams without a title, season-end extremes, the biggest rises and falls in a season, and the biggest single-game swings. |
 | Franchise History | `/franchise` | A franchise's Elo after every game across all its seasons, drawn in the franchise's uniform colours (the darker colour as the line, the lighter as the area under it), with stars at NBA titles, hollow circles at lost Finals, rating bands, and an optional second franchise for comparison. |
 | Alpha Simulator | `/alpha` | Editable strengths, scenario save and load, exact validation. |
 | Playoff Simulator | `/playoffs` | Historical bracket, exact and Monte Carlo probabilities, actual results. |
