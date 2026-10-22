@@ -879,6 +879,17 @@ pub const FRANCHISE_COLORS: &[(&str, &str, &str)] = &[
 
 pub const DEFAULT_COLORS: (&str, &str) = ("#475569", "#94A3B8");
 
+/// Team codes of the ABA (1967-68 to 1975-76) in the dataset. Every other code is NBA or BAA.
+pub const ABA_TEAM_CODES: &[&str] = &[
+    "ANA", "CAR", "DLC", "DNA", "DNR", "FLO", "HSM", "INA", "KEN", "LAS", "MMF", "MMP", "MMS",
+    "MMT", "MNM", "MNP", "NJA", "NOB", "NYA", "OAK", "PTC", "PTP", "SAA", "SDA", "SDS", "SSL",
+    "TEX", "UTS", "VIR", "WSA",
+];
+
+pub fn is_aba_code(code: &str) -> bool {
+    ABA_TEAM_CODES.contains(&code)
+}
+
 /// (primary, secondary) colours of a franchise key; defunct franchises get the default pair.
 pub fn franchise_colors(key: &str) -> (&'static str, &'static str) {
     FRANCHISE_COLORS
@@ -891,6 +902,16 @@ pub fn franchise_colors(key: &str) -> (&'static str, &'static str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn aba_codes_exist_in_the_lineage_and_active_codes_are_not_aba() {
+        for code in ABA_TEAM_CODES {
+            assert!(TEAM_LINEAGE.iter().any(|t| t.0 == *code), "{code}");
+        }
+        for key in active_franchise_keys() {
+            assert!(!is_aba_code(key), "{key}");
+        }
+    }
 
     #[test]
     fn every_active_franchise_has_colours() {

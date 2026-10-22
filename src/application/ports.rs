@@ -18,6 +18,7 @@ use crate::domain::models::{
     ChampionshipView, DataImport, EloSource, Franchise, Game, GameType, JobEvent, JobKind,
     JobStatus, PlayoffResult, Season, SimulationJob, Team, TeamSeason, TeamSeasonView,
 };
+use crate::domain::records::{GameSwing, TeamSeasonStat};
 
 /// Error from any store port. Adapters convert their own errors into these variants.
 #[derive(Debug, thiserror::Error)]
@@ -328,6 +329,10 @@ pub trait AnalysisStore: Send + Sync {
         to: SeasonYear,
     ) -> StoreResult<Vec<SeasonYear>>;
     async fn insert_forecast(&self, forecast: &NewForecast<'_>) -> StoreResult<()>;
+    /// Every team-season with its rating extremes, for the Elo records.
+    async fn team_season_stats(&self) -> StoreResult<Vec<TeamSeasonStat>>;
+    /// The `limit` games with the largest rating gain for the winner.
+    async fn biggest_swings(&self, limit: i64) -> StoreResult<Vec<GameSwing>>;
     async fn table_counts(&self) -> StoreResult<Vec<(String, i64)>>;
     async fn health(&self) -> StoreHealth;
 }

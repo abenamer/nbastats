@@ -67,6 +67,17 @@ pub async fn seasons(State(app): State<AppState>) -> ApiResult<Value> {
     Ok(Json(json!(app.store.seasons().await?)))
 }
 
+/// Elo records: all-time, by decade, by league and league size, season and game records,
+/// and the best and worst conferences and divisions.
+pub async fn records(State(app): State<AppState>) -> ApiResult<Value> {
+    let stats = app.store.team_season_stats().await?;
+    let swings = app
+        .store
+        .biggest_swings(crate::domain::records::LIST_LEN as i64)
+        .await?;
+    Ok(Json(json!(crate::domain::records::compute(&stats, swings))))
+}
+
 fn colors_json(key: &str) -> Value {
     let (primary, secondary) = reference::franchise_colors(key);
     json!({ "primary": primary, "secondary": secondary })

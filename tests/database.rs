@@ -12,7 +12,7 @@ use nba_elo_simulator::application::ports::{
 };
 use nba_elo_simulator::domain::ids::{SeasonYear, TeamId};
 use nba_elo_simulator::domain::models::{
-    GameType, ImportStatus, JobKind, JobStatus, PlayoffResult, Team,
+    Conference, GameType, ImportStatus, JobKind, JobStatus, PlayoffResult, Team,
 };
 use nba_elo_simulator::domain::playoffs::reconstruct;
 use nba_elo_simulator::domain::playoffs::season::{self, SeasonParams};
@@ -302,6 +302,50 @@ async fn job_lifecycle_survives_restart(pool: PgPool) {
     let scenarios = store.scenarios(JobKind::Alpha).await.unwrap();
     assert_eq!(scenarios.len(), 1);
     assert_eq!(scenarios[0].name.as_deref(), Some("scenario"));
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn records_queries_summarise_the_game_log(pool: PgPool) {
+    use nba_elo_simulator::domain::records;
+    let (store, teams) = common::setup(pool).await;
+    imports::import_bytes(
+        &store,
+        common::FIXTURE.as_bytes(),
+        prov("mini_2016.csv"),
+        false,
+    )
+    .await
+    .unwrap();
+    let stats = store.team_season_stats().await.unwrap();
+    assert_eq!(stats.len(), 30);
+    let gsw = stats.iter().find(|s| s.code == "GSW").unwrap();
+    let games = store.season_games(S2016).await.unwrap();
+    let gsw_id = teams["GSW"].id;
+    let gsw_games: Vec<_> = games
+        .iter()
+        .filter(|g| g.involves(gsw_id) && g.is_played())
+        .collect();
+    assert_eq!(gsw.games as usize, gsw_games.len());
+    let peak = gsw_games
+        .iter()
+        .map(|g| g.elo_of(gsw_id).1)
+        .fold(f64::MIN, f64::max);
+    assert!((gsw.peak - peak).abs() < 1e-9);
+    assert!(gsw.low <= gsw.peak);
+    assert_eq!(gsw.playoff_result, PlayoffResult::Finals);
+    assert_eq!(gsw.conference, Some(Conference::West));
+    // The largest swing is a real game: the winner gained what the loser lost.
+    let swings = store.biggest_swings(5).await.unwrap();
+    assert_eq!(swings.len(), 5);
+    assert!(swings[0].elo_post - swings[0].elo_pre >= swings[1].elo_post - swings[1].elo_pre);
+    assert!(swings
+        .iter()
+        .all(|s| s.points > s.opponent_points && s.elo_post > s.elo_pre));
+    let r = records::compute(&stats, swings);
+    assert_eq!(r.all_time_high[0].code, "GSW");
+    assert_eq!(r.best_champion[0].code, "CLE");
+    assert_eq!(r.conferences.best.len(), 2);
+    assert_eq!(r.divisions.best.len(), 6);
 }
 
 #[sqlx::test(migrations = "./migrations")]
