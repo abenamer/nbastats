@@ -1,9 +1,9 @@
 (async () => {
   const { num, esc, getJSON, table, cards, setStatus, chart, labelOf, RESULT } = NBA;
   const status = document.getElementById('status');
-  // Each franchise draws in its own uniform colours: a thin primary stroke over a wider
-  // secondary stroke (the trim), and alone, a faint wash of the secondary under the line.
-  // The fallback pair is the validated blue/red; the title star is always gold.
+  // Each franchise draws in its own uniform colours: the darker one as the line, the lighter
+  // one as the area under it. The fallback pair is the validated blue/red; the title star is
+  // always gold.
   const FALLBACK = ['#2563eb', '#dc2626'];
   const STAR = '#f59e0b', STAR_EDGE = '#92400e';
   const rgb = h => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16));
@@ -11,13 +11,15 @@
   const lum = h => { const c = rgb(h).map(v => v / 255).map(v => v <= .03928 ? v / 12.92 : ((v + .055) / 1.055) ** 2.4); return .2126 * c[0] + .7152 * c[1] + .0722 * c[2]; };
   const contrast = h => 1.05 / (lum(h) + .05);
   const alpha = (h, a) => `rgba(${rgb(h).join(',')},${a})`;
+  // Darker uniform colour for the line, lighter one for the area under it.
+  const styleOf = c => lum(c.primary) <= lum(c.secondary) ? { line: c.primary, area: c.secondary } : { line: c.secondary, area: c.primary };
   // Pick the second franchise's line colour so it stays distinguishable from the first.
-  function pickColors(first, second) {
-    const a = first.colors, b = second.colors;
-    if (dist(a.primary, b.primary) > 70) return b;
-    // Same primary (Bulls and Rockets): draw the second in its secondary with a neutral trim.
-    if (contrast(b.secondary) >= 3 && dist(a.primary, b.secondary) > 70) return { primary: b.secondary, secondary: '#cbd5e1' };
-    return { primary: dist(a.primary, FALLBACK[1]) > 70 ? FALLBACK[1] : FALLBACK[0], secondary: '#cbd5e1' };
+  function pickStyle(first, second) {
+    const a = first.style, b = second.style;
+    if (dist(a.line, b.line) > 70) return b;
+    // Same line colour (Bulls and Rockets, both black): use the other uniform colour if it reads on white.
+    if (contrast(b.area) >= 3 && dist(a.line, b.area) > 70) return { line: b.area, area: '#cbd5e1' };
+    return { line: dist(a.line, FALLBACK[1]) > 70 ? FALLBACK[1] : FALLBACK[0], area: '#cbd5e1' };
   }
   const BANDS = [[1700, 'All-time great'], [1600, 'Title contender'], [1500, 'Average'], [1400, 'Lottery'], [1300, 'Dreadful']];
   // A five-point star as a point style (Chart.js's built-in 'star' is an asterisk).
@@ -45,17 +47,15 @@
     const won = new Set(d.championships.filter(c => c.franchise_key === fk).map(c => c.season));
     const lost = new Set(d.championships.filter(c => c.franchise_key !== fk).map(c => c.season));
     const at = set => [...set].map(s => lastOf[s]).filter(Boolean).sort((a, b) => a.x - b.x);
-    return { franchise: d.franchise, colors: d.colors, idx, pts, titles: at(won), finals: at(lost), won, lost, seasons: d.seasons };
+    return { franchise: d.franchise, style: styleOf(d.colors), idx, pts, titles: at(won), finals: at(lost), won, lost, seasons: d.seasons };
   }
   function datasets(s, alone) {
-    const name = s.franchise.name, c = s.colors;
+    const name = s.franchise.name, c = s.style;
     return [
-      // trim: the secondary colour as a wider stroke underneath the primary
-      { label: `${name} trim`, data: s.pts, borderColor: c.secondary, borderWidth: 3.6, pointRadius: 0, pointHitRadius: 0, tension: 0, order: 3, kind: 'halo' },
-      { label: name, data: s.pts, borderColor: c.primary, borderWidth: 1.3, pointRadius: 0, pointHitRadius: 6, tension: 0, order: 2, kind: 'line',
-        fill: alone ? 'origin' : false, backgroundColor: alpha(c.secondary, 0.10) },
+      { label: name, data: s.pts, borderColor: c.line, borderWidth: 1.3, pointRadius: 0, pointHitRadius: 6, tension: 0, order: 2, kind: 'line',
+        fill: 'origin', backgroundColor: alpha(c.area, alone ? 0.28 : 0.16) },
       { label: `${name}: NBA title`, data: s.titles, type: 'scatter', pointStyle: starImage, radius: 12, hoverRadius: 14, order: 0, kind: 'title' },
-      { label: `${name}: lost Finals`, data: s.finals, type: 'scatter', pointStyle: 'circle', radius: 5, hoverRadius: 7, backgroundColor: '#fff', borderColor: c.primary, borderWidth: 2, order: 1, kind: 'finals' }];
+      { label: `${name}: lost Finals`, data: s.finals, type: 'scatter', pointStyle: 'circle', radius: 5, hoverRadius: 7, backgroundColor: '#fff', borderColor: c.line, borderWidth: 2, order: 1, kind: 'finals' }];
   }
   async function draw() {
     const key = document.getElementById('franchise').value, cmp = document.getElementById('compare').value;
@@ -63,19 +63,20 @@
     const btn = document.getElementById('load'); btn.disabled = true; setStatus(status, 'Loading…');
     try {
       const series = [await load(key, 0, from, to)];
-      if (cmp && cmp !== key) { const second = await load(cmp, 1, from, to); second.colors = pickColors(series[0], second); series.push(second); }
+      if (cmp && cmp !== key) { const second = await load(cmp, 1, from, to); second.style = pickStyle(series[0], second); series.push(second); }
       const alone = series.length === 1;
       const all = series.flatMap(s => datasets(s, alone)).filter(ds => ds.data.length);
-      const summary = document.getElementById('summary'); summary.style.setProperty('--team', series[0].colors.primary); summary.classList.add('team-accent');
+      const summary = document.getElementById('summary'); summary.style.setProperty('--team', series[0].style.line); summary.classList.add('team-accent');
       const xs = series.flatMap(s => s.pts.map(p => p.x)); const xMin = Math.floor(Math.min(...xs)), xMax = Math.ceil(Math.max(...xs));
       chart('historyChart', { type: 'line', data: { datasets: all }, plugins: [bands, crosshair],
         options: { responsive: true, maintainAspectRatio: false, parsing: false, animation: false, normalized: true, layout: { padding: { right: 96 } }, interaction: { mode: 'nearest', axis: 'x', intersect: false },
-          plugins: { legend: { display: true, labels: { usePointStyle: true, filter: item => all[item.datasetIndex].kind !== 'halo' && (!item.text.endsWith('lost Finals') || all[item.datasetIndex].data.length) } },
+          plugins: { legend: { display: true, labels: { usePointStyle: true, filter: item => !item.text.endsWith('lost Finals') || all[item.datasetIndex].data.length } },
             decimation: { enabled: true, algorithm: 'lttb', samples: 2500 },
             tooltip: { callbacks: {
               title: items => items.length ? items[0].raw.date : '',
-              filter: item => item.dataset.kind !== 'halo',
-              label: item => { const p = item.raw, ds = item.dataset; const s = ds.kind === 'title' ? ' · NBA champion' : ds.kind === 'finals' ? ' · lost the Finals' : ''; return `${p.code} ${num(p.y, 0)} (${labelOf(p.season)}${p.type === 'playoff' ? ', playoffs' : ''})${s}`; } } } },
+              label: item => { const p = item.raw, ds = item.dataset; const s = ds.kind === 'title' ? ' · NBA champion' : ds.kind === 'finals' ? ' · lost the Finals' : '';
+                const prev = ds.kind === 'line' ? ds.data[item.dataIndex - 1] : null; const delta = prev ? ` (${p.y - prev.y >= 0 ? '+' : ''}${num(p.y - prev.y, 1)})` : '';
+                return `${p.code} ${num(p.y, 0)}${delta} · ${labelOf(p.season)}${p.type === 'playoff' ? ', playoffs' : ''}${s}`; } } } },
           scales: { x: { type: 'linear', min: xMin, max: xMax, ticks: { stepSize: 5, callback: v => Number.isInteger(v) ? v : '' }, grid: { color: '#f1f3f6' } },
                     y: { suggestedMin: 1250, suggestedMax: 1800, ticks: { stepSize: 100 }, grid: { color: '#f1f3f6' }, title: { display: true, text: 'Elo after the game' } } } } });
       const s = series[0];
