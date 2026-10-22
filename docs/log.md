@@ -1,5 +1,9 @@
 # Bundle update log
 
+## 2026-10-22
+* **Update**: Syncs and uploads now complete a season that the archive covers only in part (2024-25 playoffs). [Elo continuation](/concepts/elo-continuation.md) and the import runbook describe the rule.
+* **Update**: Added season removal to the import runbook and the API reference; an empty results fetch no longer creates a season.
+
 ## 2026-10-21
 * **Update**: Added the daily results sync (`RESULTS_SYNC_*` settings) to the import runbook, configuration and API references.
 * **Update**: Added the `ResultsSource` port and the BALLDONTLIE adapter: results sync runbook, configuration keys, API route, security rows and ADR 0001 update.

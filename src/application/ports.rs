@@ -166,6 +166,10 @@ pub trait GameStore: GameLog {
     async fn upsert_games(&self, import_id: i64, rows: &[NewGame]) -> StoreResult<UpsertCounts>;
     /// Delete the games of a season that carry computed ratings (before recomputing them).
     async fn delete_computed_games(&self, season: SeasonYear) -> StoreResult<u64>;
+    /// Delete a whole season: its games, team seasons, championship, forecasts and the
+    /// season row, in one transaction. The caller must have checked that no imported game
+    /// remains. Returns the number of games deleted.
+    async fn delete_season(&self, season: SeasonYear) -> StoreResult<u64>;
     async fn set_game_types(&self, ids: &[i64], game_type: GameType) -> StoreResult<()>;
     async fn update_season_summary(&self, summary: &SeasonSummary) -> StoreResult<()>;
     async fn upsert_team_season(&self, ts: &TeamSeason) -> StoreResult<()>;

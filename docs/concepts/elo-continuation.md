@@ -43,8 +43,9 @@ A projection is a placeholder. Its schedule is not the real schedule. Use it to 
 
 # Rules
 
-* A results import or a projection replaces every `computed` game of that season.
-* The application refuses to compute ratings for a season that has `imported` games. Archive data always wins.
+* A results import, a sync or a projection replaces every `computed` game of that season.
+* A season that has `imported` games can be completed, not changed. The archive ends with the 2024-25 regular season; a sync of 2024-25 keeps every archive game, adds the play-in and playoff games after the last archive date, and chains their ratings from the ratings after the last archive game. A game dated inside the archive range that is not in the archive stops the sync with a message. A projection of such a season is refused.
+* After you complete a season, sync the next season again: its start ratings come from the final ratings of the completed season.
 * A later archive import replaces `computed` games of the same key with `imported` games. A `computed` game never replaces an `imported` game.
 * The application needs the previous season in the store. It takes the final rating of each team from the last game of that season.
 * Team codes must exist in the reference table. Unknown codes stop the import with a message.

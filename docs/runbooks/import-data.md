@@ -77,7 +77,20 @@ Example:
 
 Each upload replaces the computed games of that season. Rows with a tied score, one missing score, or an unknown team code are rejected and reported.
 
-The application refuses both operations for a season that has imported archive games.
+A projection is refused for a season that has imported archive games. A results sync or upload of such a season keeps the archive games and adds only the games after them (for 2024-25: the play-in and the playoffs). A source or file with no new games stores nothing.
+
+## Complete 2024-25
+
+The archive stops after the 2024-25 regular season. To add its play-in and playoffs:
+
+1. On the Data page, enter 2025 and click **Sync results from BALLDONTLIE**.
+2. When it completes, enter 2026 and sync again, so 2025-26 starts from the completed ratings.
+
+The coverage table then shows 2024-25 as complete, with the derived champion, and the Elo column as `imported + computed`.
+
+## Remove a computed season
+
+A projection, or a sync of a season the source does not have yet, can be removed. In the coverage table, click **Remove** on the row. The application deletes the season's computed games, standings, derived champion and forecasts. The button is not shown for seasons with imported archive games, and those are never removed.
 
 # After an import
 

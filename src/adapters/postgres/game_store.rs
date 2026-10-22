@@ -284,6 +284,28 @@ impl GameStore for PostgresStore {
         Ok(r.rows_affected())
     }
 
+    async fn delete_season(&self, season: SeasonYear) -> StoreResult<u64> {
+        let mut tx = self.pool.begin().await?;
+        for sql in [
+            "DELETE FROM forecasts WHERE season = $1",
+            "DELETE FROM championships WHERE season = $1",
+            "DELETE FROM team_seasons WHERE season = $1",
+        ] {
+            sqlx::query(sql).bind(season).execute(&mut *tx).await?;
+        }
+        let games = sqlx::query("DELETE FROM games WHERE season = $1")
+            .bind(season)
+            .execute(&mut *tx)
+            .await?
+            .rows_affected();
+        sqlx::query("DELETE FROM seasons WHERE season = $1")
+            .bind(season)
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
+        Ok(games)
+    }
+
     async fn set_game_types(&self, ids: &[i64], game_type: GameType) -> StoreResult<()> {
         if ids.is_empty() {
             return Ok(());

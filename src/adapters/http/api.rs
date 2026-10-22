@@ -682,6 +682,18 @@ pub async fn sync_results(
     Ok(Json(json!(outcome)))
 }
 
+/// Remove a season that holds only computed games (or no games at all).
+pub async fn remove_season(
+    State(app): State<AppState>,
+    Path(season): Path<SeasonYear>,
+) -> ApiResult<Value> {
+    let deleted = continuation::remove_season(&app.store, season)
+        .await
+        .map_err(continuation_error)?;
+    app.invalidate_cache();
+    Ok(Json(json!({ "season": season, "games_deleted": deleted })))
+}
+
 /// Results or schedule CSV for a season beyond the dataset; the application computes the Elo.
 pub async fn upload_results(
     State(app): State<AppState>,
@@ -751,6 +763,7 @@ pub async fn coverage(State(app): State<AppState>) -> ApiResult<Value> {
                 "regular_season_end": s.regular_season_end, "playoffs_start": s.playoffs_start, "playoffs_end": s.playoffs_end,
                 "complete": s.complete, "champion": c.map(|c| c.franchise_key.clone()), "champion_source": c.map(|c| c.source.clone()),
                 "bracket_supported": s.season >= SeasonYear::FIRST_MODERN,
+                "removable": s.game_count == 0 || s.computed_game_count == s.game_count,
             })
         })
         .collect();

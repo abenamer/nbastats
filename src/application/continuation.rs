@@ -8,7 +8,7 @@
 //!   ratings on a synthetic schedule that repeats the previous season's regular-season
 //!   matchups. Nothing is invented about results; the schedule is marked as a projection.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use chrono::{Datelike, NaiveDate};
 use tracing::info;
@@ -34,6 +34,14 @@ pub enum ContinuationUseCaseError {
     NoPreviousSeason(SeasonYear),
     #[error("unknown team codes: {0}")]
     UnknownTeams(String),
+    #[error("no games for season {0}: the source has nothing for it yet, so nothing was stored")]
+    NoGames(SeasonYear),
+    #[error("season {season}: a game on {date} is not in the archive but predates its last game ({last_imported}); the archive part of a season cannot be changed")]
+    InsideImportedRange {
+        season: SeasonYear,
+        date: NaiveDate,
+        last_imported: NaiveDate,
+    },
     #[error("season {0} is outside the supported range")]
     OutOfRange(i32),
     #[error(transparent)]
@@ -82,6 +90,92 @@ async fn guard_not_imported<S: GameStore>(
         return Err(ContinuationUseCaseError::SeasonHasImportedElo(season));
     }
     Ok(())
+}
+
+/// Where the computed ratings of a season start.
+enum Baseline {
+    /// No imported game: reverted ratings from the previous season's final ratings.
+    NewSeason(HashMap<TeamId, f64>),
+    /// Imported games exist (the archive covers part of the season): ratings after the last
+    /// imported game. Only games after `last_imported` that are not in the archive are added.
+    Completion {
+        last_imported: NaiveDate,
+        ratings: HashMap<TeamId, f64>,
+        imported_keys: HashSet<(NaiveDate, TeamId, TeamId)>,
+    },
+}
+
+impl Baseline {
+    fn ratings(&self) -> &HashMap<TeamId, f64> {
+        match self {
+            Baseline::NewSeason(r) | Baseline::Completion { ratings: r, .. } => r,
+        }
+    }
+}
+
+async fn baseline<S: GameStore>(
+    store: &S,
+    season: SeasonYear,
+) -> Result<Baseline, ContinuationUseCaseError> {
+    let existing = store.season_games(season).await?;
+    let imported: Vec<&Game> = existing
+        .iter()
+        .filter(|g| g.elo_source == EloSource::Imported)
+        .collect();
+    let Some(last) = imported.iter().map(|g| g.game_date).max() else {
+        return Ok(Baseline::NewSeason(start_ratings(store, season).await?));
+    };
+    let ratings = imported
+        .iter()
+        .filter(|g| g.is_played())
+        .fold(HashMap::new(), |mut m, g| {
+            m.insert(g.home_team_id, g.home_elo_post);
+            m.insert(g.away_team_id, g.away_elo_post);
+            m
+        });
+    Ok(Baseline::Completion {
+        last_imported: last,
+        ratings,
+        imported_keys: imported
+            .iter()
+            .map(|g| (g.game_date, g.home_team_id, g.away_team_id))
+            .collect(),
+    })
+}
+
+/// Keep the games the baseline does not cover. For a completion, games already in the
+/// archive are dropped and a game dated before the last archive game is an error, because
+/// a computed game cannot sit inside the imported rating chain.
+fn games_to_rate(
+    games: Vec<ResultGame>,
+    baseline: &Baseline,
+    season: SeasonYear,
+) -> Result<(Vec<ResultGame>, usize), ContinuationUseCaseError> {
+    match baseline {
+        Baseline::NewSeason(_) => Ok((games, 0)),
+        Baseline::Completion {
+            last_imported,
+            imported_keys,
+            ..
+        } => {
+            let mut kept = Vec::with_capacity(games.len());
+            let mut skipped = 0usize;
+            for g in games {
+                if imported_keys.contains(&(g.date, g.home, g.away)) {
+                    skipped += 1;
+                } else if g.date <= *last_imported {
+                    return Err(ContinuationUseCaseError::InsideImportedRange {
+                        season,
+                        date: g.date,
+                        last_imported: *last_imported,
+                    });
+                } else {
+                    kept.push(g);
+                }
+            }
+            Ok((kept, skipped))
+        }
+    }
 }
 
 /// Where computed games came from, for the import log.
@@ -231,12 +325,15 @@ pub async fn import_results<S: GameStore + ImportLog>(
     bytes: &[u8],
     file_name: Option<&str>,
 ) -> Result<ImportOutcome, ContinuationUseCaseError> {
-    guard_not_imported(store, season).await?;
     let report = csv::parse_results(bytes)?;
     let teams = store.team_code_map().await?;
     let records: Vec<ResultRecord> = report.games.iter().map(ResultRecord::from).collect();
+    if records.is_empty() {
+        return Err(ContinuationUseCaseError::NoGames(season));
+    }
     let games = resolve_games(&teams, &records)?;
-    let start = start_ratings(store, season).await?;
+    let base = baseline(store, season).await?;
+    let (games, skipped) = games_to_rate(games, &base, season)?;
     let sha = imports::sha256_hex(bytes);
     let origin = Origin {
         source: "results",
@@ -244,11 +341,30 @@ pub async fn import_results<S: GameStore + ImportLog>(
         file_name,
         format: "results",
     };
-    let mut outcome = store_rated(store, season, games, &start, origin, &sha).await?;
+    let mut outcome = store_rated(store, season, games, base.ratings(), origin, &sha).await?;
     outcome.rows_read = report.rows_read;
     outcome.rows_rejected = report.rows_rejected;
     outcome.notes.extend(report.rejections);
+    note_completion(&mut outcome, &base, skipped, season);
     Ok(outcome)
+}
+
+fn note_completion(
+    outcome: &mut ImportOutcome,
+    base: &Baseline,
+    skipped: usize,
+    season: SeasonYear,
+) {
+    if let Baseline::Completion { last_imported, .. } = base {
+        outcome.notes.push(format!(
+            "season {season} keeps its {skipped} archive games (through {last_imported}); the new games chain from the archive ratings"
+        ));
+        if let Some(next) = season.next() {
+            outcome.notes.push(format!(
+                "season {next} starts from these final ratings: sync it again to update its chain"
+            ));
+        }
+    }
 }
 
 impl From<&ResultRow> for ResultRecord {
@@ -272,7 +388,6 @@ pub async fn sync_results<S: GameStore + ImportLog, R: ResultsSource>(
     source: &R,
     season: SeasonYear,
 ) -> Result<ImportOutcome, ContinuationUseCaseError> {
-    guard_not_imported(store, season).await?;
     let fetch = source.season_results(season).await?;
     info!(
         season = %season,
@@ -281,9 +396,16 @@ pub async fn sync_results<S: GameStore + ImportLog, R: ResultsSource>(
         source = source.name(),
         "fetched season results"
     );
+    if fetch.records.is_empty() {
+        return Err(ContinuationUseCaseError::NoGames(season));
+    }
     let teams = store.team_code_map().await?;
     let games = resolve_games(&teams, &fetch.records)?;
-    let start = start_ratings(store, season).await?;
+    let base = baseline(store, season).await?;
+    let (games, skipped) = games_to_rate(games, &base, season)?;
+    if games.is_empty() {
+        return Err(ContinuationUseCaseError::NoGames(season));
+    }
     let sha = imports::sha256_hex(format!("{:?}", fetch.records).as_bytes());
     let origin = Origin {
         source: source.name(),
@@ -291,13 +413,26 @@ pub async fn sync_results<S: GameStore + ImportLog, R: ResultsSource>(
         file_name: None,
         format: "results",
     };
-    let mut outcome = store_rated(store, season, games, &start, origin, &sha).await?;
+    let mut outcome = store_rated(store, season, games, base.ratings(), origin, &sha).await?;
     outcome.notes.push(format!(
         "{} games fetched with {} requests",
         fetch.records.len(),
         fetch.requests
     ));
+    note_completion(&mut outcome, &base, skipped, season);
     Ok(outcome)
+}
+
+/// Remove a season that holds only computed games (a projection, a sync of a season that
+/// has not started, or an empty season row). Seasons with imported games are refused.
+pub async fn remove_season<S: GameStore>(
+    store: &S,
+    season: SeasonYear,
+) -> Result<u64, ContinuationUseCaseError> {
+    guard_not_imported(store, season).await?;
+    let deleted = store.delete_season(season).await?;
+    info!(season = %season, games = deleted, "season removed");
+    Ok(deleted)
 }
 
 /// Build a preseason projection for `season`: reverted ratings and a synthetic schedule that

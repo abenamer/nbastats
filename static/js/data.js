@@ -20,11 +20,19 @@
     document.getElementById('coverage').innerHTML = table([
       { label: 'Season', value: 'label', left: true }, { label: 'Teams', value: 'teams' }, { label: 'Games', value: 'games' }, { label: 'Play-in', value: 'play_in_games' }, { label: 'Playoff games', value: 'playoff_games' },
       { label: 'Regular season end', value: r => r.regular_season_end || '–', left: true }, { label: 'Playoffs', value: r => r.playoffs_start ? `${r.playoffs_start} → ${r.playoffs_end}` : '–', left: true },
-      { label: 'Elo', value: r => r.computed_games ? `computed (${r.computed_games})` : 'imported', left: true, cls: r => r.computed_games ? 'warn' : '' },
+      { label: 'Elo', value: r => r.games === 0 ? 'none' : (!r.computed_games ? 'imported' : (r.computed_games === r.games ? `computed (${r.computed_games})` : `imported + computed (${r.computed_games})`)), left: true, cls: r => r.games === 0 ? 'bad' : (r.computed_games ? 'warn' : '') },
       { label: 'Scheduled', value: r => r.scheduled_games || '' },
       { label: 'Complete', value: r => r.complete ? 'yes' : 'no', cls: r => r.complete ? 'good' : 'warn' }, { label: 'Champion', value: r => r.champion ? `${r.champion} (${r.champion_source})` : '–', left: true },
-      { label: 'Bracket model', value: r => r.bracket_supported ? 'yes' : 'no (pre-2003)', left: true }], c.seasons.slice().reverse())
+      { label: 'Bracket model', value: r => r.bracket_supported ? 'yes' : 'no (pre-2003)', left: true },
+      { label: '', value: r => r.removable ? `<button class="remove" data-season="${r.season}" title="Delete this season's computed games and derived rows">Remove</button>` : '', raw: true }], c.seasons.slice().reverse())
       + (c.missing_seasons.length ? `<p class="warn">Missing seasons: ${c.missing_seasons.join(', ')}</p>` : '');
+    document.querySelectorAll('#coverage button.remove').forEach(b => b.addEventListener('click', async () => {
+      const season = parseInt(b.dataset.season); const label = `${season - 1}-${String(season % 100).padStart(2, '0')}`;
+      if (!confirm(`Remove season ${label} (its computed games, standings and forecasts)? Imported archive data is never removed.`)) return;
+      b.disabled = true;
+      try { const r = await fetch(`/api/data/seasons/${season}`, { method: 'DELETE' }); const body = await r.json(); if (!r.ok) throw new Error(body.error || r.statusText); document.getElementById('importResult').textContent = JSON.stringify(body, null, 2); await refreshAll(); }
+      catch (e) { document.getElementById('importResult').textContent = e.message; b.disabled = false; }
+    }));
   }
   async function loadImports() {
     const list = await getJSON('/api/data/imports');

@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use axum::extract::DefaultBodyLimit;
 use axum::http::{header, HeaderValue};
-use axum::routing::{get, post};
+use axum::routing::{delete, get, post};
 use axum::{middleware, Router};
 use tower_http::compression::CompressionLayer;
 use tower_http::services::ServeDir;
@@ -53,6 +53,7 @@ pub fn router(app: State) -> Router {
         .route("/data/results", post(api::upload_results))
         .route("/data/project", post(api::project_season))
         .route("/data/sync", post(api::sync_results))
+        .route("/data/seasons/{season}", delete(api::remove_season))
         .route("/data/coverage", get(api::coverage));
 
     Router::new()

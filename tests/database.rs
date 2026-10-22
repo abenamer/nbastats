@@ -10,9 +10,9 @@ use nba_elo_simulator::application::ports::{
     AnalysisStore, GameLog, GameStore, ImportLog, JobOutcome, JobStore, NewJob, ResultRecord,
     ResultsFetch, ResultsSource, SourceError,
 };
-use nba_elo_simulator::domain::ids::SeasonYear;
+use nba_elo_simulator::domain::ids::{SeasonYear, TeamId};
 use nba_elo_simulator::domain::models::{
-    GameType, ImportStatus, JobKind, JobStatus, PlayoffResult,
+    GameType, ImportStatus, JobKind, JobStatus, PlayoffResult, Team,
 };
 use nba_elo_simulator::domain::playoffs::reconstruct;
 use nba_elo_simulator::domain::playoffs::season::{self, SeasonParams};
@@ -319,14 +319,74 @@ async fn computed_elo_continues_from_the_previous_season(pool: PgPool) {
     .await
     .unwrap();
     let s2017 = SeasonYear::of(2017);
-    // Imported seasons cannot be overwritten with computed ratings.
+    // Imported games are never changed: a game inside the archive's date range is refused,
+    // and a projection of an imported season is refused.
     let err =
         continuation::import_results(&store, S2016, b"date,home,away\n2016-01-01,GSW,CLE\n", None)
             .await;
     assert!(matches!(
         err,
+        Err(continuation::ContinuationUseCaseError::InsideImportedRange { .. })
+    ));
+    assert!(matches!(
+        continuation::project_season(&store, S2016).await,
         Err(continuation::ContinuationUseCaseError::SeasonHasImportedElo(_))
     ));
+    // Completing an imported season: archive games are kept, later games chain from them.
+    let imported_2016 = store.season_games(S2016).await.unwrap();
+    let last_imported = imported_2016.iter().map(|g| g.game_date).max().unwrap();
+    let last_gsw = imported_2016
+        .iter()
+        .rfind(|g| g.involves(teams["GSW"].id))
+        .unwrap();
+    let gsw_after_archive = last_gsw.elo_of(teams["GSW"].id).1;
+    let after = last_imported + chrono::Duration::days(3);
+    let completion = FakeResults {
+        records: vec![
+            // one game that is already in the archive: skipped, not changed
+            record(
+                &last_gsw.game_date.to_string(),
+                &imported_2016
+                    .iter()
+                    .find(|g| g.id == last_gsw.id)
+                    .map(|g| store_code(&teams, g.home_team_id))
+                    .unwrap(),
+                &store_code(&teams, last_gsw.away_team_id),
+                Some((1, 2)),
+            ),
+            record(&after.to_string(), "GSW", "CLE", Some((110, 100))),
+        ],
+    };
+    let before = imported_2016.len();
+    let outcome = continuation::sync_results(&store, &completion, S2016)
+        .await
+        .unwrap();
+    assert_eq!(outcome.games_inserted, 1);
+    let games = store.season_games(S2016).await.unwrap();
+    assert_eq!(games.len(), before + 1);
+    assert_eq!(
+        games
+            .iter()
+            .filter(|g| g.elo_source == EloSource::Imported)
+            .count(),
+        before
+    );
+    let added = games.last().unwrap();
+    assert_eq!(added.elo_source, EloSource::Computed);
+    assert!((added.home_elo_pre - gsw_after_archive).abs() < 1e-9);
+    assert_eq!(
+        store
+            .season_games(S2016)
+            .await
+            .unwrap()
+            .iter()
+            .find(|g| g.id == last_gsw.id)
+            .unwrap()
+            .home_score,
+        last_gsw.home_score
+    );
+    // Remove the computed tail again so the rest of the test sees the archive season as before.
+    store.delete_computed_games(S2016).await.unwrap();
     // Projection: synthetic schedule, reverted ratings, no results.
     let projected = continuation::project_season(&store, s2017).await.unwrap();
     assert_eq!(projected.games_inserted, 1230);
@@ -432,6 +492,32 @@ async fn computed_elo_continues_from_the_previous_season(pool: PgPool) {
         Err(continuation::ContinuationUseCaseError::UnknownTeams(c)) if c == "XXX"
     ));
     assert_eq!(store.season_games(s2017).await.unwrap().len(), 4);
+    // An empty fetch (a season the source does not have yet) stores nothing, not even a row.
+    let s2018 = SeasonYear::of(2018);
+    let empty = FakeResults { records: vec![] };
+    assert!(matches!(
+        continuation::sync_results(&store, &empty, s2018).await,
+        Err(continuation::ContinuationUseCaseError::NoGames(s)) if s == s2018
+    ));
+    assert!(!store
+        .seasons()
+        .await
+        .unwrap()
+        .iter()
+        .any(|s| s.season == s2018));
+    // A computed season can be removed; an imported one cannot.
+    assert_eq!(continuation::remove_season(&store, s2017).await.unwrap(), 4);
+    assert!(!store
+        .seasons()
+        .await
+        .unwrap()
+        .iter()
+        .any(|s| s.season == s2017));
+    assert!(store.team_seasons(s2017).await.unwrap().is_empty());
+    assert!(matches!(
+        continuation::remove_season(&store, S2016).await,
+        Err(continuation::ContinuationUseCaseError::SeasonHasImportedElo(_))
+    ));
 }
 
 struct FakeResults {
@@ -449,6 +535,14 @@ impl ResultsSource for FakeResults {
             requests: 1,
         })
     }
+}
+
+fn store_code(teams: &std::collections::HashMap<String, Team>, id: TeamId) -> String {
+    teams
+        .values()
+        .find(|t| t.id == id)
+        .map(|t| t.code.clone())
+        .unwrap()
 }
 
 fn record(date: &str, home: &str, away: &str, score: Option<(i32, i32)>) -> ResultRecord {
