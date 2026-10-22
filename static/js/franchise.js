@@ -35,7 +35,7 @@
   function datasets(s) {
     const name = s.franchise.name;
     return [
-      { label: name, data: s.pts, borderColor: s.color, borderWidth: 1, pointRadius: 0, pointHitRadius: 6, tension: 0, order: 2, kind: 'line' },
+      { label: name, data: s.pts, borderColor: s.color, borderWidth: 0.9, pointRadius: 0, pointHitRadius: 6, tension: 0, order: 2, kind: 'line' },
       { label: `${name}: NBA title`, data: s.titles, type: 'scatter', pointStyle: starImage, radius: 12, hoverRadius: 14, order: 0, kind: 'title' },
       { label: `${name}: lost Finals`, data: s.finals, type: 'scatter', pointStyle: 'circle', radius: 5, hoverRadius: 7, backgroundColor: '#fff', borderColor: s.color, borderWidth: 2, order: 1, kind: 'finals' }];
   }
@@ -49,7 +49,7 @@
       const all = series.flatMap(datasets).filter(ds => ds.data.length);
       const xs = series.flatMap(s => s.pts.map(p => p.x)); const xMin = Math.floor(Math.min(...xs)), xMax = Math.ceil(Math.max(...xs));
       chart('historyChart', { type: 'line', data: { datasets: all }, plugins: [bands, crosshair],
-        options: { parsing: false, animation: false, normalized: true, layout: { padding: { right: 96 } }, interaction: { mode: 'nearest', axis: 'x', intersect: false },
+        options: { responsive: true, maintainAspectRatio: false, parsing: false, animation: false, normalized: true, layout: { padding: { right: 96 } }, interaction: { mode: 'nearest', axis: 'x', intersect: false },
           plugins: { legend: { display: true, labels: { usePointStyle: true, filter: item => !item.text.endsWith('lost Finals') || all[item.datasetIndex].data.length } },
             decimation: { enabled: true, algorithm: 'lttb', samples: 2500 },
             tooltip: { callbacks: {
