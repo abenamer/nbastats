@@ -24,7 +24,7 @@
       { label: 'Scheduled', value: r => r.scheduled_games || '' },
       { label: 'Complete', value: r => r.complete ? 'yes' : 'no', cls: r => r.complete ? 'good' : 'warn' }, { label: 'Champion', value: r => r.champion ? `${r.champion} (${r.champion_source})` : '–', left: true },
       { label: 'Bracket model', value: r => r.bracket_supported ? 'yes' : 'no (pre-2003)', left: true },
-      { label: '', value: r => r.removable ? `<button class="remove" data-season="${r.season}" title="Delete this season's computed games and derived rows">Remove</button>` : '', raw: true }], c.seasons.slice().reverse())
+      { label: 'Actions', value: r => r.removable ? `<button class="remove compact" data-season="${r.season}" title="Delete this season's computed games and derived rows">Remove</button>` : '', raw: true, left: true }], c.seasons.slice().reverse())
       + (c.missing_seasons.length ? `<p class="warn">Missing seasons: ${c.missing_seasons.join(', ')}</p>` : '');
     document.querySelectorAll('#coverage button.remove').forEach(b => b.addEventListener('click', async () => {
       const season = parseInt(b.dataset.season); const label = `${season - 1}-${String(season % 100).padStart(2, '0')}`;
