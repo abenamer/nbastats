@@ -29,6 +29,7 @@ These are project-specific technical terms. They are not a reproduction of the A
 | Engine B | The playoff bracket simulator (`domain::playoffs::bracket`). |
 | Engine C | The full-season simulator with play-in (`domain::playoffs::season`). |
 | Era | Consecutive seasons of one league with the same number of teams. For the NBA a new era also starts in 1979-80 with the 3-point line. |
+| Fetch window | The dates a results sync asks the source for: the whole season on the first sync, then the days from the last played game to today. |
 | Franchise | The organisation, followed through relocations and renamings. Identified by `FranchiseId` and a key such as `GSW`. |
 | Game log | The imported list of games with Elo before and after each game. |
 | Information cutoff | The last date whose games a forecast may use. |

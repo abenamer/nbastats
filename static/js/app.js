@@ -49,13 +49,22 @@ window.NBA = (() => {
   const DAY = 86400000;
   const dayOf = d => Date.parse(d + 'T00:00:00Z') / DAY;
   const dateOf = x => new Date(x * DAY).toISOString().slice(0, 10);
-  function dateScale(days, extra = {}) {
-    const min = Math.min(...days), max = Math.max(...days), span = max - min;
+  // `hideAfter` blanks the ticks past a day (the strip that stands for the rest of a season is not to scale).
+  function dateScale(days, extra = {}, hideAfter = null) {
+    const min = Math.min(...days), max = Math.max(...days), span = Math.max(max - min, 1), pad = Math.max(span * 0.01, 0.5);
     const fmt = span > 800 ? x => new Date(x * DAY).getUTCFullYear()
       : x => new Date(x * DAY).toLocaleDateString(undefined, { month: 'short', day: 'numeric', timeZone: 'UTC' });
-    return { type: 'linear', min: min - span * 0.01, max: max + span * 0.01, ticks: { maxTicksLimit: 12, callback: v => fmt(v) }, grid: { color: '#f1f3f6' }, ...extra };
+    // precision 0 keeps the ticks on whole days, so a short span never repeats a date.
+    return { type: 'linear', min: min - pad, max: max + pad, ticks: { maxTicksLimit: 12, precision: 0, callback: v => hideAfter != null && v > hideAfter ? '' : fmt(v) }, grid: { color: '#f1f3f6' }, ...extra };
   }
+  // Chart.js plugin: shade the x range from `from` to the axis end and label it (the part of a season not played yet).
+  const unplayedShade = { id: 'unplayedShade', beforeDatasetsDraw(c, _args, opts) {
+    if (opts.from == null) return; const x = c.scales.x, a = c.chartArea, x0 = Math.max(x.getPixelForValue(opts.from), a.left);
+    if (x0 >= a.right) return; const g = c.ctx; g.save(); g.fillStyle = 'rgba(148, 163, 184, 0.12)'; g.fillRect(x0, a.top, a.right - x0, a.bottom - a.top);
+    g.strokeStyle = 'rgba(148, 163, 184, 0.6)'; g.setLineDash([4, 4]); g.beginPath(); g.moveTo(x0, a.top); g.lineTo(x0, a.bottom); g.stroke();
+    if (opts.label && a.right - x0 > 90) { g.fillStyle = '#64748b'; g.font = '12px system-ui, sans-serif'; g.textAlign = 'right'; g.fillText(opts.label, a.right - 6, a.top + 14); }
+    g.restore(); } };
   const palette = ['#2563eb','#dc2626','#16a34a','#d97706','#7c3aed','#0891b2','#db2777','#4b5563','#65a30d','#9333ea','#ea580c','#0d9488','#1e3a8a','#991b1b','#166534','#92400e'];
   function color(i) { return palette[i % palette.length]; }
-  return { pct, num, esc, labelOf, RESULT, getJSON, postJSON, runJob, table, bar, cards, setStatus, chart, color, dayOf, dateOf, dateScale };
+  return { pct, num, esc, labelOf, RESULT, getJSON, postJSON, runJob, table, bar, cards, setStatus, chart, color, dayOf, dateOf, dateScale, unplayedShade };
 })();

@@ -167,7 +167,22 @@ pub async fn season_elo_history(
     }
     let mut series: Vec<TeamHistory> = by_team.into_values().collect();
     series.sort_by(|a, b| a.code.cmp(&b.code));
-    Ok(Json(json!({ "season": season, "series": series })))
+    // The schedule span, so the chart can show the part of the season that is not played yet.
+    let dates = |played: Option<bool>| {
+        data.games
+            .iter()
+            .filter(move |g| played.is_none_or(|p| g.is_played() == p))
+            .map(|g| g.game_date)
+    };
+    let schedule = json!({
+        "first": dates(None).min(),
+        "last": dates(None).max(),
+        "last_played": dates(Some(true)).max(),
+        "remaining": data.games.iter().filter(|g| !g.is_played()).count(),
+    });
+    Ok(Json(
+        json!({ "season": season, "series": series, "schedule": schedule }),
+    ))
 }
 
 #[derive(Deserialize)]

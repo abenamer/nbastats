@@ -109,7 +109,8 @@ pub async fn run_tracked<R: ResultsSource>(
         let current = app.sync_phase();
         app.set_sync_phase(current.with_progress(p));
     };
-    let result = continuation::sync_results(&app.store, source, season, &progress).await;
+    let result =
+        continuation::sync_results(&app.store, source, season, app.today(), &progress).await;
     let finished_at = Utc::now();
     match &result {
         Ok(outcome) => {

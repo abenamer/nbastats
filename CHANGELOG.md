@@ -5,6 +5,8 @@
 - Initial application: Engines A, B and C, backtesting, dynasty laboratory, nine pages, PostgreSQL 17 persistence, Docker Compose, backup and restore scripts.
 - Aligned with REAS 1.2.0-draft: domain, application and adapters layout; six ports and one `PostgresStore` adapter; `TeamId`, `FranchiseId` and `SeasonYear` newtypes; typed errors; conditional job transitions; documentation checker, terminology, self-audit and decisions.
 
+- Results sync: the first sync of a season fetches the whole schedule; later syncs fetch only the days from the last played game to today and keep the stored games outside that window, so the daily refresh needs one or two requests instead of thirteen.
+- Elo Explorer: the season chart shows a dot for a team with one game and a line from two games on, adds a shaded strip for the games not played yet (with their count and the last scheduled date), and keeps its date ticks on whole days.
 - Curated champions and runner-ups for 1946-47 to 1959-60 and 1967-68 to 1982-83, where the archive's playoff data does not resolve a bracket; existing installations are backfilled at start.
 - Conference and division alignment curated back to 1946-47 (NBA and BAA), so standings, the East-West comparison and the division records cover every season; existing installations are updated at start. The full-season rule for the group records follows each season's median game count instead of a fixed 60 games, so the 48-game and lockout seasons count.
 - Records: a league's size per season comes from the schedule (played or not), so an in-progress season no longer appears as a smaller league of its own. The era table is split into NBA/BAA and ABA.

@@ -1,6 +1,7 @@
 //! Outbound adapter: game results and schedule from the BALLDONTLIE NBA API (v1).
 //!
-//! `GET /v1/games?seasons[]=<start year>&per_page=100&cursor=<n>` pages through a season.
+//! `GET /v1/games?seasons[]=<start year>&per_page=100&cursor=<n>` pages through a season;
+//! `start_date` and `end_date` bound a daily refresh to the days since the last result.
 //! The free tier allows 5 requests per minute, so requests are paced and a 429 is retried
 //! after the `Retry-After` delay. Team abbreviations differ from the Elo dataset for three
 //! teams (BKN, CHA, PHX); `dataset_code` maps them.
@@ -13,7 +14,8 @@ use tokio::sync::Mutex;
 use tokio::time::Instant;
 
 use crate::application::ports::{
-    FetchProgress, FetchProgressSink, ResultRecord, ResultsFetch, ResultsSource, SourceError,
+    FetchProgress, FetchProgressSink, FetchWindow, ResultRecord, ResultsFetch, ResultsSource,
+    SourceError,
 };
 use crate::domain::ids::SeasonYear;
 
@@ -88,26 +90,20 @@ impl BalldontlieSource {
     async fn fetch_page(
         &self,
         season: SeasonYear,
+        window: FetchWindow,
         cursor: Option<i64>,
         progress: &dyn FetchProgressSink,
         so_far: FetchProgress,
     ) -> Result<Vec<u8>, SourceError> {
         let url = format!("{}/games", self.config.base_url.trim_end_matches('/'));
-        let start_year = (season.end_year() - 1).to_string();
         let mut retries = 0;
         loop {
             self.pace(progress, so_far).await;
-            let mut req = self
+            let req = self
                 .client
                 .get(&url)
                 .header("Authorization", self.config.api_key.as_str())
-                .query(&[
-                    ("seasons[]", start_year.as_str()),
-                    ("per_page", &PER_PAGE.to_string()),
-                ]);
-            if let Some(c) = cursor {
-                req = req.query(&[("cursor", c.to_string())]);
-            }
+                .query(&query_params(season, window, cursor));
             let resp = req
                 .send()
                 .await
@@ -169,13 +165,19 @@ impl ResultsSource for BalldontlieSource {
     async fn season_results(
         &self,
         season: SeasonYear,
+        window: FetchWindow,
         progress: &dyn FetchProgressSink,
     ) -> Result<ResultsFetch, SourceError> {
+        let query: Vec<String> = query_params(season, window, None)
+            .into_iter()
+            .filter(|(k, _)| *k != "per_page")
+            .map(|(k, v)| format!("{k}={v}"))
+            .collect();
         let mut fetch = ResultsFetch {
             source_url: format!(
-                "{}/games?seasons[]={}",
+                "{}/games?{}",
                 self.config.base_url.trim_end_matches('/'),
-                season.end_year() - 1
+                query.join("&")
             ),
             ..Default::default()
         };
@@ -186,7 +188,9 @@ impl ResultsSource for BalldontlieSource {
                 games: fetch.records.len(),
                 ..Default::default()
             };
-            let body = self.fetch_page(season, cursor, progress, so_far).await?;
+            let body = self
+                .fetch_page(season, window, cursor, progress, so_far)
+                .await?;
             fetch.requests += 1;
             let page = parse_games_page(&body)?;
             fetch.records.extend(page.records);
@@ -207,8 +211,31 @@ impl ResultsSource for BalldontlieSource {
 }
 
 // ---------------------------------------------------------------------------------------
-// Payload parsing (pure; unit tested)
+// Request and payload (pure; unit tested)
 // ---------------------------------------------------------------------------------------
+
+/// Query string of one page: the season (by its start year), the page size, the window
+/// bounds when set, and the cursor after the first page.
+fn query_params(
+    season: SeasonYear,
+    window: FetchWindow,
+    cursor: Option<i64>,
+) -> Vec<(&'static str, String)> {
+    let mut q = vec![
+        ("seasons[]", (season.end_year() - 1).to_string()),
+        ("per_page", PER_PAGE.to_string()),
+    ];
+    if let Some(from) = window.from {
+        q.push(("start_date", from.to_string()));
+    }
+    if let Some(to) = window.to {
+        q.push(("end_date", to.to_string()));
+    }
+    if let Some(c) = cursor {
+        q.push(("cursor", c.to_string()));
+    }
+    q
+}
 
 #[derive(Debug, Deserialize)]
 struct GamesPage {
@@ -293,6 +320,33 @@ pub fn parse_games_page(body: &[u8]) -> Result<ParsedPage, SourceError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn query_names_the_season_start_year_and_the_window_bounds() {
+        let season = SeasonYear::of(2027);
+        let all = query_params(season, FetchWindow::all(), None);
+        assert_eq!(
+            all,
+            vec![
+                ("seasons[]", "2026".to_string()),
+                ("per_page", "100".to_string())
+            ]
+        );
+        let d = |s: &str| NaiveDate::parse_from_str(s, "%Y-%m-%d").unwrap();
+        let page2 = query_params(
+            season,
+            FetchWindow::between(d("2026-10-21"), d("2026-10-23")),
+            Some(7),
+        );
+        assert_eq!(
+            page2[2..],
+            [
+                ("start_date", "2026-10-21".to_string()),
+                ("end_date", "2026-10-23".to_string()),
+                ("cursor", "7".to_string())
+            ]
+        );
+    }
 
     const PAGE: &str = r#"{"data":[
       {"id":1,"date":"2025-10-21","season":2025,"status":"Final","period":4,"time":"Final","postseason":false,

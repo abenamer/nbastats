@@ -22,8 +22,8 @@ use crate::domain::models::{EloSource, Game, GameType};
 
 use super::imports::{self, derived, ImportOutcome};
 use super::ports::{
-    FetchProgressSink, GameStore, ImportLog, ImportStart, ImportStats, NewGame, ResultRecord,
-    ResultsSource, SourceError, StoreError,
+    FetchProgressSink, FetchWindow, GameStore, ImportLog, ImportStart, ImportStats, NewGame,
+    ResultRecord, ResultsSource, SourceError, StoreError,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -392,33 +392,48 @@ impl From<&ResultRow> for ResultRecord {
     }
 }
 
-/// Pull `season` from a results source (BALLDONTLIE) and compute its Elo. Every call
-/// replaces the computed games of that season, so a daily sync keeps the ratings current.
+/// Pull `season` from a results source (BALLDONTLIE) and compute its Elo. The first sync of
+/// a season fetches the whole season, schedule included, because the season forecast
+/// simulates the games that are not played yet. Once the store holds a played game of the
+/// season, a sync fetches only the days from the last played game to `today` and keeps the
+/// stored games outside that window. Every call recomputes the ratings of the season from
+/// the merged games, so a daily sync keeps the ratings current.
 pub async fn sync_results<S: GameStore + ImportLog, R: ResultsSource>(
     store: &S,
     source: &R,
     season: SeasonYear,
+    today: NaiveDate,
     progress: &dyn FetchProgressSink,
 ) -> Result<ImportOutcome, ContinuationUseCaseError> {
-    let fetch = source.season_results(season, progress).await?;
+    let stored = store.season_games(season).await?;
+    let window = fetch_window(&stored, today);
+    let fetch = source.season_results(season, window, progress).await?;
     info!(
         season = %season,
         games = fetch.records.len(),
         requests = fetch.requests,
         source = source.name(),
+        from = ?window.from,
+        to = ?window.to,
         "fetched season results"
     );
-    if fetch.records.is_empty() {
+    let teams = store.team_code_map().await?;
+    let fetched = resolve_games(&teams, &fetch.records)?;
+    let kept_stored = stored
+        .iter()
+        .filter(|g| g.elo_source == EloSource::Computed)
+        .map(stored_game)
+        .collect();
+    let games = merge_games(kept_stored, fetched, window);
+    if games.is_empty() {
         return Err(ContinuationUseCaseError::NoGames(season));
     }
-    let teams = store.team_code_map().await?;
-    let games = resolve_games(&teams, &fetch.records)?;
     let base = baseline(store, season).await?;
     let (games, skipped) = games_to_rate(games, &base, season)?;
     if games.is_empty() {
         return Err(ContinuationUseCaseError::NoGames(season));
     }
-    let sha = imports::sha256_hex(format!("{:?}", fetch.records).as_bytes());
+    let sha = imports::sha256_hex(format!("{games:?}").as_bytes());
     let origin = Origin {
         source: source.name(),
         source_url: Some(&fetch.source_url),
@@ -426,13 +441,69 @@ pub async fn sync_results<S: GameStore + ImportLog, R: ResultsSource>(
         format: "results",
     };
     let mut outcome = store_rated(store, season, games, base.ratings(), origin, &sha).await?;
-    outcome.notes.push(format!(
-        "{} games fetched with {} requests",
-        fetch.records.len(),
-        fetch.requests
-    ));
+    outcome.notes.push(match (window.from, window.to) {
+        (Some(from), Some(to)) => format!(
+            "{} games fetched with {} requests for {from} to {to}; earlier games kept from the store",
+            fetch.records.len(),
+            fetch.requests
+        ),
+        _ => format!(
+            "{} games fetched with {} requests",
+            fetch.records.len(),
+            fetch.requests
+        ),
+    });
     note_completion(&mut outcome, &base, skipped, season);
     Ok(outcome)
+}
+
+/// The dates to ask the source for. Without a played game in the store the whole season is
+/// fetched (the first sync, a projection, or a season that has not started). Otherwise the
+/// window runs from the last played game (fetched again, so a late final is caught) to
+/// `today`.
+fn fetch_window(stored: &[Game], today: NaiveDate) -> FetchWindow {
+    match stored
+        .iter()
+        .filter(|g| g.is_played())
+        .map(|g| g.game_date)
+        .max()
+    {
+        Some(last) => FetchWindow::between(last.min(today), today),
+        None => FetchWindow::all(),
+    }
+}
+
+fn stored_game(g: &Game) -> ResultGame {
+    ResultGame {
+        date: g.game_date,
+        home: g.home_team_id,
+        away: g.away_team_id,
+        neutral: g.neutral,
+        playoff: g.game_type != GameType::Regular,
+        home_score: g.home_score,
+        away_score: g.away_score,
+    }
+}
+
+/// The fetched games plus the stored games they do not replace. Inside the window the
+/// source is the authority: a stored game without a result that the source no longer lists
+/// on that date (a postponement) is dropped. Outside the window the store is kept as it is.
+fn merge_games(
+    stored: Vec<ResultGame>,
+    fetched: Vec<ResultGame>,
+    window: FetchWindow,
+) -> Vec<ResultGame> {
+    let fetched_keys: HashSet<(NaiveDate, TeamId, TeamId)> = fetched
+        .iter()
+        .map(|g| game_key(g.date, g.home, g.away))
+        .collect();
+    let mut games = fetched;
+    games.extend(stored.into_iter().filter(|g| {
+        !fetched_keys.contains(&game_key(g.date, g.home, g.away))
+            && (!window.contains(g.date) || g.home_score.is_some())
+    }));
+    games.sort_by_key(|g| (g.date, g.home, g.away));
+    games
 }
 
 /// Remove a season that holds only computed games (a projection, a sync of a season that
@@ -497,3 +568,109 @@ pub fn results_example() -> &'static str {
 
 #[allow(dead_code)]
 fn _results_row_type_is_used(_: ResultRow) {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn d(s: &str) -> NaiveDate {
+        NaiveDate::parse_from_str(s, "%Y-%m-%d").unwrap()
+    }
+
+    fn game(date: &str, home: i32, away: i32, score: Option<(i32, i32)>) -> Game {
+        Game {
+            id: 0,
+            season: SeasonYear::of(2027),
+            game_date: d(date),
+            seq: 0,
+            home_team_id: TeamId::new(home),
+            away_team_id: TeamId::new(away),
+            neutral: false,
+            game_type: GameType::Regular,
+            home_score: score.map(|s| s.0),
+            away_score: score.map(|s| s.1),
+            home_elo_pre: 1500.0,
+            away_elo_pre: 1500.0,
+            home_elo_post: 1500.0,
+            away_elo_post: 1500.0,
+            home_win_prob: None,
+            elo_source: EloSource::Computed,
+        }
+    }
+
+    fn result(date: &str, home: i32, away: i32, score: Option<(i32, i32)>) -> ResultGame {
+        stored_game(&game(date, home, away, score))
+    }
+
+    #[test]
+    fn the_whole_season_is_fetched_until_a_game_is_played() {
+        let today = d("2026-10-23");
+        assert_eq!(fetch_window(&[], today), FetchWindow::all());
+        let scheduled = [
+            game("2026-10-21", 1, 2, None),
+            game("2026-10-22", 3, 4, None),
+        ];
+        assert_eq!(fetch_window(&scheduled, today), FetchWindow::all());
+        let played = [
+            game("2026-10-21", 1, 2, Some((100, 90))),
+            game("2026-10-22", 3, 4, Some((99, 98))),
+            game("2026-10-24", 1, 3, None),
+        ];
+        assert_eq!(
+            fetch_window(&played, today),
+            FetchWindow::between(d("2026-10-22"), today)
+        );
+        // A played game dated after today (a clock behind the results) does not invert the window.
+        let future = [game("2026-10-25", 1, 2, Some((1, 0)))];
+        assert_eq!(
+            fetch_window(&future, today),
+            FetchWindow::between(today, today)
+        );
+    }
+
+    #[test]
+    fn merge_keeps_the_store_outside_the_window_and_the_source_inside_it() {
+        let window = FetchWindow::between(d("2026-10-22"), d("2026-10-23"));
+        let stored = vec![
+            result("2026-10-21", 1, 2, Some((100, 90))), // before the window: kept
+            result("2026-10-22", 3, 4, None),            // in the window, now final: replaced
+            result("2026-10-22", 5, 6, None),            // in the window, postponed: dropped
+            result("2026-10-23", 1, 3, Some((80, 70))),  // in the window, played, not listed: kept
+            result("2026-10-30", 2, 4, None),            // after the window: kept
+        ];
+        let fetched = vec![
+            result("2026-10-22", 3, 4, Some((99, 98))),
+            result("2026-10-23", 2, 5, None),
+        ];
+        let merged = merge_games(stored, fetched, window);
+        let keys: Vec<(String, i32, i32, Option<i32>)> = merged
+            .iter()
+            .map(|g| {
+                (
+                    g.date.to_string(),
+                    g.home.as_i32(),
+                    g.away.as_i32(),
+                    g.home_score,
+                )
+            })
+            .collect();
+        assert_eq!(
+            keys,
+            vec![
+                ("2026-10-21".to_string(), 1, 2, Some(100)),
+                ("2026-10-22".to_string(), 3, 4, Some(99)),
+                ("2026-10-23".to_string(), 1, 3, Some(80)),
+                ("2026-10-23".to_string(), 2, 5, None),
+                ("2026-10-30".to_string(), 2, 4, None),
+            ]
+        );
+        // A full fetch replaces everything the store had.
+        let all = merge_games(
+            vec![result("2026-10-21", 1, 2, None)],
+            vec![result("2026-10-21", 2, 1, None)],
+            FetchWindow::all(),
+        );
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0].home.as_i32(), 2);
+    }
+}

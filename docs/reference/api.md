@@ -27,7 +27,7 @@ sources:
 |-----------------|----------|
 | `GET /api/seasons` | Season list with counts and dates. |
 | `GET /api/seasons/{season}/teams` | Team-season rows: record, Elo milestones, seed, result. |
-| `GET /api/seasons/{season}/elo-history?teams=GSW,CLE` | Elo after each game. |
+| `GET /api/seasons/{season}/elo-history?teams=GSW,CLE` | Elo after each game, and the `schedule` span (first and last game, last played game, games remaining). |
 | `GET /api/seasons/{season}/bracket?home_advantage=100&scale=1` | Reconstructed bracket with exact probabilities. |
 | `GET /api/records` | Every record table of the Records page, computed from the game log on each call. |
 | `GET /api/franchises` | Franchise list with uniform colours (`colors.primary`, `colors.secondary`; defunct franchises get a neutral pair). |

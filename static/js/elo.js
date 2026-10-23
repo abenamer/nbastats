@@ -1,5 +1,5 @@
 (async () => {
-  const { pct, num, esc, getJSON, table, setStatus, chart, color, RESULT, dayOf, dateOf, dateScale, labelOf } = NBA;
+  const { pct, num, esc, getJSON, table, setStatus, chart, color, RESULT, dayOf, dateOf, dateScale, labelOf, unplayedShade } = NBA;
   // Tooltip for a rating series: date, team, Elo after the game and the change from the previous game.
   const eloTooltip = {
     title: items => items.length ? dateOf(items[0].raw.x) : '',
@@ -19,11 +19,19 @@
         { label: 'End', value: r => num(r.elo_end, 0) }, { label: 'Peak', value: r => num(r.elo_peak, 0) }, { label: 'Seed', value: r => r.seed || '' },
         { label: 'Result', value: r => RESULT[r.playoff_result] || r.playoff_result, left: true, cls: r => r.playoff_result === 'champion' ? 'good' : '' }],
         t.teams.slice().sort((a, b) => (b.elo_pre_playoffs || 0) - (a.elo_pre_playoffs || 0)));
-      const sel = h.series;
+      const sel = h.series, sched = h.schedule || {};
+      // The axis covers the played games. When games remain, a shaded strip on the right stands
+      // for the rest of the schedule (not to scale), so a young season still reads as lines.
       const days = sel.flatMap(s => s.points.map(p => dayOf(p[0])));
-      chart('historyChart', { type: 'line', data: { datasets: sel.map((s, i) => ({ label: s.code, data: s.points.map(p => ({ x: dayOf(p[0]), y: p[1], type: p[2] })), borderColor: color(i), borderWidth: teams ? 2 : 1.2, pointRadius: teams ? 2 : 0, pointHitRadius: 6, tension: 0 })) },
-        options: { responsive: true, maintainAspectRatio: false, parsing: false, animation: false, interaction: { mode: 'nearest', axis: 'x', intersect: false }, plugins: { legend: { display: sel.length <= 12 }, tooltip: { callbacks: eloTooltip } },
-          scales: { x: dateScale(days), y: { title: { display: true, text: 'Elo after the game' } } } } });
+      const rest = sched.remaining > 0 && sched.last_played && days.length;
+      const cut = rest ? dayOf(sched.last_played) + 0.5 : null;
+      const strip = rest ? Math.max((Math.max(...days) - Math.min(...days)) * 0.35, 3) : 0;
+      const shade = rest ? { from: cut, label: `Not played yet · ${num(sched.remaining, 0)} games to ${new Date(dayOf(sched.last) * 86400000).toLocaleDateString(undefined, { month: 'short', day: 'numeric', timeZone: 'UTC' })}` } : {};
+      // A team with one game is a dot; with two or more it is a line.
+      const radius = s => s.points.length === 1 ? 4 : teams ? 2 : 0;
+      chart('historyChart', { type: 'line', plugins: [unplayedShade], data: { datasets: sel.map((s, i) => ({ label: s.code, data: s.points.map(p => ({ x: dayOf(p[0]), y: p[1], type: p[2] })), borderColor: color(i), backgroundColor: color(i), borderWidth: teams ? 2 : 1.2, pointRadius: radius(s), pointHitRadius: 6, tension: 0 })) },
+        options: { responsive: true, maintainAspectRatio: false, parsing: false, animation: false, interaction: { mode: 'nearest', axis: 'x', intersect: false }, plugins: { legend: { display: sel.length <= 12 }, tooltip: { callbacks: eloTooltip }, unplayedShade: shade },
+          scales: { x: dateScale(days, rest ? { max: cut + strip } : {}, cut), y: { title: { display: true, text: 'Elo after the game' } } } } });
       setStatus(status, '');
     } catch (e) { setStatus(status, e.message, true); }
   }

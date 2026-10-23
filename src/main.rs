@@ -146,7 +146,14 @@ async fn main() -> anyhow::Result<()> {
                         .unwrap_or_default()
                 );
             };
-            let outcome = continuation::sync_results(&store, &results, season, &progress).await?;
+            let zone: chrono_tz::Tz = config
+                .results_sync_timezone
+                .trim()
+                .parse()
+                .unwrap_or(chrono_tz::America::New_York);
+            let today = chrono::Utc::now().with_timezone(&zone).date_naive();
+            let outcome =
+                continuation::sync_results(&store, &results, season, today, &progress).await?;
             println!("{}", serde_json::to_string_pretty(&outcome)?);
             Ok(())
         }
