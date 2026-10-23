@@ -18,6 +18,8 @@ pub const FULL_SEASON_SHARE: f64 = 0.8;
 /// The NBA adopted the 3-point line in 1979-80. The ABA had it from its first season.
 pub const THREE_POINT_SEASON: SeasonYear = SeasonYear::of(1980);
 pub const LIST_LEN: usize = 10;
+/// Rows in the greatest and weakest matchup tables.
+pub const MATCHUP_LEN: usize = 20;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -64,6 +66,44 @@ pub struct TeamSeasonStat {
     pub playoff_result: PlayoffResult,
     pub conference: Option<Conference>,
     pub division: Option<String>,
+}
+
+/// A played game ranked by the two teams' combined rating before tip-off: the greatest
+/// matchups at the top of the log, the weakest ("clankers") at the bottom.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Matchup {
+    pub season: SeasonYear,
+    pub game_date: NaiveDate,
+    pub home_code: String,
+    pub home_name: String,
+    pub away_code: String,
+    pub away_name: String,
+    pub home_elo_pre: f64,
+    pub away_elo_pre: f64,
+    pub home_score: i32,
+    pub away_score: i32,
+    pub playoff: bool,
+}
+
+impl Matchup {
+    pub fn combined_elo(&self) -> f64 {
+        self.home_elo_pre + self.away_elo_pre
+    }
+}
+
+/// Which end of the combined-rating order a matchup query returns.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MatchupOrder {
+    Strongest,
+    Weakest,
+}
+
+/// The game-level record inputs the store ranks for `compute`.
+#[derive(Debug, Clone, Default)]
+pub struct GameRecords {
+    pub swings: Vec<GameSwing>,
+    pub greatest_matchups: Vec<Matchup>,
+    pub weakest_matchups: Vec<Matchup>,
 }
 
 /// The largest rating change in one game, from the winner's side.
@@ -196,6 +236,10 @@ pub struct Records {
     pub conference_seasons: Vec<ConferenceSeason>,
     pub divisions: GroupRecords,
     pub swings: Vec<GameSwing>,
+    /// Played games with the highest combined pre-game rating, strongest first.
+    pub greatest_matchups: Vec<Matchup>,
+    /// Played games with the lowest combined pre-game rating, weakest first.
+    pub weakest_matchups: Vec<Matchup>,
 }
 
 fn entry(s: &TeamSeasonStat, value: f64, date: Option<NaiveDate>) -> Entry {
@@ -441,15 +485,22 @@ fn conference_seasons(
         .collect()
 }
 
-/// Build every record table from the team-season statistics and the largest game swings.
-/// `rosters` lists every (season, team code) with a game on the schedule, played or not; it
-/// sets each league's size per season. Seasons missing from it fall back to the teams with
-/// played games.
+/// Build every record table from the team-season statistics and the game-level records the
+/// store ranked (swings and matchups). `rosters` lists every (season, team code) with a game
+/// on the schedule, played or not; it sets each league's size per season. Seasons missing
+/// from it fall back to the teams with played games.
 pub fn compute(
     stats: &[TeamSeasonStat],
-    swings: Vec<GameSwing>,
+    games: GameRecords,
     rosters: &[(SeasonYear, String)],
 ) -> Records {
+    let GameRecords {
+        swings,
+        mut greatest_matchups,
+        mut weakest_matchups,
+    } = games;
+    greatest_matchups.sort_by(|a, b| b.combined_elo().total_cmp(&a.combined_elo()));
+    weakest_matchups.sort_by(|a, b| a.combined_elo().total_cmp(&b.combined_elo()));
     let all = || stats.iter();
     let floors = season_floors(stats);
 
@@ -590,6 +641,8 @@ pub fn compute(
             Some((s.conference?, Some(s.division.clone()?)))
         }),
         swings,
+        greatest_matchups,
+        weakest_matchups,
     }
 }
 
@@ -660,7 +713,7 @@ mod tests {
                     })
                 })
                 .collect();
-        let r = compute(&stats, vec![], &[]);
+        let r = compute(&stats, GameRecords::default(), &[]);
         let nba: Vec<&EraRecord> = r
             .by_era
             .iter()
@@ -732,13 +785,13 @@ mod tests {
                 ]
             })
             .collect();
-        let r = compute(&stats, vec![], &rosters);
+        let r = compute(&stats, GameRecords::default(), &rosters);
         assert_eq!(r.by_era.len(), 1);
         assert_eq!((r.by_era[0].teams, r.by_era[0].seasons), (30, 2));
         assert_eq!(r.by_league_size.len(), 1);
         assert_eq!(r.by_league_size[0].teams, 30);
         // Without rosters the played games decide, and the seasons split.
-        assert_eq!(compute(&stats, vec![], &[]).by_era.len(), 2);
+        assert_eq!(compute(&stats, GameRecords::default(), &[]).by_era.len(), 2);
     }
 
     #[test]
@@ -759,7 +812,7 @@ mod tests {
             stat(1976, "KEN", 1700.0, 1400.0, PlayoffResult::Missed),
             stat(1976, "WGS", 1600.0, 1300.0, PlayoffResult::Champion),
         ];
-        let r = compute(&stats, vec![], &[]);
+        let r = compute(&stats, GameRecords::default(), &[]);
         assert_eq!(r.all_time_high[0].value, 1865.0);
         assert_eq!(r.all_time_high[0].code, "WGS");
         assert_eq!(r.all_time_low[0].value, 1300.0);
@@ -818,7 +871,7 @@ mod tests {
         assert_eq!(floors[&SeasonYear::of(1999)], 40); // median 50 -> 0.8 * 50
         assert_eq!(floors[&SeasonYear::of(1955)], 60); // median 75
         assert_eq!(floors[&SeasonYear::of(2027)], 4);
-        let r = compute(&stats, vec![], &[]);
+        let r = compute(&stats, GameRecords::default(), &[]);
         let seasons: Vec<i32> = r
             .conference_seasons
             .iter()
@@ -841,7 +894,7 @@ mod tests {
             stat(2017, "ECL", 1750.0, 1600.0, PlayoffResult::Finals),
         ];
         stats[1].games = 10; // an unfinished season does not count
-        let r = compute(&stats, vec![], &[]);
+        let r = compute(&stats, GameRecords::default(), &[]);
         assert_eq!(r.conference_seasons.len(), 1);
         let c = &r.conference_seasons[0];
         assert_eq!((c.east_teams, c.west_teams), (2, 2));

@@ -344,7 +344,29 @@ async fn records_queries_summarise_the_game_log(pool: PgPool) {
     let rosters = store.season_rosters().await.unwrap();
     assert_eq!(rosters.len(), 30);
     assert!(rosters.iter().all(|(s, _)| *s == S2016));
-    let r = records::compute(&stats, swings, &rosters);
+    // Matchups come back ranked by the combined pre-game rating, both ways.
+    let greatest = store
+        .matchups(records::MatchupOrder::Strongest, 3)
+        .await
+        .unwrap();
+    let weakest = store
+        .matchups(records::MatchupOrder::Weakest, 3)
+        .await
+        .unwrap();
+    assert_eq!((greatest.len(), weakest.len()), (3, 3));
+    assert!(greatest[0].combined_elo() >= greatest[1].combined_elo());
+    assert!(weakest[0].combined_elo() <= weakest[1].combined_elo());
+    assert!(greatest[0].combined_elo() > weakest[0].combined_elo());
+    let r = records::compute(
+        &stats,
+        records::GameRecords {
+            swings,
+            greatest_matchups: greatest,
+            weakest_matchups: weakest,
+        },
+        &rosters,
+    );
+    assert_eq!(r.greatest_matchups.len(), 3);
     assert_eq!(r.all_time_high[0].code, "GSW");
     assert_eq!(r.best_champion[0].code, "CLE");
     assert_eq!(r.conference_seasons.len(), 1);

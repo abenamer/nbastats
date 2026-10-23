@@ -50,6 +50,8 @@ th, td { padding:.35rem .5rem; border-bottom:1px solid var(--line); text-align:r
 th:first-child, td:first-child, td.l, th.l { text-align:left; }
 th { background:#f8fafc; position:sticky; top:0; font-weight:600; color:#374151; }
 table.sortable th { cursor:pointer; user-select:none; }
+.team-pick { cursor:pointer; color:#2563eb; font-weight:600; }
+.team-pick:hover { text-decoration:underline; }
 table.sortable th:hover { color:#111827; }
 table.sortable th.asc::after { content:" \25B4"; color:#2563eb; }
 table.sortable th.desc::after { content:" \25BE"; color:#2563eb; }

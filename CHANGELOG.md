@@ -5,6 +5,8 @@
 - Initial application: Engines A, B and C, backtesting, dynasty laboratory, nine pages, PostgreSQL 17 persistence, Docker Compose, backup and restore scripts.
 - Aligned with REAS 1.2.0-draft: domain, application and adapters layout; six ports and one `PostgresStore` adapter; `TeamId`, `FranchiseId` and `SeasonYear` newtypes; typed errors; conditional job transitions; documentation checker, terminology, self-audit and decisions.
 
+- Records page: greatest matchups and clankers, the 20 played games with the highest and the lowest combined pre-game rating of the two teams; the `AnalysisStore` port gains `matchups`.
+- Elo Explorer: a click on a team code in the ratings table adds the team to the highlight field (a second click removes it) and reloads the chart; the table shows codes with the full name as a tooltip, so every column fits.
 - Every table sorts on a header click (numbers as numbers, text as text, blanks last); a second click reverses the order.
 - Static files carry a content hash in their URL and are served with `Cache-Control: no-cache`, so a rebuilt page never runs an old script with a new one. A chart whose creation fails no longer locks its canvas.
 - Dependencies: tokio 1.54.1 (RUSTSEC-2026-0384, a race condition in `tokio::time::Interval` on 1.54.0, which was yanked).

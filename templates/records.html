@@ -21,5 +21,9 @@
   <div class="panel"><h2>Biggest rises and falls in one season</h2><p class="muted small">Rating at the end of the season minus the rating at its start.</p><div id="rise" class="table-wrap"></div><div id="fall" class="table-wrap" style="margin-top:.5rem"></div></div>
   <div class="panel"><h2>Biggest single-game swings</h2><p class="muted small">The winner's rating gain: the largest upsets in the log.</p><div id="swings" class="table-wrap"></div></div>
 </section>
+<section class="grid2">
+  <div class="panel"><h2>Greatest matchups</h2><p class="muted small">The 20 played games with the highest combined rating of the two teams before tip-off.</p><div id="greatest" class="table-wrap"></div></div>
+  <div class="panel"><h2>Clankers</h2><p class="muted small">The 20 played games with the lowest combined rating before tip-off. A new league starts every team at 1300 and its weakest teams fall fast, so the first ABA and BAA seasons fill this table.</p><div id="weakest" class="table-wrap"></div></div>
+</section>
 {% endblock %}
 {% block scripts %}<script src="/static/js/records.js?v={{ layout.assets }}" defer></script>{% endblock %}

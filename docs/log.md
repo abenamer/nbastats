@@ -1,6 +1,8 @@
 # Bundle update log
 
 ## 2026-10-23
+* **Update**: Records page gains the greatest matchups and the clankers; the term Matchup is defined and the [Application overview](/concepts/application.md) lists the tables.
+* **Update**: Elo Explorer: a click on a team code highlights the team; noted in the [Application overview](/concepts/application.md).
 * **Update**: Tables sort on a header click; static files are versioned by content hash. Noted in the [Application overview](/concepts/application.md).
 * **Update**: The results sync fetches only the days since the last played game after the first sync of a season; [Elo continuation](/concepts/elo-continuation.md) and the import runbook describe the window. The term Fetch window is defined.
 * **Update**: The Elo Explorer season chart shows one-game teams as a dot and the games not played yet as a shaded strip; noted in the [Application overview](/concepts/application.md).

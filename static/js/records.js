@@ -47,6 +47,13 @@
       { label: 'Date', value: 'game_date', left: true }, { label: 'Season', value: s => labelOf(s.season), left: true }, { label: 'Winner', value: s => `${s.code} · ${s.name}`, left: true },
       { label: 'Score', value: s => `${s.points}-${s.opponent_points} ${s.home ? 'vs' : 'at'} ${s.opponent_code}${s.playoff ? ' (playoffs)' : ''}`, left: true },
       { label: 'Elo before', value: s => num(s.elo_pre, 0) }, { label: 'Opponent Elo', value: s => num(s.opponent_elo_pre, 0) }, { label: 'Gain', value: s => `+${num(s.elo_post - s.elo_pre, 1)}`, cls: () => 'good' }], r.swings);
+    const matchups = (id, rows) => { document.getElementById(id).innerHTML = table([
+      { label: 'Date', value: 'game_date', left: true }, { label: 'Season', value: m => labelOf(m.season), left: true },
+      { label: 'Home', value: m => m.home_code, left: true }, { label: 'Elo', value: m => num(m.home_elo_pre, 0) },
+      { label: 'Away', value: m => m.away_code, left: true }, { label: 'Elo', value: m => num(m.away_elo_pre, 0) },
+      { label: 'Combined', value: m => num(m.home_elo_pre + m.away_elo_pre, 0) },
+      { label: 'Score', value: m => `${m.home_score}-${m.away_score}${m.playoff ? ' (playoffs)' : ''}`, left: true }], rows); };
+    matchups('greatest', r.greatest_matchups); matchups('weakest', r.weakest_matchups);
     setStatus(status, '');
   } catch (e) { setStatus(status, e.message, true); }
 })();

@@ -71,13 +71,21 @@ pub async fn seasons(State(app): State<AppState>) -> ApiResult<Value> {
 /// and the best and worst conferences and divisions.
 pub async fn records(State(app): State<AppState>) -> ApiResult<Value> {
     let stats = app.store.team_season_stats().await?;
-    let swings = app
-        .store
-        .biggest_swings(crate::domain::records::LIST_LEN as i64)
-        .await?;
+    use crate::domain::records::{GameRecords, MatchupOrder, LIST_LEN, MATCHUP_LEN};
+    let games = GameRecords {
+        swings: app.store.biggest_swings(LIST_LEN as i64).await?,
+        greatest_matchups: app
+            .store
+            .matchups(MatchupOrder::Strongest, MATCHUP_LEN as i64)
+            .await?,
+        weakest_matchups: app
+            .store
+            .matchups(MatchupOrder::Weakest, MATCHUP_LEN as i64)
+            .await?,
+    };
     let rosters = app.store.season_rosters().await?;
     Ok(Json(json!(crate::domain::records::compute(
-        &stats, swings, &rosters
+        &stats, games, &rosters
     ))))
 }
 

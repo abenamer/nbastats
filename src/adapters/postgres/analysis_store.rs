@@ -7,13 +7,30 @@ use chrono::NaiveDate;
 use crate::application::ports::{AnalysisStore, NewForecast, StoreHealth, StoreResult};
 use crate::domain::ids::{FranchiseId, SeasonYear};
 use crate::domain::models::{ChampionshipView, TeamSeasonView};
-use crate::domain::records::{GameSwing, TeamSeasonStat};
+use crate::domain::records::{GameSwing, Matchup, MatchupOrder, TeamSeasonStat};
 
 use super::PostgresStore;
 
 const TS_VIEW_COLS: &str = "ts.season, ts.team_id, t.code, t.name AS team_name, ts.franchise_id, f.key AS franchise_key,
     f.name AS franchise_name, ts.conference, ts.division, ts.wins, ts.losses, ts.win_pct, ts.elo_start, ts.elo_regular_end,
     ts.elo_pre_playoffs, ts.elo_end, ts.elo_peak, ts.made_play_in, ts.made_playoffs, ts.seed, ts.playoff_result";
+
+/// The matchup query with its sort direction, which cannot be a bound parameter.
+macro_rules! matchups_sql {
+    ($direction:literal) => {
+        concat!(
+            "SELECT g.season, g.game_date, h.code, h.name, a.code, a.name, ",
+            "g.home_elo_pre, g.away_elo_pre, g.home_score, g.away_score, g.game_type = 'playoff' AS playoff ",
+            "FROM games g JOIN teams h ON h.id = g.home_team_id JOIN teams a ON a.id = g.away_team_id ",
+            "WHERE g.home_score IS NOT NULL ",
+            "ORDER BY g.home_elo_pre + g.away_elo_pre ",
+            $direction,
+            ", g.game_date LIMIT $1"
+        )
+    };
+}
+const MATCHUPS_DESC: &str = matchups_sql!("DESC");
+const MATCHUPS_ASC: &str = matchups_sql!("ASC");
 
 impl AnalysisStore for PostgresStore {
     async fn team_seasons(&self, season: SeasonYear) -> StoreResult<Vec<TeamSeasonView>> {
@@ -113,6 +130,60 @@ impl AnalysisStore for PostgresStore {
         )
         .fetch_all(&self.pool)
         .await?)
+    }
+
+    async fn matchups(&self, order: MatchupOrder, limit: i64) -> StoreResult<Vec<Matchup>> {
+        type Row = (
+            SeasonYear,
+            NaiveDate,
+            String,
+            String,
+            String,
+            String,
+            f64,
+            f64,
+            i32,
+            i32,
+            bool,
+        );
+        let sql = match order {
+            MatchupOrder::Strongest => MATCHUPS_DESC,
+            MatchupOrder::Weakest => MATCHUPS_ASC,
+        };
+        let rows: Vec<Row> = sqlx::query_as(sql)
+            .bind(limit)
+            .fetch_all(&self.pool)
+            .await?;
+        Ok(rows
+            .into_iter()
+            .map(
+                |(
+                    season,
+                    game_date,
+                    home_code,
+                    home_name,
+                    away_code,
+                    away_name,
+                    home_elo_pre,
+                    away_elo_pre,
+                    home_score,
+                    away_score,
+                    playoff,
+                )| Matchup {
+                    season,
+                    game_date,
+                    home_code,
+                    home_name,
+                    away_code,
+                    away_name,
+                    home_elo_pre,
+                    away_elo_pre,
+                    home_score,
+                    away_score,
+                    playoff,
+                },
+            )
+            .collect())
     }
 
     async fn biggest_swings(&self, limit: i64) -> StoreResult<Vec<GameSwing>> {
