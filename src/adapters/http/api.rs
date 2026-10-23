@@ -660,6 +660,7 @@ pub async fn refresh(
     body: Option<Json<RefreshBody>>,
 ) -> ApiResult<Value> {
     let force = body.map(|b| b.force).unwrap_or(false);
+    let _guard = import_slot(&app)?;
     let outcome = imports::refresh_from_url(
         &app.store,
         &app.source,
@@ -672,7 +673,16 @@ pub async fn refresh(
     Ok(Json(json!(outcome)))
 }
 
+/// An archive import recomputes every season, so it never runs beside a results sync: both
+/// take the sync lock, and the one that finds it taken answers 409.
+fn import_slot(app: &AppState) -> Result<tokio::sync::OwnedMutexGuard<()>, ApiError> {
+    app.sync_lock.clone().try_lock_owned().map_err(|_| {
+        ApiError::conflict("a results sync is running; import again when it has finished")
+    })
+}
+
 pub async fn upload(State(app): State<AppState>, mut multipart: Multipart) -> ApiResult<Value> {
+    let _guard = import_slot(&app)?;
     let mut file: Option<(String, Vec<u8>)> = None;
     let mut force = false;
     while let Some(field) = multipart

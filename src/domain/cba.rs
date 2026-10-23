@@ -172,11 +172,27 @@ pub struct TitleCount {
     pub titles: usize,
 }
 
+/// One change of a period, as the API serves it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ChangeNote {
+    pub season: SeasonYear,
+    pub text: String,
+}
+
+impl From<&Change> for ChangeNote {
+    fn from(c: &Change) -> Self {
+        Self {
+            season: c.season,
+            text: c.text.to_string(),
+        }
+    }
+}
+
 /// A bargaining period with the records of its seasons in the data.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct CbaSummary {
-    pub name: &'static str,
-    pub summary: &'static str,
+    pub name: String,
+    pub summary: String,
     /// The period's first season by the agreement, and the seasons present in the data.
     pub period_start: SeasonYear,
     pub first_season: SeasonYear,
@@ -194,7 +210,7 @@ pub struct CbaSummary {
     /// The standard deviation of season-end ratings across the league, averaged over the
     /// period's seasons: a measure of how unequal the league was.
     pub elo_spread: Option<f64>,
-    pub changes: Vec<Change>,
+    pub changes: Vec<ChangeNote>,
 }
 
 /// The Herfindahl-Hirschman index of a title distribution.
@@ -216,7 +232,7 @@ pub fn title_hhi(counts: &[usize]) -> Option<f64> {
 pub fn elo_spread(stats: &[&TeamSeasonStat]) -> Option<f64> {
     let mut by_season: BTreeMap<SeasonYear, Vec<f64>> = BTreeMap::new();
     for s in stats {
-        if let Some(e) = s.elo_end {
+        if let Some(e) = s.elo_end.filter(|e| e.is_finite()) {
             by_season.entry(s.season).or_default().push(e);
         }
     }
@@ -275,8 +291,8 @@ pub fn summaries(stats: &[TeamSeasonStat]) -> Vec<CbaSummary> {
             champions.sort_by(|a, b| b.titles.cmp(&a.titles).then(a.code.cmp(&b.code)));
             let counts: Vec<usize> = champions.iter().map(|c| c.titles).collect();
             Some(CbaSummary {
-                name: p.name,
-                summary: p.summary,
+                name: p.name.to_string(),
+                summary: p.summary.to_string(),
                 period_start: p.first_season,
                 first_season: *seasons.first()?,
                 last_season: *seasons.last()?,
@@ -288,7 +304,7 @@ pub fn summaries(stats: &[TeamSeasonStat]) -> Vec<CbaSummary> {
                 title_hhi: title_hhi(&counts),
                 champions,
                 elo_spread: elo_spread(&mine),
-                changes: p.changes.to_vec(),
+                changes: p.changes.iter().map(ChangeNote::from).collect(),
             })
         })
         .collect()
@@ -364,6 +380,10 @@ mod tests {
         // A season with one rated team does not count.
         assert_eq!(elo_spread(&[&a, &b, &lone]), Some(100.0));
         assert_eq!(elo_spread(&[&lone]), None);
+        // A rating that is not a number is ignored, not propagated.
+        let mut nan = stat(2000, "C", "C", 1500.0, 1400.0, false);
+        nan.elo_end = Some(f64::NAN);
+        assert_eq!(elo_spread(&[&a, &b, &nan]), Some(100.0));
     }
 
     #[test]
@@ -386,7 +406,7 @@ mod tests {
         assert_eq!(out.len(), 2);
         let p = &out[0];
         assert_eq!(
-            (p.name, p.seasons, p.titles, p.distinct_champions),
+            (p.name.as_str(), p.seasons, p.titles, p.distinct_champions),
             ("1999 agreement", 3, 3, 2)
         );
         assert_eq!(p.first_season, SeasonYear::of(1999));
@@ -399,7 +419,7 @@ mod tests {
         assert!((p.elo_spread.unwrap() - (50.0 + 55.0 + 65.0) / 3.0).abs() < 1e-9);
         assert_eq!(p.changes.len(), 4);
         assert_eq!(
-            (out[1].name, out[1].titles, out[1].title_hhi),
+            (out[1].name.as_str(), out[1].titles, out[1].title_hhi),
             ("2005 agreement", 1, Some(1.0))
         );
     }

@@ -279,6 +279,12 @@ impl<'a, S: GameLog + AnalysisStore> Tools<'a, S> {
 
     pub async fn call(&self, call: ToolCall) -> Result<Value, StoreError> {
         let a = &call.arguments;
+        // The adapter keeps arguments it could not parse under `_raw`: tell the model.
+        if a.get("_raw").is_some() {
+            return Ok(error(
+                "the arguments were not valid JSON; send a JSON object with the tool's parameters",
+            ));
+        }
         match call.name.as_str() {
             "list_seasons" => self.list_seasons().await,
             "season_standings" => match season_arg(a, "season") {
@@ -633,10 +639,18 @@ fn summarize(result: &Value) -> String {
         .find_map(|k| result.get(k).and_then(Value::as_array).map(Vec::len));
     match rows {
         Some(n) if result.get("truncated") == Some(&Value::Bool(true)) => {
-            format!("{n} rows (cut)")
+            format!("{n} {} (cut)", rows_word(n))
         }
-        Some(n) => format!("{n} rows"),
+        Some(n) => format!("{n} {}", rows_word(n)),
         None => "ok".to_string(),
+    }
+}
+
+fn rows_word(n: usize) -> &'static str {
+    if n == 1 {
+        "row"
+    } else {
+        "rows"
     }
 }
 
@@ -1018,7 +1032,7 @@ mod tests {
         ]);
         let a = converse(&model, "q", "sys".into(), big).await.unwrap();
         assert_eq!(a.steps.len(), 4);
-        assert_eq!(a.steps[2].summary, "1 rows");
+        assert_eq!(a.steps[2].summary, "1 row");
         assert!(a.steps[3].summary.starts_with("error: result budget"));
         assert!(!a.declined);
     }

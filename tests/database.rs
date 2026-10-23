@@ -939,7 +939,13 @@ async fn question_box_tools_read_the_store(pool: PgPool) {
         .await
         .unwrap();
     assert!(!a.declined);
-    assert_eq!(a.steps[0].summary, "1 rows");
+    assert_eq!(a.steps[0].summary, "1 row");
+    // Arguments the adapter could not parse come back as an error the model can correct.
+    let raw = tools
+        .call(call("champions", json!({ "_raw": "{from: 2016" })))
+        .await
+        .unwrap();
+    assert!(raw["error"].as_str().unwrap().contains("not valid JSON"));
     assert_eq!(a.question, "who won in 2016?");
     assert!(matches!(
         ask::answer(&store, &model, "   ", today).await,
