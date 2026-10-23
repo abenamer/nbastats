@@ -21,5 +21,13 @@
   <div class="panel"><h2>Biggest rises and falls in one season</h2><p class="muted small">Rating at the end of the season minus the rating at its start.</p><div id="rise" class="table-wrap"></div><div id="fall" class="table-wrap" style="margin-top:.5rem"></div></div>
   <div class="panel"><h2>Biggest single-game swings</h2><p class="muted small">The winner's rating gain: the largest upsets in the log.</p><div id="swings" class="table-wrap"></div></div>
 </section>
+<section class="grid2">
+  <div class="panel"><h2>Hardest road to the title</h2><p class="muted small">For each champion: the mean rating of its opponents before each regular-season game, the same for the playoffs (play-in included), and the road, the mean over every game (each phase weighs by its games). The ten highest.</p><div id="hardestRoad" class="table-wrap"></div></div>
+  <div class="panel"><h2>Easiest road to the title</h2><p class="muted small">The ten lowest road ratings among champions.</p><div id="easiestRoad" class="table-wrap"></div></div>
+</section>
+<section class="grid2">
+  <div class="panel"><h2>Greatest matchups</h2><p class="muted small">The 20 played games with the highest combined rating of the two teams before tip-off.</p><div id="greatest" class="table-wrap"></div></div>
+  <div class="panel"><h2>Clankers by era</h2><p class="muted small">The played game with the lowest combined rating before tip-off in each era (an era changes with the league's team count and, for the NBA, at the 3-point line). A league-wide list would only find the newest franchises, which start at 1300.</p><h3>NBA/BAA</h3><div id="clankersNba" class="table-wrap"></div><h3 style="margin-top:.8rem">ABA</h3><div id="clankersAba" class="table-wrap"></div></div>
+</section>
 {% endblock %}
 {% block scripts %}<script src="/static/js/records.js?v={{ layout.assets }}" defer></script>{% endblock %}

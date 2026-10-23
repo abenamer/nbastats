@@ -13,7 +13,8 @@
     try {
       const [t, h] = await Promise.all([getJSON(`/api/seasons/${season}/teams`), getJSON(`/api/seasons/${season}/elo-history?teams=${encodeURIComponent(teams)}`)]);
       document.getElementById('ratings').innerHTML = table([
-        { label: 'Team', value: r => `${r.code} · ${r.team_name}`, left: true }, { label: 'Conf', value: r => r.conference || '', left: true },
+        // The code only, so every column fits; the name is the tooltip. A click toggles the team in the highlight field.
+        { label: 'Team', value: r => `<span class="team-pick" data-code="${esc(r.code)}" title="${esc(r.team_name)} · click to highlight">${esc(r.code)}</span>`, raw: true, left: true }, { label: 'Conf', value: r => r.conference || '', left: true },
         { label: 'W', value: 'wins' }, { label: 'L', value: 'losses' }, { label: 'Start', value: r => num(r.elo_start, 0) },
         { label: 'Reg. end', value: r => num(r.elo_regular_end, 0) }, { label: 'Pre-playoffs', value: r => num(r.elo_pre_playoffs, 0) },
         { label: 'End', value: r => num(r.elo_end, 0) }, { label: 'Peak', value: r => num(r.elo_peak, 0) }, { label: 'Seed', value: r => r.seed || '' },
@@ -64,6 +65,14 @@
     } catch (e) { setStatus(status, e.message, true); }
   }
   document.getElementById('load').addEventListener('click', loadSeason);
+  // A click on a team code in the ratings table adds it to (or removes it from) the highlight field and reloads.
+  document.getElementById('ratings').addEventListener('click', e => {
+    const pick = e.target.closest('.team-pick'); if (!pick) return;
+    const input = document.getElementById('teams'), code = pick.dataset.code;
+    const codes = input.value.split(',').map(s => s.trim().toUpperCase()).filter(Boolean);
+    input.value = (codes.includes(code) ? codes.filter(c => c !== code) : codes.concat(code)).join(',');
+    loadSeason();
+  });
   document.getElementById('loadFranchise').addEventListener('click', loadFranchise);
   document.getElementById('calc').addEventListener('click', calc);
   loadSeason(); loadFranchise(); calc();

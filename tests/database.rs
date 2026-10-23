@@ -344,7 +344,45 @@ async fn records_queries_summarise_the_game_log(pool: PgPool) {
     let rosters = store.season_rosters().await.unwrap();
     assert_eq!(rosters.len(), 30);
     assert!(rosters.iter().all(|(s, _)| *s == S2016));
-    let r = records::compute(&stats, swings, &rosters);
+    // Matchups come back ranked by the combined pre-game rating, both ways.
+    let greatest = store
+        .matchups(records::MatchupOrder::Strongest, 3)
+        .await
+        .unwrap();
+    let weakest = store
+        .matchups(records::MatchupOrder::Weakest, 3)
+        .await
+        .unwrap();
+    assert_eq!((greatest.len(), weakest.len()), (3, 3));
+    assert!(greatest[0].combined_elo() >= greatest[1].combined_elo());
+    assert!(weakest[0].combined_elo() <= weakest[1].combined_elo());
+    assert!(greatest[0].combined_elo() > weakest[0].combined_elo());
+    // One weakest game per season and league: the fixture has one NBA season, no ABA games.
+    let per_season = store.weakest_matchup_per_season().await.unwrap();
+    assert_eq!(per_season.len(), 1);
+    assert_eq!(per_season[0].season, S2016);
+    assert!((per_season[0].combined_elo() - weakest[0].combined_elo()).abs() < 1e-9);
+    // The champion's road comes from the championships table, with both phases filled.
+    let roads = store.champion_roads().await.unwrap();
+    assert_eq!(roads.len(), 1);
+    assert_eq!((roads[0].code.as_str(), roads[0].season), ("CLE", S2016));
+    assert!(roads[0].regular_games > 0 && roads[0].playoff_games > 0);
+    assert!(roads[0].playoff_opponent_elo > roads[0].regular_opponent_elo);
+    assert!(roads[0].toughest_opponent_elo >= roads[0].playoff_opponent_elo);
+    let r = records::compute(
+        &stats,
+        records::GameRecords {
+            swings,
+            greatest_matchups: greatest,
+            weakest_per_season: per_season,
+            champion_roads: roads,
+        },
+        &rosters,
+    );
+    assert_eq!(r.greatest_matchups.len(), 3);
+    assert_eq!(r.clankers_by_era.len(), 1);
+    assert_eq!(r.clankers_by_era[0].game.season, S2016);
+    assert_eq!(r.hardest_roads.len(), 1);
     assert_eq!(r.all_time_high[0].code, "GSW");
     assert_eq!(r.best_champion[0].code, "CLE");
     assert_eq!(r.conference_seasons.len(), 1);
