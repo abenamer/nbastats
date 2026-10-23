@@ -982,3 +982,49 @@ async fn question_box_tools_read_the_store(pool: PgPool) {
         Err(ask::AskError::Empty)
     ));
 }
+
+/// Game report links are kept by date and team codes with the lookup of their date.
+#[sqlx::test(migrations = "./migrations")]
+async fn game_reports_are_stored_with_their_lookup(pool: PgPool) {
+    use nba_elo_simulator::application::ports::{GameReport, ReportStore};
+    let (store, _teams) = common::setup(pool).await;
+    let date = NaiveDate::from_ymd_opt(2016, 6, 19).unwrap();
+    let other = NaiveDate::from_ymd_opt(2016, 6, 16).unwrap();
+    assert!(store.reports_on(&[date, other]).await.unwrap().is_empty());
+    assert!(store.lookups_on(&[date]).await.unwrap().is_empty());
+    let report = GameReport {
+        game_date: date,
+        home_code: "GSW".into(),
+        away_code: "CLE".into(),
+        url: "https://www.espn.com/nba/recap/_/gameId/400878160".into(),
+        title: Some("Cavaliers complete comeback".into()),
+        source: "espn".into(),
+    };
+    store
+        .save_lookup(date, "espn", std::slice::from_ref(&report))
+        .await
+        .unwrap();
+    store.save_lookup(other, "espn", &[]).await.unwrap();
+    let found = store.reports_on(&[date, other]).await.unwrap();
+    assert_eq!(found, vec![report.clone()]);
+    let lookups = store.lookups_on(&[date, other]).await.unwrap();
+    assert_eq!(lookups.len(), 2);
+    assert_eq!(
+        lookups.iter().find(|l| l.game_date == date).unwrap().found,
+        1
+    );
+    assert_eq!(
+        lookups.iter().find(|l| l.game_date == other).unwrap().found,
+        0
+    );
+    // A second lookup of the same date replaces the link, not duplicates it.
+    let updated = GameReport {
+        title: Some("Updated".into()),
+        ..report
+    };
+    store
+        .save_lookup(date, "espn", std::slice::from_ref(&updated))
+        .await
+        .unwrap();
+    assert_eq!(store.reports_on(&[date]).await.unwrap(), vec![updated]);
+}

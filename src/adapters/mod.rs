@@ -5,9 +5,11 @@
 //! * `dataset` – outbound: HTTP download of the source dataset.
 //! * `balldontlie` – outbound: game results and schedule from the BALLDONTLIE API.
 //! * `openrouter` – outbound: a chat model with tool calling for the question box.
+//! * `espn` – outbound: game report links from ESPN's scoreboard feed.
 pub mod balldontlie;
 pub mod csv;
 pub mod dataset;
+pub mod espn;
 pub mod http;
 pub mod openrouter;
 pub mod postgres;

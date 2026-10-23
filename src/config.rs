@@ -35,6 +35,9 @@ pub struct Config {
     pub openrouter_base_url: String,
     /// The OpenRouter model identifier the question box asks (must support tool calling).
     pub openrouter_model: String,
+    /// Look up game report links (the AP recaps ESPN hosts) for the games the pages show.
+    pub game_reports_enabled: bool,
+    pub espn_base_url: String,
 }
 
 impl Config {
@@ -113,6 +116,14 @@ impl Config {
             .map(|m| m.trim().to_string())
             .filter(|m| !m.is_empty())
             .unwrap_or_else(|| "openai/gpt-4o-mini".to_string());
+        let game_reports_enabled = env::var("GAME_REPORTS_ENABLED")
+            .map(|v| matches!(v.to_ascii_lowercase().as_str(), "1" | "true" | "yes"))
+            .unwrap_or(true);
+        let espn_base_url = env::var("ESPN_BASE_URL")
+            .ok()
+            .map(|u| u.trim().to_string())
+            .filter(|u| !u.is_empty())
+            .unwrap_or_else(|| "https://site.api.espn.com".to_string());
         Ok(Self {
             database_url,
             bind_addr,
@@ -135,6 +146,8 @@ impl Config {
             openrouter_api_key,
             openrouter_base_url,
             openrouter_model,
+            game_reports_enabled,
+            espn_base_url,
         })
     }
 
@@ -201,6 +214,8 @@ mod tests {
             openrouter_api_key: None,
             openrouter_base_url: String::new(),
             openrouter_model: String::new(),
+            game_reports_enabled: false,
+            espn_base_url: String::new(),
         }
     }
 

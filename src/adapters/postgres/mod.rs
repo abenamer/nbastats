@@ -9,6 +9,7 @@ mod game_store;
 mod import_log;
 mod job_store;
 pub mod records;
+mod report_store;
 
 use std::time::{Duration, Instant};
 
@@ -18,7 +19,7 @@ use tracing::{info, warn};
 use crate::application::ports::{StoreError, StoreHealth};
 
 /// The one concrete store adapter. Implements `GameLog`, `GameStore`, `ImportLog`,
-/// `JobStore` and `AnalysisStore`.
+/// `JobStore`, `AnalysisStore` and `ReportStore`.
 #[derive(Debug, Clone)]
 pub struct PostgresStore {
     pool: PgPool,

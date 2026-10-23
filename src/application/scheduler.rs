@@ -85,6 +85,11 @@ impl SyncSchedule {
     }
 }
 
+/// The season a game date belongs to (the same rule as the current season).
+pub fn season_of_date(date: chrono::NaiveDate) -> SeasonYear {
+    current_season(date)
+}
+
 /// The season whose games are being played (or about to be): September to December belong
 /// to the season that ends next year; January to August to the season that ends this year.
 pub fn current_season(today: chrono::NaiveDate) -> SeasonYear {

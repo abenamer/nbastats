@@ -91,5 +91,28 @@ window.NBA = (() => {
     g.restore(); } };
   const palette = ['#2563eb','#dc2626','#16a34a','#d97706','#7c3aed','#0891b2','#db2777','#4b5563','#65a30d','#9333ea','#ea580c','#0d9488','#1e3a8a','#991b1b','#166534','#92400e'];
   function color(i) { return palette[i % palette.length]; }
-  return { pct, num, esc, labelOf, RESULT, getJSON, postJSON, runJob, table, bar, cards, setStatus, chart, color, dayOf, dateOf, dateScale, unplayedShade };
+  // Game reports: a score cell rendered with `scoreCell(date, home, away, text)` gets a link to
+  // the game's report once `attachReports(container)` has asked the API for the dates shown.
+  function scoreCell(date, home, away, text) { return `<span class="score" data-date="${esc(date)}" data-home="${esc(home)}" data-away="${esc(away)}">${esc(text)}</span>`; }
+  async function attachReports(container, dates = null, attempt = 0) {
+    const cells = Array.from(container.querySelectorAll('span.score[data-date]'));
+    if (!dates) dates = [...new Set(cells.map(c => c.dataset.date))];
+    if (!dates.length) return;
+    const pending = [];
+    for (let i = 0; i < dates.length; i += 40) {
+      let r;
+      try { r = await getJSON(`/api/reports?dates=${dates.slice(i, i + 40).join(',')}`); } catch { return; }
+      if (r.disabled) return;
+      for (const c of cells) {
+        if (c.querySelector('a')) continue;
+        const list = r.reports[c.dataset.date] || [];
+        const hit = list.find(x => (x.home_code === c.dataset.home && x.away_code === c.dataset.away) || (x.home_code === c.dataset.away && x.away_code === c.dataset.home));
+        if (hit) c.insertAdjacentHTML('beforeend', ` <a href="${esc(hit.url)}" target="_blank" rel="noopener noreferrer" class="report" title="${esc(hit.title || 'Game report')}">AP report</a>`);
+      }
+      pending.push(...(r.pending || []));
+    }
+    // One retry for the dates still to be looked up, a few times at most.
+    if (pending.length && attempt < 4) setTimeout(() => attachReports(container, pending, attempt + 1), 2500);
+  }
+  return { pct, num, esc, labelOf, RESULT, getJSON, postJSON, runJob, table, bar, cards, setStatus, chart, color, dayOf, dateOf, dateScale, unplayedShade, scoreCell, attachReports };
 })();

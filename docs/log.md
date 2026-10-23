@@ -1,6 +1,7 @@
 # Bundle update log
 
 ## 2026-10-23
+* **Update**: Game report links described in [Historical data](/concepts/historical-data.md); the configuration and API references, the [Security model](/concepts/security.md), [ADR 0001](/decisions/0001-ports-at-three-boundaries.md) (ten ports) and the [Application overview](/concepts/application.md) follow; the term Game report is defined.
 * **New**: [Era builder](/concepts/era-builder.md) describes the grouping dimensions, the dynasty rule and the player table; [Rule periods and bargaining periods](/concepts/periods.md) gains the competition formats; the terms Dimension, Dynasty era, Player era, Competition format and Era builder are defined; the API reference and the [Application overview](/concepts/application.md) follow.
 * **Update**: Records lines show where a peak was reached and the playoff record; noted in the [Application overview](/concepts/application.md).
 * **New**: [Rule periods and bargaining periods](/concepts/periods.md) lists the two period tables and what each period changed; the Records page gains the records by collective bargaining agreement; the terms Bargaining period, Title HHI and Elo spread are defined; the API reference and the [Application overview](/concepts/application.md) follow.
