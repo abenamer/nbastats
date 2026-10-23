@@ -26,6 +26,7 @@ This project follows the [REAS engineering standard](https://github.com/abenamer
 * [Elo continuation](concepts/elo-continuation.md) - How the application computes ratings for seasons after the archive ends, and projects a season that has not started.
 * [Persistence model](concepts/persistence.md) - Which state is durable, where it lives and which commands keep it.
 * [Security model](concepts/security.md) - Threat model of the local-only deployment and the controls in place.
+* [Rule periods and bargaining periods](concepts/periods.md) - The two period tables that group seasons on the Records page, with what each period changed.
 * [Question box](concepts/question-box.md) - How the dashboard answers a question from the stored data through a language model with read-only tools, and what it refuses.
 
 # Runbooks

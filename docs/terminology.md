@@ -17,6 +17,7 @@ These are project-specific technical terms. They are not a reproduction of the A
 | Term | Meaning |
 | --- | --- |
 | Alpha | Strength weight of a franchise in Engine A. The title probability is alpha divided by the sum of all alphas. |
+| Bargaining period | A run of NBA/BAA seasons under one collective bargaining agreement, from the first season the agreement applied to. The table of periods and their changes is curated in `domain::cba`; see [Rule periods and bargaining periods](/concepts/periods.md). |
 | Bracket | The 16 playoff slots and their pairings. Slots 0 to 7 are the East, 8 to 15 the West. |
 | Composition root | `src/main.rs`. The one place that creates the concrete adapters and wires them to the application. |
 | Cup final | The NBA Cup (in-season tournament) final. An extra game that does not count in the standings. |
@@ -25,6 +26,7 @@ These are project-specific technical terms. They are not a reproduction of the A
 | Elo | A rating that gives game probabilities from the rating difference. |
 | Elo continuation | The computation of every rating by the application, season after season from the first season in the store. |
 | Elo source | The origin of a game's ratings. Since compute first every game is `computed`; `imported` marks rows from an older version that the application recomputes at start. |
+| Elo spread | The standard deviation of season-end ratings across a league in a season, averaged over a group's seasons. Wider means a more unequal league. |
 | Engine A | The alpha lottery simulator (`domain::simulation::alpha`). |
 | Engine B | The playoff bracket simulator (`domain::playoffs::bracket`). |
 | Engine C | The full-season simulator with play-in (`domain::playoffs::season`). |
@@ -53,3 +55,4 @@ These are project-specific technical terms. They are not a reproduction of the A
 | Series | A best-of-five or best-of-seven playoff matchup. A `SeriesState` is either in progress or decided. |
 | Store | The `PostgresStore` adapter, which implements every store port. |
 | Team | A team code and era, such as SEA or OKC. Identified by `TeamId`. |
+| Title HHI | The Herfindahl-Hirschman index of a group's titles: the sum of each champion's squared share. 1.0 when one franchise won every title; lower when the titles spread out. |

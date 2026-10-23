@@ -48,6 +48,15 @@
       { label: 'Gap (W − E)', value: c => `${c.gap >= 0 ? '+' : ''}${num(c.gap, 0)}` }, { label: 'Stronger', value: c => Math.abs(c.gap) < 5 ? 'even' : (c.gap > 0 ? 'West' : 'East'), left: true },
       { label: 'East best', value: 'east_best_code', left: true }, { label: 'West best', value: 'west_best_code', left: true },
       { label: 'Title', value: c => c.champion_code ? `${c.champion_conference === 'west' ? 'West' : c.champion_conference === 'east' ? 'East' : '?'} · ${c.champion_code}` : '', left: true, cls: c => c.champion_conference && Math.abs(c.gap) >= 5 ? (c.champion_conference === 'west') === (c.gap > 0) ? 'good' : 'bad' : '' }], r.conference_seasons);
+    // The top four winners, the rest as a count; the full list is the cell's tooltip.
+    const titleList = c => { if (!c.champions.length) return 'none recorded'; const all = c.champions.map(t => `${t.code} ${t.titles}`); const shown = all.slice(0, 4).join(', '); return `<span title="${esc(all.join(', '))}">${esc(shown)}${all.length > 4 ? ` +${all.length - 4} more` : ''}</span>`; };
+    document.getElementById('byCba').innerHTML = table([
+      { label: 'Period', value: c => `<span title="${esc(c.summary)}">${esc(c.name)}</span>`, raw: true, left: true }, { label: 'Seasons', value: c => `${c.seasons} (${span(c)})`, left: true },
+      { label: 'Best team-season', value: c => `${c.best.code} ${num(c.best.value, 0)} (${labelOf(c.best.season)})`, left: true, cls: () => 'good' },
+      { label: 'Weakest', value: c => `${c.weakest.code} ${num(c.weakest.value, 0)} (${labelOf(c.weakest.season)})`, left: true, cls: () => 'bad' },
+      { label: 'Titles', value: 'titles' }, { label: 'Champions', value: titleList, raw: true, left: true }, { label: 'Distinct', value: 'distinct_champions' },
+      { label: 'Title HHI', value: c => c.title_hhi == null ? '–' : num(c.title_hhi, 2) }, { label: 'Elo spread', value: c => c.elo_spread == null ? '–' : num(c.elo_spread, 0) }], r.by_cba);
+    document.getElementById('cbaChanges').innerHTML = r.by_cba.map(c => `<details><summary><strong>${esc(c.name)}</strong> · ${esc(span(c))} <span class="muted small">${esc(c.summary)}</span></summary><ul class="small">${c.changes.map(ch => `<li><span class="muted">${labelOf(ch.season)}</span> ${esc(ch.text)}</li>`).join('')}</ul></details>`).join('');
     group('divBest', r.divisions.best); group('divWorst', r.divisions.worst);
     list('bestChampion', r.best_champion, 'Peak Elo', true, 'At the clinch'); list('worstChampion', r.worst_champion, 'Peak Elo', true, 'At the clinch'); list('bestUncrowned', r.best_uncrowned, 'Peak Elo', true, 'Season end');
     list('bestEnd', r.best_end, 'End Elo', false); list('worstEnd', r.worst_end, 'End Elo', false);

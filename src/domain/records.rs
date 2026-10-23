@@ -380,6 +380,8 @@ pub struct Records {
     pub greatest_matchups: Vec<Matchup>,
     /// The rule periods present in the data, with the seasons and eras they cover.
     pub periods: Vec<PeriodSummary>,
+    /// The NBA's collective bargaining periods present in the data, with their records.
+    pub by_cba: Vec<super::cba::CbaSummary>,
     /// The weakest game of each era, in era order (NBA/BAA first, then the ABA).
     pub clankers_by_era: Vec<EraClanker>,
     /// The hardest and easiest road to the title of each era, in era order.
@@ -402,11 +404,11 @@ fn entry(s: &TeamSeasonStat, value: f64, date: Option<NaiveDate>) -> Entry {
     }
 }
 
-fn peak(s: &TeamSeasonStat) -> Entry {
+pub(crate) fn peak(s: &TeamSeasonStat) -> Entry {
     entry(s, s.peak, Some(s.peak_date))
 }
 
-fn low(s: &TeamSeasonStat) -> Entry {
+pub(crate) fn low(s: &TeamSeasonStat) -> Entry {
     entry(s, s.low, Some(s.low_date))
 }
 
@@ -802,6 +804,7 @@ pub fn compute(
         swings,
         greatest_matchups,
         periods,
+        by_cba: super::cba::summaries(stats),
         clankers_by_era,
         roads_by_era,
     }
