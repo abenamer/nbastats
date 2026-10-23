@@ -36,6 +36,7 @@ sources:
 | `GET /api/seasons/{season}/teams` | Team-season rows: record, Elo milestones, seed, result. |
 | `GET /api/seasons/{season}/elo-history?teams=GSW,CLE` | Elo after each game, and the `schedule` span (first and last game, last played game, games remaining). |
 | `GET /api/seasons/{season}/bracket?home_advantage=100&scale=1` | Reconstructed bracket with exact probabilities. |
+| `GET /api/records/groups?by=cba,rule&league=nba&from=1947&to=2025&dynasty_titles=3&dynasty_gap=3` | Era builder: one group per combination of the `by` dimensions (`cba`, `rule`, `size`, `league`, `decade`, `format`, `dynasty`, `player`; at most four), with its seasons, records (best, weakest, titles, champions, distinct champions, `title_hhi`, `elo_spread`) and the notes of its periods; also the dynasties found. `league` is `nba`, `aba` or `all`. See the [era builder](/concepts/era-builder.md). |
 | `GET /api/records` | Every record table of the Records page, computed from the game log on each call; `by_cba` holds the records of each collective bargaining period (seasons, best and weakest team-season, titles and champions, `title_hhi`, `elo_spread`, `changes`). |
 | `GET /api/franchises` | Franchise list with uniform colours (`colors.primary`, `colors.secondary`; defunct franchises get a neutral pair). |
 | `GET /api/franchises/{key}/elo?from=2003&to=2025` | Elo after every game of a franchise, its season rows, its championships (won and lost) and its colours. |

@@ -90,6 +90,99 @@ pub async fn records(State(app): State<AppState>) -> ApiResult<Value> {
     ))))
 }
 
+/// Every field is text so a bad value answers with a JSON message, not axum's plain text.
+#[derive(Deserialize)]
+pub struct GroupsQuery {
+    /// Comma-separated dimensions, for example `cba,size`.
+    #[serde(default)]
+    pub by: String,
+    pub league: Option<String>,
+    pub from: Option<String>,
+    pub to: Option<String>,
+    pub dynasty_titles: Option<String>,
+    pub dynasty_gap: Option<String>,
+}
+
+fn whole_number(value: Option<&str>, what: &str) -> Result<Option<i64>, ApiError> {
+    match value.map(str::trim).filter(|v| !v.is_empty()) {
+        None => Ok(None),
+        Some(v) => v
+            .parse::<i64>()
+            .map(Some)
+            .map_err(|_| ApiError::bad_request(format!("{what} must be a whole number"))),
+    }
+}
+
+/// Era builder: the records of every group of seasons the chosen dimensions make.
+pub async fn records_groups(
+    State(app): State<AppState>,
+    Query(q): Query<GroupsQuery>,
+) -> ApiResult<Value> {
+    use crate::domain::eras::{
+        self, Dimension, GroupQuery, DYNASTY_GAP, DYNASTY_TITLES, MAX_DIMENSIONS,
+    };
+    use crate::domain::records::{league_sizes, League};
+    let mut dimensions: Vec<Dimension> = Vec::new();
+    for part in q.by.split(',').map(str::trim).filter(|s| !s.is_empty()) {
+        let d: Dimension = part.parse().map_err(ApiError::bad_request)?;
+        if !dimensions.contains(&d) {
+            dimensions.push(d);
+        }
+    }
+    if dimensions.len() > MAX_DIMENSIONS {
+        return Err(ApiError::bad_request(format!(
+            "at most {MAX_DIMENSIONS} dimensions"
+        )));
+    }
+    let league = match q.league.as_deref().map(|l| l.trim().to_ascii_lowercase()) {
+        None => None,
+        Some(l) if l.is_empty() || l == "all" => None,
+        Some(l) if l == "nba" => Some(League::Nba),
+        Some(l) if l == "aba" => Some(League::Aba),
+        Some(other) => {
+            let shown: String = other.chars().take(40).collect();
+            return Err(ApiError::bad_request(format!(
+                "unknown league {shown:?}; use nba, aba or all"
+            )));
+        }
+    };
+    let season = |y: Option<&str>, what: &str| {
+        whole_number(y, what)?
+            .map(|y| {
+                i32::try_from(y)
+                    .ok()
+                    .and_then(|y| SeasonYear::try_new(y).ok())
+                    .ok_or_else(|| {
+                        ApiError::bad_request(format!(
+                            "{what} must be a season end year between 1947 and 2100"
+                        ))
+                    })
+            })
+            .transpose()
+    };
+    let from = season(q.from.as_deref(), "from")?;
+    let to = season(q.to.as_deref(), "to")?;
+    if let (Some(f), Some(t)) = (from, to) {
+        if f > t {
+            return Err(ApiError::bad_request("from must not be after to"));
+        }
+    }
+    let query = GroupQuery {
+        dimensions,
+        league,
+        from,
+        to,
+        dynasty_titles: whole_number(q.dynasty_titles.as_deref(), "dynasty_titles")?
+            .map_or(DYNASTY_TITLES, |n| n.clamp(1, 20) as usize),
+        dynasty_gap: whole_number(q.dynasty_gap.as_deref(), "dynasty_gap")?
+            .map_or(DYNASTY_GAP, |n| n.clamp(0, 20) as usize),
+    };
+    let stats = app.store.team_season_stats().await?;
+    let rosters = app.store.season_rosters().await?;
+    let sizes = league_sizes(&stats, &rosters);
+    Ok(Json(json!(eras::group(&query, &stats, &sizes))))
+}
+
 fn colors_json(key: &str) -> Value {
     let (primary, secondary) = reference::franchise_colors(key);
     json!({ "primary": primary, "secondary": secondary })

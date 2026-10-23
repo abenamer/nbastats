@@ -1,6 +1,7 @@
 # Bundle update log
 
 ## 2026-10-23
+* **New**: [Era builder](/concepts/era-builder.md) describes the grouping dimensions, the dynasty rule and the player table; [Rule periods and bargaining periods](/concepts/periods.md) gains the competition formats; the terms Dimension, Dynasty era, Player era, Competition format and Era builder are defined; the API reference and the [Application overview](/concepts/application.md) follow.
 * **Update**: Records lines show where a peak was reached and the playoff record; noted in the [Application overview](/concepts/application.md).
 * **New**: [Rule periods and bargaining periods](/concepts/periods.md) lists the two period tables and what each period changed; the Records page gains the records by collective bargaining agreement; the terms Bargaining period, Title HHI and Elo spread are defined; the API reference and the [Application overview](/concepts/application.md) follow.
 * **Update**: The example configuration is regrouped; the [start runbook](/runbooks/start.md) and the [configuration reference](/reference/configuration.md) follow. After the security review of the question box: the scope rule counts only lookups that returned data, the per-question result budget and the no-redirect rule are documented in the concept and the [Security model](/concepts/security.md).

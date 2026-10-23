@@ -13,14 +13,9 @@ use serde::Serialize;
 
 use crate::domain::ids::SeasonYear;
 use crate::domain::models::PlayoffResult;
-use crate::domain::records::{low, peak, Entry, League, TeamSeasonStat};
-
-/// One change an agreement brought, with the season the change is dated to.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-pub struct Change {
-    pub season: SeasonYear,
-    pub text: &'static str,
-}
+use crate::domain::records::{
+    change, low, peak, Change, ChangeNote, Entry, League, TeamSeasonStat,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct CbaPeriod {
@@ -28,13 +23,6 @@ pub struct CbaPeriod {
     pub name: &'static str,
     pub summary: &'static str,
     pub changes: &'static [Change],
-}
-
-const fn change(end_year: i32, text: &'static str) -> Change {
-    Change {
-        season: SeasonYear::of(end_year),
-        text,
-    }
 }
 
 /// The bargaining periods, in season order. Dates are the first season an agreement
@@ -162,30 +150,32 @@ pub fn cba_of(season: SeasonYear) -> &'static CbaPeriod {
         .unwrap_or(&CBA_PERIODS[0])
 }
 
-/// A franchise's titles within a period.
+/// A franchise's titles within a group.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct TitleCount {
     pub franchise_key: String,
-    /// The code and name of the franchise's latest title in the period.
+    /// The code and name of the franchise's latest title in the group.
     pub code: String,
     pub name: String,
     pub titles: usize,
 }
 
-/// One change of a period, as the API serves it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct ChangeNote {
-    pub season: SeasonYear,
-    pub text: String,
-}
-
-impl From<&Change> for ChangeNote {
-    fn from(c: &Change) -> Self {
-        Self {
-            season: c.season,
-            text: c.text.to_string(),
-        }
-    }
+/// The records of a group of team-seasons: a bargaining period, or any group the era
+/// builder makes.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct GroupStats {
+    pub best: Entry,
+    pub weakest: Entry,
+    /// Titles recorded in the group and the franchises that won them, most titles first.
+    pub titles: usize,
+    pub champions: Vec<TitleCount>,
+    pub distinct_champions: usize,
+    /// Herfindahl-Hirschman index of the titles: the sum of each champion's squared share.
+    /// 1.0 when one franchise won every title; `None` without a title.
+    pub title_hhi: Option<f64>,
+    /// The standard deviation of season-end ratings across the league, averaged over the
+    /// group's seasons: a measure of how unequal the league was.
+    pub elo_spread: Option<f64>,
 }
 
 /// A bargaining period with the records of its seasons in the data.
@@ -198,18 +188,8 @@ pub struct CbaSummary {
     pub first_season: SeasonYear,
     pub last_season: SeasonYear,
     pub seasons: usize,
-    pub best: Entry,
-    pub weakest: Entry,
-    /// Titles recorded in the period and the franchises that won them, most titles first.
-    pub titles: usize,
-    pub champions: Vec<TitleCount>,
-    pub distinct_champions: usize,
-    /// Herfindahl-Hirschman index of the titles: the sum of each champion's squared share.
-    /// 1.0 when one franchise won every title; `None` without a title.
-    pub title_hhi: Option<f64>,
-    /// The standard deviation of season-end ratings across the league, averaged over the
-    /// period's seasons: a measure of how unequal the league was.
-    pub elo_spread: Option<f64>,
+    #[serde(flatten)]
+    pub stats: GroupStats,
     pub changes: Vec<ChangeNote>,
 }
 
@@ -251,6 +231,46 @@ pub fn elo_spread(stats: &[&TeamSeasonStat]) -> Option<f64> {
     }
 }
 
+/// The records of a group of team-seasons; `None` when the group is empty. Titles are
+/// grouped by franchise, so a relocated champion keeps its count.
+pub fn group_stats(members: &[&TeamSeasonStat]) -> Option<GroupStats> {
+    let best = members
+        .iter()
+        .max_by(|a, b| a.peak.total_cmp(&b.peak).then(b.season.cmp(&a.season)))?;
+    let weakest = members
+        .iter()
+        .min_by(|a, b| a.low.total_cmp(&b.low).then(b.season.cmp(&a.season)))?;
+    let mut by_franchise: BTreeMap<&str, TitleCount> = BTreeMap::new();
+    for s in members
+        .iter()
+        .filter(|s| s.playoff_result == PlayoffResult::Champion)
+    {
+        let t = by_franchise
+            .entry(s.franchise_key.as_str())
+            .or_insert_with(|| TitleCount {
+                franchise_key: s.franchise_key.clone(),
+                code: s.code.clone(),
+                name: s.name.clone(),
+                titles: 0,
+            });
+        t.titles += 1;
+        t.code = s.code.clone();
+        t.name = s.name.clone();
+    }
+    let mut champions: Vec<TitleCount> = by_franchise.into_values().collect();
+    champions.sort_by(|a, b| b.titles.cmp(&a.titles).then(a.code.cmp(&b.code)));
+    let counts: Vec<usize> = champions.iter().map(|c| c.titles).collect();
+    Some(GroupStats {
+        best: peak(best),
+        weakest: low(weakest),
+        titles: counts.iter().sum(),
+        distinct_champions: champions.len(),
+        title_hhi: title_hhi(&counts),
+        champions,
+        elo_spread: elo_spread(members),
+    })
+}
+
 /// The bargaining periods present in the data, each with its records, in season order.
 pub fn summaries(stats: &[TeamSeasonStat]) -> Vec<CbaSummary> {
     CBA_PERIODS
@@ -263,33 +283,6 @@ pub fn summaries(stats: &[TeamSeasonStat]) -> Vec<CbaSummary> {
             let mut seasons: Vec<SeasonYear> = mine.iter().map(|s| s.season).collect();
             seasons.sort_unstable();
             seasons.dedup();
-            let best = mine
-                .iter()
-                .max_by(|a, b| a.peak.total_cmp(&b.peak).then(b.season.cmp(&a.season)))?;
-            let weakest = mine
-                .iter()
-                .min_by(|a, b| a.low.total_cmp(&b.low).then(b.season.cmp(&a.season)))?;
-            // Titles by franchise, so a relocated champion keeps its count.
-            let mut by_franchise: BTreeMap<&str, TitleCount> = BTreeMap::new();
-            for s in mine
-                .iter()
-                .filter(|s| s.playoff_result == PlayoffResult::Champion)
-            {
-                let t = by_franchise
-                    .entry(s.franchise_key.as_str())
-                    .or_insert_with(|| TitleCount {
-                        franchise_key: s.franchise_key.clone(),
-                        code: s.code.clone(),
-                        name: s.name.clone(),
-                        titles: 0,
-                    });
-                t.titles += 1;
-                t.code = s.code.clone();
-                t.name = s.name.clone();
-            }
-            let mut champions: Vec<TitleCount> = by_franchise.into_values().collect();
-            champions.sort_by(|a, b| b.titles.cmp(&a.titles).then(a.code.cmp(&b.code)));
-            let counts: Vec<usize> = champions.iter().map(|c| c.titles).collect();
             Some(CbaSummary {
                 name: p.name.to_string(),
                 summary: p.summary.to_string(),
@@ -297,13 +290,7 @@ pub fn summaries(stats: &[TeamSeasonStat]) -> Vec<CbaSummary> {
                 first_season: *seasons.first()?,
                 last_season: *seasons.last()?,
                 seasons: seasons.len(),
-                best: peak(best),
-                weakest: low(weakest),
-                titles: counts.iter().sum(),
-                distinct_champions: champions.len(),
-                title_hhi: title_hhi(&counts),
-                champions,
-                elo_spread: elo_spread(&mine),
+                stats: group_stats(&mine)?,
                 changes: p.changes.iter().map(ChangeNote::from).collect(),
             })
         })
@@ -411,20 +398,29 @@ mod tests {
         assert_eq!(out.len(), 2);
         let p = &out[0];
         assert_eq!(
-            (p.name.as_str(), p.seasons, p.titles, p.distinct_champions),
+            (
+                p.name.as_str(),
+                p.seasons,
+                p.stats.titles,
+                p.stats.distinct_champions
+            ),
             ("1999 agreement", 3, 3, 2)
         );
         assert_eq!(p.first_season, SeasonYear::of(1999));
         assert_eq!(p.last_season, SeasonYear::of(2001));
-        assert_eq!(p.champions[0].code, "LAL");
-        assert_eq!(p.champions[0].titles, 2);
-        assert_eq!(p.best.code, "LAL");
-        assert_eq!(p.best.season, SeasonYear::of(2001));
-        assert!((p.title_hhi.unwrap() - (4.0 + 1.0) / 9.0).abs() < 1e-12);
-        assert!((p.elo_spread.unwrap() - (50.0 + 55.0 + 65.0) / 3.0).abs() < 1e-9);
+        assert_eq!(p.stats.champions[0].code, "LAL");
+        assert_eq!(p.stats.champions[0].titles, 2);
+        assert_eq!(p.stats.best.code, "LAL");
+        assert_eq!(p.stats.best.season, SeasonYear::of(2001));
+        assert!((p.stats.title_hhi.unwrap() - (4.0 + 1.0) / 9.0).abs() < 1e-12);
+        assert!((p.stats.elo_spread.unwrap() - (50.0 + 55.0 + 65.0) / 3.0).abs() < 1e-9);
         assert_eq!(p.changes.len(), 4);
         assert_eq!(
-            (out[1].name.as_str(), out[1].titles, out[1].title_hhi),
+            (
+                out[1].name.as_str(),
+                out[1].stats.titles,
+                out[1].stats.title_hhi
+            ),
             ("2005 agreement", 1, Some(1.0))
         );
     }

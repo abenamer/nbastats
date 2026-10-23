@@ -49,6 +49,10 @@ The ABA had no agreement of this kind, so only NBA/BAA seasons belong to a barga
 | 2017 agreement | 2017-18 | Supermax extensions, two-way contracts, a longer calendar with fewer back-to-backs; pandemic amendments and the permanent play-in. |
 | 2023 agreement | 2023-24 | A second apron with hard limits on trades and exceptions, a 65-game rule for awards, the NBA Cup, cap growth limited to 10 percent a year. |
 
+# Competition formats
+
+The era builder also groups by competition format, curated in `domain::eras`: early playoffs from 1946-47 (division-based fields that changed often), the 16-team field from 1983-84, best-of-seven in every round from 2002-03, the play-in era from 2020-21 and the NBA Cup era from 2023-24. ABA seasons are one format of their own. The rule periods above also carry dated changes, shown in the era builder's notes.
+
 # The records of a bargaining period
 
 For each period present in the data, the Records page shows: the seasons it covers, the best team-season (season peak) and the weakest (season low), the titles and the franchises that won them (a relocated champion keeps its count), the number of distinct champions, the title HHI and the Elo spread.
@@ -58,4 +62,4 @@ For each period present in the data, the Records page shows: the seasons it cove
 
 # Verification
 
-The period tables and their changes are curated from memory of the public record and need a check against a reference before they are relied on. The checks of this bundle do not verify them.
+The period tables (rule, bargaining, format) and their changes, and the player careers of the [era builder](era-builder.md), are curated from memory of the public record and need a check against a reference before they are relied on. The checks of this bundle do not verify them.
