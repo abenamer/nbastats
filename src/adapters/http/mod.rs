@@ -38,6 +38,7 @@ pub fn router(app: State) -> Router {
         .route("/franchises/{key}/elo", get(api::franchise_elo))
         .route("/matchup", get(api::matchup))
         .route("/exact/alpha", get(api::exact_alpha))
+        .route("/strength", get(api::strength))
         .route("/dashboard", get(api::dashboard))
         .route("/dynasty", get(api::dynasty))
         .route("/jobs", get(api::list_jobs))

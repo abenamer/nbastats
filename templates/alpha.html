@@ -8,6 +8,7 @@
         <li><strong>Equal strength first.</strong> Leave every alpha at 1 and run: with 30 franchises over 22 seasons, some franchise wins four or more titles in about 16 percent of histories, which the exact check below the results confirms.</li>
         <li><strong>Then a strong franchise.</strong> Click "Use NBA franchise names", set one alpha to 4 (four times the tickets of each other franchise, a 12.1 percent title chance each season) and pick it as the franchise of interest. Its own probability of four or more titles in 22 seasons rises to about 27 percent.</li>
         <li><strong>A fading strength.</strong> The season-dependent mode moves every alpha half of the way to 1 every half-life, so a strong start melts into the pack (an alpha below 1 rises toward 1 the same way). There is no exact value in that mode; the ± value is the Monte Carlo interval, and more iterations narrow it.</li>
+        <li><strong>Or work backwards.</strong> The panel below the results turns a record into a strength two ways: as an alpha (four titles in eight seasons implies alpha 29, a 50 percent title chance per season; the same four in 22 seasons alpha 6.4) and as the Elo a team would have needed against the real playoff fields of those seasons, next to what the franchise actually rated.</li>
         <li><strong>Save and compare.</strong> A name saves the run as a scenario with its seed; tick several below and compare them side by side. Open restores a scenario's inputs, the mode and the half-life included, and the same inputs and seed always give the same result.</li>
       </ol>
       <p class="small muted">The step-by-step version is the runbook "Run an alpha scenario" in the documentation; the concept "Alpha lottery engine" explains the model, each result and the limits.</p>
@@ -47,6 +48,25 @@
     <h3>Exact check (equal strength)</h3>
     <p class="muted small">A closed formula for the equal-strength case, computed without simulation: for <span id="exN">30</span> equally likely franchises over <span id="exS">22</span> seasons, the exact probability that at least one wins <span id="exK">4</span>+ titles is <strong id="exact">…</strong> (16.05% for 30/22/4). With every alpha at 1 the simulated headline agrees with it within the ± range in 19 runs of 20; with unequal constant alphas the exact value for your alphas is printed on the cards instead.</p>
   </div>
+</section>
+<section class="panel" id="backward">
+  <h2>Work backwards from the titles</h2>
+  <p class="muted small">The question in reverse: how strong did a franchise have to be to win the titles it won? Pick the franchise, the window of seasons and the titles won. The record is read two ways, both computed exactly, without simulation.</p>
+  <p class="muted small"><strong>As an alpha.</strong> The title chance per season that makes the titles the expected count (titles divided by seasons), written as an alpha against every other franchise at 1. Alpha 29 means 29 times the tickets of each other franchise, a 50 percent title chance each season. It is a ratio of title odds, not a measure of how much better the team was.</p>
+  <p class="muted small"><strong>As a strength.</strong> The rating a team of constant strength would need, playing the actual playoff fields of those seasons (every other team at its real pre-playoff Elo), for its title chance per season to equal the record's. It is given as Elo points above the league mean, as points per game (100 Elo is 3.5 points) and as the record such a team would post over 82 games against average opponents. Beside it, what the franchise actually rated before the playoffs over the same seasons, so the two can be compared. The window drives both readings: four titles in eight seasons ask far more than four in twenty-two. A few titles are a small sample, so the 95 percent range is wide. And a strength that makes the record the expected outcome still falls short of it in about four histories of ten; the even-odds line is the strength at which the record becomes a coin flip.</p>
+  <div class="row">
+    <label title="The franchise asked about; its own ratings are left out of the fields it plays. Leave empty for a franchise from outside the league.">Franchise <select id="bFranchise"><option value="">none</option></select></label>
+    <label title="First season of the window, by its end year: 2015 is 2014-15.">From <input id="bFrom" type="number" value="2015" min="1947" max="2100" style="width:5.5rem"></label>
+    <label title="Last season of the window, by its end year.">To <input id="bTo" type="number" value="2022" min="1947" max="2100" style="width:5.5rem"></label>
+    <label title="Titles the franchise won in the window.">Titles won <input id="bTitles" type="number" value="4" min="1" style="width:5rem"></label>
+    <button id="bApply" title="Puts the implied alpha on the franchise of interest in the scenario above, with the window's length as seasons and the titles as the threshold.">Use this alpha for the franchise of interest</button>
+    <span id="bStatus" class="muted small"></span>
+  </div>
+  <h3 style="margin-top:.8rem">As an alpha</h3>
+  <div id="backAlpha" class="cards"></div>
+  <h3>As a strength against the real fields</h3>
+  <div id="backElo" class="cards"></div>
+  <p id="backNote" class="muted small"></p>
 </section>
 <section class="panel">
   <h2>Saved scenarios</h2>

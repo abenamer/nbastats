@@ -1,7 +1,7 @@
 ---
 type: Model
 title: Alpha lottery engine
-description: Engine A, the alpha lottery. What question it answers, what the alpha values and the threshold mean, how to read its results, and the exact formula that checks it.
+description: Engine A, the alpha lottery. What question it answers, what the alpha values and the threshold mean, how to read its results, how a title record is read backwards into a strength, and the exact formula that checks it.
 tags: [engine-a, alpha, monte-carlo, exact]
 generated: { by: "human:abenamer", at: "2026-10-21T17:30:00Z" }
 sources:
@@ -11,6 +11,9 @@ sources:
   - id: exact
     resource: /src/domain/simulation/exact.rs
     title: Exact occupancy calculation
+  - id: strength
+    resource: /src/domain/strength.rs
+    title: Strength in Elo terms
 ---
 
 # What it is for
@@ -77,6 +80,22 @@ For constant alpha values, the engine also computes the exact answer:
 For 30 equal franchises, 22 seasons and K = 4, the exact probability that at least one franchise wins four or more titles is 16.05%. The unit test `converges_to_exact_occupancy_probability` checks that the Monte Carlo result agrees within four standard errors.[^exact]
 
 In season-dependent mode there is no exact value, and the page says so; the Monte Carlo interval is the only error bar.
+
+# Working backwards from the titles
+
+The page also answers the question in reverse: how strong did a franchise have to be to win the titles it won? Pick the franchise, a window of seasons and the titles won; the record is read two ways, both computed exactly.
+
+**As an alpha.** For `titles` titles in `seasons` seasons among `franchises` franchises, the implied title chance per season is titles divided by seasons, the chance that makes the titles the expected count and the maximum-likelihood chance for that record. Against every other franchise at alpha 1 it is the alpha
+
+    alpha = (franchises − 1) · p / (1 − p)
+
+Four titles in 22 seasons among 30 franchises give p = 0.182 and alpha 6.44: 6.4 times the tickets of each other franchise, 18 percent of the whole urn. The same four titles in the eight seasons of the run itself give p = 0.5 and alpha 29. An alpha is a ratio of title odds, not a measure of how much better the team was. The panel adds the 95 percent Wilson interval of the chance and the alphas at its ends (for 4 of 22, alpha 2.3 to 18.2, because a few titles are a small sample), the chance of at least that many titles at the implied strength (59 percent for 4 of 22: the record is the expected outcome and still fails four times in ten), the alpha at which that many titles becomes a coin flip (5.7), and the chance of the record for an ordinary franchise, luck alone (0.6 percent). A title every season has no finite alpha. `domain::simulation::exact::strength_for_titles` computes it.
+
+**As a strength.** The alpha says how lopsided the odds had to be; the strength says how good the team had to be. For each season of the window the field is the pre-playoff Elo of every other team (the franchise's own rating left out). A team of constant strength is placed at the league mean plus a gap, the top sixteen by rating form a modern 16-team bracket seeded by rating with the two strongest in different halves, and the bracket's exact probabilities (the [playoff simulator](playoff-engine.md)'s model with the default home advantage) give the team's title chance; the chance averaged over the window's seasons rises with the gap, so bisection finds the gap at which it equals the record's chance. The gap is reported as Elo points above the league mean, as points per game (100 Elo is 3.5 points) and as the record such a team would post over 82 games against average opponents, half at home. The same gaps are given for the ends of the record's range and for even odds, with the title chance of an average team against those fields, and with what the franchise actually rated before the playoffs, averaged over the window with missed postseasons included, so the two can be compared. `domain::strength` computes it.
+
+The field matters more than the formula. Against 29 equal teams a 50 percent title chance needs only about 118 Elo above the mean, because the top seed with home court in every round wins four series at 84 percent each. Against the real fields, where the best team enters the playoffs about 170 to 285 Elo above the mean in the modern seasons, the same chance needs a gap in the hundreds. The chance rises with the gap apart from small steps where the team overtakes another and changes seed, so each reading also carries the chance its gap really has, and the page shows it when it differs. A title every season has no finite gap; a window in which no season has at least sixteen rated teams gives no strength reading; the alpha reading counts the franchises of the last season with a field. One reading runs at a time, on a thread of its own, because a long window costs seconds of exact brackets (`application::strength` builds the fields and runs it).
+
+"Use this alpha" puts the implied alpha on the franchise of interest, with the window's length as seasons and the titles as the threshold, so the forward simulation can show the whole distribution at that strength.
 
 # Limits
 

@@ -67,6 +67,9 @@ pub struct App {
     pub reports: Option<EspnReportSource>,
     /// One report lookup at a time; a request that finds it taken answers from the store.
     pub report_slot: tokio::sync::Semaphore,
+    /// One backward reading of a title record at a time (seconds of exact brackets); the
+    /// rest get status 429.
+    pub strength_slot: tokio::sync::Semaphore,
     /// Held while a results sync runs (manual or scheduled); at most one at a time.
     pub sync_lock: Arc<tokio::sync::Mutex<()>>,
     sync_phase: std::sync::Mutex<SyncPhase>,
@@ -101,6 +104,7 @@ impl App {
             ask_slots: tokio::sync::Semaphore::new(ASK_SLOTS),
             reports,
             report_slot: tokio::sync::Semaphore::new(1),
+            strength_slot: tokio::sync::Semaphore::new(1),
             sync_lock: Arc::new(tokio::sync::Mutex::new(())),
             sync_phase: std::sync::Mutex::new(SyncPhase::Idle),
             started_at: chrono::Utc::now(),

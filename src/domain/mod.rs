@@ -12,4 +12,5 @@ pub mod playoffs;
 pub mod records;
 pub mod reference;
 pub mod simulation;
+pub mod strength;
 pub mod validation;

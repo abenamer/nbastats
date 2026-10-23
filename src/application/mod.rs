@@ -12,3 +12,4 @@ pub mod reports;
 pub mod results_sync;
 pub mod scheduler;
 pub mod state;
+pub mod strength;

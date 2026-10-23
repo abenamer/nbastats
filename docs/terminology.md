@@ -42,6 +42,8 @@ These are project-specific technical terms. They are not a reproduction of the A
 | Game log | The stored list of games with the application's Elo before and after each game, and the archive's reference ratings for archive games. |
 | Game report | The wire-service recap of a played game (the Associated Press recap that ESPN hosts), linked from the game's score when the lookup finds one; stored by date and team codes. |
 | Half-life | In the Alpha Simulator's season-dependent mode, the number of seasons for an alpha to move half of the way to 1. |
+| Implied alpha | The alpha a title record implies on the Alpha Simulator: the title chance per season that makes the titles the expected count (titles divided by seasons), as an alpha against every other franchise at 1. |
+| Implied strength | The rating gap above the league mean at which a team of constant strength, against the actual playoff fields of a window of seasons, has the title chance a record implies; given in Elo points, points per game and wins per 82. Computed in `domain::strength`. |
 | Information cutoff | The last date whose games a forecast may use. |
 | Job | A stored simulation request with parameters, seed, versions, progress and result. |
 | Language model | A chat model with tool calling behind the `LanguageModel` port; the `OpenRouterModel` adapter calls it through OpenRouter's OpenAI-compatible API. |
