@@ -1,18 +1,34 @@
 {% extends "base.html" %}
 {% block content %}
+<section>
+  <div class="panel">
+    <p class="muted">The alpha lottery answers one question: how often would a title run happen by chance, given how strong each franchise is? Each season one franchise wins the title. Its probability is proportional to its alpha, its share of the tickets. Seasons are independent draws. Set the strengths, the number of seasons and the title count that counts as a dynasty (the threshold K). The simulation then counts how often some franchise, or the franchise you name, reaches that count. Nothing here uses the game log or the ratings. For a real bracket or season, use the Playoff Simulator or the Season Forecast. For a real title run against the historical ratings, use the Dynasty Lab, which feeds this engine.</p>
+    <details><summary>How to use this page</summary>
+      <ol class="small">
+        <li><strong>Equal strength first.</strong> Leave every alpha at 1 and run: with 30 franchises over 22 seasons, some franchise wins four or more titles in about 16 percent of histories, which the exact check below the results confirms.</li>
+        <li><strong>Then a strong franchise.</strong> Click "Use NBA franchise names", set one alpha to 4 (four times the tickets of each other franchise, a 12.1 percent title chance each season) and pick it as the franchise of interest. Its own probability of four or more titles in 22 seasons rises to about 27 percent.</li>
+        <li><strong>A fading strength.</strong> The season-dependent mode moves every alpha half of the way to 1 every half-life, so a strong start melts into the pack (an alpha below 1 rises toward 1 the same way). There is no exact value in that mode; the ± value is the Monte Carlo interval, and more iterations narrow it.</li>
+        <li><strong>Save and compare.</strong> A name saves the run as a scenario with its seed; tick several below and compare them side by side. Open restores a scenario's inputs, the mode and the half-life included, and the same inputs and seed always give the same result.</li>
+      </ol>
+      <p class="small muted">The step-by-step version is the runbook "Run an alpha scenario" in the documentation; the concept "Alpha lottery engine" explains the model, each result and the limits.</p>
+    </details>
+  </div>
+</section>
 <section class="grid2">
   <div class="panel">
     <h2>Scenario</h2>
     <div class="controls stack">
-      <label>Name (optional, saves the scenario) <input id="name" placeholder="e.g. Warriors alpha 4"></label>
-      <label>Franchises <input id="n" type="number" value="30" min="1" max="200"></label>
-      <label>Seasons <input id="seasons" type="number" value="22" min="1" max="200"></label>
-      <label>Iterations <input id="iterations" type="number" value="100000" min="1000" step="1000"></label>
-      <label>Threshold K <input id="k" type="number" value="4" min="1"></label>
-      <label>Seed <input id="seed" type="number" value="20240101"></label>
-      <label>Alpha mode <select id="mode"><option value="constant">Constant alphas</option><option value="decay">Season-dependent: alpha decays toward 1</option></select></label>
-      <label id="decayRow" class="hidden">Half-life (seasons) <input id="halflife" type="number" value="5" min="0.1" step="0.5"></label>
+      <label title="A named run is saved as a scenario with its inputs, seed and result; leave empty for a run you do not keep.">Name (optional, saves the scenario) <input id="name" placeholder="e.g. Warriors alpha 4"></label>
+      <label title="How many franchises take part in the lottery. Use the button below for the active NBA franchises by name.">Franchises <input id="n" type="number" value="30" min="1" max="200"></label>
+      <label title="How many seasons each simulated history runs: 22 is about one generation of fans, 10 a decade.">Seasons <input id="seasons" type="number" value="22" min="1" max="200"></label>
+      <label id="iterationsRow" title="Simulated histories. More iterations narrow the Monte Carlo interval.">Iterations <input id="iterations" type="number" value="100000" min="1000" step="1000"></label>
+      <label title="The title count that counts as a dynasty: the results report how often a franchise wins K or more titles in the seasons simulated.">Threshold K <input id="k" type="number" value="4" min="1"></label>
+      <label title="The random seed. The same inputs and seed give the same result.">Seed <input id="seed" type="number" value="20240101"></label>
+      <label title="Constant: the alphas hold for every season. Season-dependent: every alpha moves half of the way to 1 every half-life, so a strong start fades and an alpha below 1 rises.">Alpha mode <select id="mode"><option value="constant">Constant alphas</option><option value="decay">Season-dependent: alpha decays toward 1</option></select></label>
+      <label id="decayRow" class="hidden" title="Seasons for an alpha to move half of the way to 1: a franchise at 4 is at 2.5 after one half-life and at 1.75 after two.">Half-life (seasons) <input id="halflife" type="number" value="5" min="0.1" step="0.5"></label>
+      <label title="The franchise whose own probability of K or more titles is reported in the second card.">Franchise of interest <select id="target"></select></label>
       <div class="row"><button id="useLeague">Use NBA franchise names</button><button id="resetAlphas">All alphas = 1</button></div>
+      <p class="small muted" style="margin:.2rem 0">Alphas are relative strengths, not probabilities: a franchise with alpha 4 among 29 at 1 holds 4 of 33 tickets. Scaling every alpha by the same factor changes nothing.</p>
       <div id="alphaEditor" class="alpha-editor"></div>
       <button id="run" class="primary">Run simulation</button>
       <span id="status" class="muted"></span>
@@ -20,6 +36,7 @@
   </div>
   <div class="panel">
     <h2>Results</h2>
+    <p class="muted small">The first card is the headline: the share of histories in which some franchise, whichever, reached K titles. The second is the same count for the franchise of interest alone. E[# franchises ≥ K] is the expected number of dynasties per history. Top-5 share, Gini and HHI say how concentrated the titles were on average (higher means fewer franchises took more of them); compare them with the historical values on the Dashboard. The ± value is the 95 percent Monte Carlo interval. With constant alphas the exact value is printed beside it; in 19 runs of 20 it lies inside the ± range, and a gap of several times that range points to a defect.</p>
     <div id="cards" class="cards"></div>
     <div id="results"></div>
     <div class="grid2">
@@ -28,11 +45,12 @@
     </div>
     <canvas id="expectedChart" height="240"></canvas>
     <h3>Exact check (equal strength)</h3>
-    <p class="muted small">For <span id="exN">30</span> equally likely franchises over <span id="exS">22</span> seasons, the exact probability that at least one wins <span id="exK">4</span>+ titles is <strong id="exact">…</strong> (expected ≈ 16.05% for 30/22/4). The simulated value should agree within a few standard errors.</p>
+    <p class="muted small">A closed formula for the equal-strength case, computed without simulation: for <span id="exN">30</span> equally likely franchises over <span id="exS">22</span> seasons, the exact probability that at least one wins <span id="exK">4</span>+ titles is <strong id="exact">…</strong> (16.05% for 30/22/4). With every alpha at 1 the simulated headline agrees with it within the ± range in 19 runs of 20; with unequal constant alphas the exact value for your alphas is printed on the cards instead.</p>
   </div>
 </section>
 <section class="panel">
   <h2>Saved scenarios</h2>
+  <p class="muted small">Named runs, with the versions of the application and of the model that produced them. Open restores a run's inputs into the form, the alpha mode and the half-life included; tick several and compare them side by side (the Franchise column names each run's franchise of interest).</p>
   <div class="row"><button id="refreshScenarios">Refresh list</button><button id="compare">Compare selected</button></div>
   <div id="scenarios" class="table-wrap"></div>
   <div id="comparison" class="table-wrap"></div>
