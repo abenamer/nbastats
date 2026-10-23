@@ -365,7 +365,7 @@ async fn records_queries_summarise_the_game_log(pool: PgPool) {
     assert_eq!(gsw.playoff_result, PlayoffResult::Finals);
     assert_eq!(gsw.conference, Some(Conference::West));
     // The largest swing is a real game: the winner gained what the loser lost.
-    let swings = store.biggest_swings(5).await.unwrap();
+    let swings = store.biggest_swings(None, 5).await.unwrap();
     assert_eq!(swings.len(), 5);
     assert!(swings[0].elo_post - swings[0].elo_pre >= swings[1].elo_post - swings[1].elo_pre);
     assert!(swings
@@ -376,11 +376,11 @@ async fn records_queries_summarise_the_game_log(pool: PgPool) {
     assert!(rosters.iter().all(|(s, _)| *s == S2016));
     // Matchups come back ranked by the combined pre-game rating, both ways.
     let greatest = store
-        .matchups(records::MatchupOrder::Strongest, 3)
+        .matchups(None, records::MatchupOrder::Strongest, 3)
         .await
         .unwrap();
     let weakest = store
-        .matchups(records::MatchupOrder::Weakest, 3)
+        .matchups(None, records::MatchupOrder::Weakest, 3)
         .await
         .unwrap();
     assert_eq!((greatest.len(), weakest.len()), (3, 3));
@@ -388,17 +388,123 @@ async fn records_queries_summarise_the_game_log(pool: PgPool) {
     assert!(weakest[0].combined_elo() <= weakest[1].combined_elo());
     assert!(greatest[0].combined_elo() > weakest[0].combined_elo());
     // One weakest game per season and league: the fixture has one NBA season, no ABA games.
-    let per_season = store.weakest_matchup_per_season().await.unwrap();
+    let per_season = store.weakest_matchup_per_season(None).await.unwrap();
     assert_eq!(per_season.len(), 1);
     assert_eq!(per_season[0].season, S2016);
     assert!((per_season[0].combined_elo() - weakest[0].combined_elo()).abs() < 1e-9);
     // The champion's road comes from the championships table, with both phases filled.
-    let roads = store.champion_roads().await.unwrap();
+    let roads = store.champion_roads(None).await.unwrap();
     assert_eq!(roads.len(), 1);
     assert_eq!((roads[0].code.as_str(), roads[0].season), ("CLE", S2016));
     assert!(roads[0].regular_games > 0 && roads[0].playoff_games > 0);
     assert!(roads[0].playoff_opponent_elo > roads[0].regular_opponent_elo);
     assert!(roads[0].toughest_opponent_elo >= roads[0].playoff_opponent_elo);
+    // A season scope keeps the games of its seasons and leagues only: the fixture's one
+    // NBA season answers in full under a scope that names it and not at all under one that
+    // names another season or puts 2016 on the ABA side.
+    let in_scope = records::SeasonScope {
+        nba: vec![S2016],
+        aba: vec![],
+    };
+    let elsewhere = records::SeasonScope {
+        nba: vec![SeasonYear::of(2015)],
+        aba: vec![S2016],
+    };
+    assert_eq!(
+        store.biggest_swings(Some(&in_scope), 5).await.unwrap(),
+        swings
+    );
+    assert!(store
+        .biggest_swings(Some(&elsewhere), 5)
+        .await
+        .unwrap()
+        .is_empty());
+    assert_eq!(
+        store
+            .matchups(Some(&in_scope), records::MatchupOrder::Strongest, 3)
+            .await
+            .unwrap(),
+        greatest
+    );
+    assert!(store
+        .matchups(Some(&elsewhere), records::MatchupOrder::Strongest, 3)
+        .await
+        .unwrap()
+        .is_empty());
+    assert_eq!(
+        store
+            .weakest_matchup_per_season(Some(&in_scope))
+            .await
+            .unwrap(),
+        per_season
+    );
+    assert!(store
+        .weakest_matchup_per_season(Some(&elsewhere))
+        .await
+        .unwrap()
+        .is_empty());
+    assert_eq!(store.champion_roads(Some(&in_scope)).await.unwrap(), roads);
+    assert!(store
+        .champion_roads(Some(&elsewhere))
+        .await
+        .unwrap()
+        .is_empty());
+    // Two ABA games of 1975-76 take the ABA side of the scope: an ABA scope returns them
+    // and nothing else, the NBA scope of 2016 still leaves them out. Kentucky and St. Louis
+    // folded at the merger, so no NBA team continues from them and the 2016 ratings stay.
+    let aba_csv = "date,season,neutral,playoff,team1,team2,elo1_pre,elo2_pre,elo_prob1,elo_prob2,elo1_post,elo2_post,score1,score2,is_home\n\
+1975-11-01,1976,0,,KEN,SSL,1500,1500,0.6,0.4,1510,1490,110,100,1\n\
+1975-11-03,1976,0,,SSL,KEN,1490,1510,0.5,0.5,1505,1495,120,105,1\n";
+    imports::import_bytes(&store, aba_csv.as_bytes(), prov("mini_1976.csv"), false)
+        .await
+        .unwrap();
+    let s1976 = SeasonYear::of(1976);
+    let aba_scope = records::SeasonScope {
+        nba: vec![],
+        aba: vec![s1976],
+    };
+    let aba_swings = store.biggest_swings(Some(&aba_scope), 5).await.unwrap();
+    assert_eq!(aba_swings.len(), 2);
+    assert!(aba_swings.iter().all(|g| g.season == s1976));
+    let aba_games = store
+        .matchups(Some(&aba_scope), records::MatchupOrder::Strongest, 5)
+        .await
+        .unwrap();
+    assert_eq!(aba_games.len(), 2);
+    assert!(aba_games
+        .iter()
+        .all(|m| m.home_code == "KEN" || m.home_code == "SSL"));
+    let aba_weakest = store
+        .weakest_matchup_per_season(Some(&aba_scope))
+        .await
+        .unwrap();
+    assert_eq!(aba_weakest.len(), 1);
+    assert_eq!(aba_weakest[0].season, s1976);
+    // The same season on the NBA side selects nothing: a game belongs to its teams' league.
+    let wrong_side = records::SeasonScope {
+        nba: vec![s1976],
+        aba: vec![],
+    };
+    assert!(store
+        .biggest_swings(Some(&wrong_side), 5)
+        .await
+        .unwrap()
+        .is_empty());
+    assert_eq!(
+        store
+            .weakest_matchup_per_season(Some(&in_scope))
+            .await
+            .unwrap(),
+        per_season
+    );
+    assert_eq!(
+        store.weakest_matchup_per_season(None).await.unwrap().len(),
+        2
+    );
+    // The record tables over no seasons at all are empty, not a panic.
+    let empty = records::compute(&[], records::GameRecords::default(), &[]);
+    assert!(empty.all_time_high.is_empty() && empty.by_era.is_empty() && empty.by_cba.is_empty());
+    assert!(empty.conference_seasons.is_empty() && empty.roads_by_era.is_empty());
     let r = records::compute(
         &stats,
         records::GameRecords {

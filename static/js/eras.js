@@ -3,12 +3,17 @@
   const panel = document.getElementById('builder');
   if (!panel) return;
   const $ = id => document.getElementById(id);
-  const DIMS = [['cba', 'CBA period'], ['rule', 'Rule period'], ['size', 'League size'], ['league', 'League'], ['decade', 'Decade'], ['format', 'Format'], ['dynasty', 'Dynasty era'], ['player', 'Player era']];
-  const DIM_TIPS = { cba: 'The collective bargaining agreement in force (NBA/BAA).', rule: 'The rule period: shot clock, three-point line, zone defense, hand-check ban; the ABA on its own.', size: 'The number of teams in the league that season.', league: 'NBA/BAA or ABA.', decade: 'Decade of the season\'s start year.', format: 'The competition format: early playoffs, 16-team field, best-of-seven throughout, play-in era, NBA Cup era.', dynasty: 'A franchise\'s run of titles (thresholds in the filter row), computed for NBA/BAA champions only. Overlapping runs share a joined label; seasons outside any run are "No dynasty".', player: 'Curated careers of every league and Finals MVP (and George Mikan). A season belongs to every player active in it, so season counts add up across rows.' };
+  const DIMS = [['cba', 'CBA period'], ['rule', 'Rule period'], ['size', 'League size'], ['league', 'League'], ['decade', 'Decade'], ['format', 'Format'], ['dynasty', 'Dynasty era'], ['player', 'Player era'], ['theme', 'Themed era']];
+  const DIM_TIPS = { cba: 'The collective bargaining agreement in force (NBA/BAA).', rule: 'The rule period: shot clock, three-point line, zone defense, hand-check ban; the ABA on its own.', size: 'The number of teams in the league that season.', league: 'NBA/BAA or ABA.', decade: 'Decade of the season\'s start year.', format: 'The competition format: early playoffs, 16-team field, best-of-seven throughout, play-in era, NBA Cup era.', dynasty: 'A franchise\'s run of titles (thresholds in the filter row), computed for NBA/BAA champions only. Overlapping runs share a joined label; seasons outside any run are "No dynasty".', player: 'Curated careers of every league and Finals MVP (and George Mikan). A season belongs to every player active in it, so season counts add up across rows.', theme: 'Curated themed eras (the Reddit NBA era, the three-point dominance era); a season belongs to every theme active in it.' };
   $('dims').innerHTML = DIMS.map(([k, t]) => `<button class="chip" data-dim="${k}" aria-pressed="false" title="${esc(DIM_TIPS[k])}">${esc(t)}</button>`).join('');
   const pressed = () => [...$('dims').querySelectorAll('.chip')].filter(c => c.getAttribute('aria-pressed') === 'true').map(c => c.dataset.dim);
   const setDims = list => $('dims').querySelectorAll('.chip').forEach(c => c.setAttribute('aria-pressed', String(list.includes(c.dataset.dim))));
-  let pinned = new Set(), last = null;
+  let pinned = new Set(), last = null, facets = '', stale = false, loads = 0;
+  // The facet panel above announces its picks; the groups are computed within them, loaded
+  // while the panel is open and otherwise when it opens. Nothing loads before the first
+  // announcement, so an open panel from a link waits for the picks.
+  document.addEventListener('records:scope', e => { facets = e.detail; stale = true; if (panel.open) load(); });
+  panel.addEventListener('toggle', () => { if (panel.open && stale) load(); });
   const span = g => g.first_season === g.last_season ? labelOf(g.first_season) : `${labelOf(g.first_season)} to ${labelOf(g.last_season)}`;
   const titleList = g => { if (!g.champions.length) return 'none recorded'; const all = g.champions.map(t => `${t.code} ${t.titles}`); return `<span title="${esc(all.join(', '))}">${esc(all.slice(0, 4).join(', '))}${all.length > 4 ? ` +${all.length - 4} more` : ''}</span>`; };
   const query = () => {
@@ -17,7 +22,7 @@
     const league = $('gLeague').value; if (league !== 'all') p.set('league', league);
     if ($('gFrom').value) p.set('from', $('gFrom').value); if ($('gTo').value) p.set('to', $('gTo').value);
     if ($('gTitles').value !== '3') p.set('dynasty_titles', $('gTitles').value); if ($('gGap').value !== '3') p.set('dynasty_gap', $('gGap').value);
-    return p.toString().replace(/%2C/g, ',');
+    return p.toString().replace(/%2C/g, ',') + (facets ? `&${facets}` : '');
   };
   function render(data) {
     last = data;
@@ -31,7 +36,7 @@
       { label: 'Best team-season', value: g => `${g.best.code} ${num(g.best.value, 0)} (${labelOf(g.best.season)})`, left: true, cls: () => 'good' },
       { label: 'Weakest', value: g => `${g.weakest.code} ${num(g.weakest.value, 0)} (${labelOf(g.weakest.season)})`, left: true, cls: () => 'bad' },
       { label: 'Titles', value: 'titles' }, { label: 'Champions', value: titleList, raw: true, left: true }, { label: 'Distinct', value: 'distinct_champions' },
-      { label: 'Title HHI', value: g => g.title_hhi == null ? '–' : num(g.title_hhi, 2) }, { label: 'Elo spread', value: g => g.elo_spread == null ? '–' : num(g.elo_spread, 0) }], rows) : '<p class="muted">No group matches these filters.</p>';
+      { label: 'Title HHI', value: g => g.title_hhi == null ? '–' : num(g.title_hhi, 2) }, { label: 'Mean Elo', value: g => g.mean_elo == null ? '–' : num(g.mean_elo, 0) }, { label: 'Elo spread', value: g => g.elo_spread == null ? '–' : num(g.elo_spread, 0) }], rows) : '<p class="muted">No group matches these filters.</p>';
     $('groups').querySelectorAll('tbody tr').forEach((tr, i) => { if (rows[i] && rows[i].seasons < min) tr.classList.add('thin'); });
     const thin = rows.filter(g => g.seasons < min).length;
     $('gThin').textContent = thin ? `${thin} group${thin === 1 ? '' : 's'} with fewer than ${min} seasons shown in grey: too few seasons to compare.` : '';
@@ -50,12 +55,14 @@
       <div>Champions</div><div>${g.champions.length ? esc(g.champions.map(t => `${t.code} ${t.titles}`).join(', ')) : 'none recorded'}</div>
       <div>Distinct champions</div><div>${g.distinct_champions} of ${g.titles}</div>
       <div>Title HHI</div><div>${g.title_hhi == null ? '–' : num(g.title_hhi, 2)}</div>
+      <div>Mean Elo</div><div>${g.mean_elo == null ? '–' : num(g.mean_elo, 0)}</div>
       <div>Elo spread</div><div>${g.elo_spread == null ? '–' : num(g.elo_spread, 0)}</div></div></div>`).join('') : '';
   }
   async function load() {
+    const mine = ++loads; // only the latest request may draw the table
     setStatus($('gStatus'), 'Loading…');
-    try { render(await getJSON(`/api/records/groups?${query()}`)); setStatus($('gStatus'), ''); }
-    catch (e) { setStatus($('gStatus'), e.message, true); }
+    try { const data = await getJSON(`/api/records/groups?${query()}`); if (mine !== loads) return; render(data); stale = false; setStatus($('gStatus'), ''); }
+    catch (e) { if (mine === loads) { stale = true; setStatus($('gStatus'), e.message, true); } }
   }
   $('presets').addEventListener('click', e => { const b = e.target.closest('.preset'); if (!b) return; setDims(b.dataset.preset.split(',')); $('gLeague').value = b.dataset.preset.includes('league') ? 'all' : (/(cba|dynasty|player)/.test(b.dataset.preset) ? 'nba' : 'all'); load(); });
   $('dims').addEventListener('click', e => { const c = e.target.closest('.chip'); if (!c) return; c.setAttribute('aria-pressed', String(c.getAttribute('aria-pressed') !== 'true')); load(); });
@@ -72,10 +79,11 @@
   // A link with a query opens that view.
   const q = new URLSearchParams(location.search);
   if (q.has('by')) {
+    panel.open = true;
     setDims(q.get('by').split(',').filter(Boolean));
     const league = (q.get('league') || '').toLowerCase(); if ([...$('gLeague').options].some(o => o.value === league)) $('gLeague').value = league;
     if (q.get('from')) $('gFrom').value = q.get('from'); if (q.get('to')) $('gTo').value = q.get('to');
     if (q.get('dynasty_titles')) $('gTitles').value = q.get('dynasty_titles'); if (q.get('dynasty_gap')) $('gGap').value = q.get('dynasty_gap');
   } else setDims(['cba']);
-  load();
+  // The facet panel's first announcement loads the groups.
 })();

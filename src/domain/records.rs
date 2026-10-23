@@ -315,6 +315,15 @@ pub struct GameRecords {
     pub champion_roads: Vec<ChampionRoad>,
 }
 
+/// The seasons of each league a game query is limited to: the store returns only games of
+/// an NBA/BAA team in an `nba` season or of an ABA team in an `aba` season. The store
+/// methods take `None` for every season.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SeasonScope {
+    pub nba: Vec<SeasonYear>,
+    pub aba: Vec<SeasonYear>,
+}
+
 /// The largest rating change in one game, from the winner's side.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct GameSwing {

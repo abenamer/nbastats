@@ -1,12 +1,17 @@
-//! Era builder: group seasons by one or more dimensions and compute the records of each
-//! group. A dimension maps a season of a league to one label (a bargaining period, a rule
-//! period, a league size, a league, a decade, a competition format) or to several (every
-//! dynasty era and every player active in it). Combining dimensions intersects them, so only
-//! combinations that occur in the data appear. Each group gets the same records as a
-//! bargaining period: best and weakest team-season, titles and champions, title HHI and Elo
-//! spread, plus the notes of the periods it belongs to.
+//! Eras: facets and groups over the seasons. A dimension maps a season of a league to one
+//! label (a bargaining period, a rule period, a league size, a league, a decade, a competition
+//! format) or to several (every dynasty era and every player active in it).
+//!
+//! A *facet* is one label along a dimension (`player:LeBron James`). The facets of a query
+//! select the seasons the Records page computes over: within one dimension the facets add up
+//! (a season matches any of them), across dimensions they intersect. That is faceted search:
+//! the player-era chip replays the whole Records page over the seasons the player was active.
+//!
+//! A *group* query combines dimensions instead and computes one row of records per
+//! combination that occurs in the data: best and weakest team-season, titles and champions,
+//! title HHI and Elo spread, plus the notes of the periods the group belongs to.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
 use std::str::FromStr;
 
@@ -17,11 +22,15 @@ use crate::domain::ids::SeasonYear;
 use crate::domain::models::PlayoffResult;
 use crate::domain::players::active_in;
 use crate::domain::records::{
-    change, decade_of, period_of, Change, ChangeNote, League, TeamSeasonStat,
+    change, decade_of, period_of, Change, ChangeNote, League, SeasonScope, TeamSeasonStat,
 };
 
-/// Dimensions a query may combine.
+/// Dimensions a group query may combine.
 pub const MAX_DIMENSIONS: usize = 4;
+/// Facets a query may carry, over every dimension.
+pub const MAX_FACETS: usize = 8;
+/// Longest facet label accepted, in characters; the curated labels are far shorter.
+pub const MAX_FACET_LABEL: usize = 80;
 /// Default thresholds of a dynasty era.
 pub const DYNASTY_TITLES: usize = 3;
 pub const DYNASTY_GAP: usize = 3;
@@ -45,10 +54,13 @@ pub enum Dimension {
     Dynasty,
     /// A listed player's active seasons (curated careers; a season belongs to each one).
     Player,
+    /// A themed era of the game's culture or style (curated spans; a season belongs to each
+    /// theme active in it).
+    Theme,
 }
 
 impl Dimension {
-    pub const ALL: [Dimension; 8] = [
+    pub const ALL: [Dimension; 9] = [
         Dimension::Cba,
         Dimension::Rule,
         Dimension::Size,
@@ -57,6 +69,7 @@ impl Dimension {
         Dimension::Format,
         Dimension::Dynasty,
         Dimension::Player,
+        Dimension::Theme,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -69,6 +82,7 @@ impl Dimension {
             Dimension::Format => "format",
             Dimension::Dynasty => "dynasty",
             Dimension::Player => "player",
+            Dimension::Theme => "theme",
         }
     }
 
@@ -82,6 +96,7 @@ impl Dimension {
             Dimension::Format => "Format",
             Dimension::Dynasty => "Dynasty era",
             Dimension::Player => "Player era",
+            Dimension::Theme => "Themed era",
         }
     }
 }
@@ -95,7 +110,7 @@ impl FromStr for Dimension {
             .find(|d| d.as_str() == s.trim().to_ascii_lowercase())
             .ok_or_else(|| {
                 let shown: String = s.chars().take(40).collect();
-                format!("unknown dimension {shown:?}; use cba, rule, size, league, decade, format, dynasty or player")
+                format!("unknown dimension {shown:?}; use cba, rule, size, league, decade, format, dynasty, player or theme")
             })
     }
 }
@@ -103,6 +118,43 @@ impl FromStr for Dimension {
 impl fmt::Display for Dimension {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.as_str())
+    }
+}
+
+/// One facet: a label along a dimension, written `<dimension>:<label>` in a query, for
+/// example `rule:Hand-check ban` or `player:LeBron James`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Facet {
+    pub dimension: Dimension,
+    pub label: String,
+}
+
+impl FromStr for Facet {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let (dim, label) = s.split_once(':').ok_or_else(|| {
+            "a facet is written dimension:label, for example player:LeBron James".to_string()
+        })?;
+        let dimension: Dimension = dim.parse()?;
+        let label = label.trim();
+        if label.is_empty() {
+            return Err(format!("the {dimension} facet has no label"));
+        }
+        if label.chars().count() > MAX_FACET_LABEL {
+            return Err(format!(
+                "a facet label has at most {MAX_FACET_LABEL} characters"
+            ));
+        }
+        Ok(Facet {
+            dimension,
+            label: label.to_string(),
+        })
+    }
+}
+
+impl fmt::Display for Facet {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}:{}", self.dimension, self.label)
     }
 }
 
@@ -179,6 +231,48 @@ pub fn format_of(season: SeasonYear) -> &'static FormatPeriod {
         .find(|p| p.first_season <= season)
         .unwrap_or(&FORMAT_PERIODS[0])
 }
+
+/// A themed era: a span of NBA/BAA seasons named for how the game was played or followed,
+/// curated from the public record. Themes overlap, so a season belongs to each one active.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct ThemeEra {
+    pub name: &'static str,
+    pub first_season: SeasonYear,
+    /// The last season of the theme; `None` while it continues.
+    pub last_season: Option<SeasonYear>,
+    pub summary: &'static str,
+    pub changes: &'static [Change],
+}
+
+impl ThemeEra {
+    pub fn active(&self, season: SeasonYear) -> bool {
+        self.first_season <= season && self.last_season.is_none_or(|last| season <= last)
+    }
+}
+
+/// The themed eras, in season order.
+pub const THEME_ERAS: &[ThemeEra] = &[
+    ThemeEra {
+        name: "Reddit NBA era",
+        first_season: SeasonYear::of(2009),
+        last_season: None,
+        summary: "The seasons followed on r/nba, from the community's first full season in 2008-09: a game thread and a post-game thread for every game.",
+        changes: &[
+            change(2009, "r/nba opens on Reddit; game threads and post-game threads become the running record of every game."),
+            change(2013, "The community grows into one of the largest basketball forums; highlights spread as clips within minutes of a play."),
+        ],
+    },
+    ThemeEra {
+        name: "Three-point dominance era",
+        first_season: SeasonYear::of(2016),
+        last_season: None,
+        summary: "From 2015-16, the season of Stephen Curry's 402 threes and the Warriors' 73 wins: the league's three-point attempts rise every season and offences are built around the shot.",
+        changes: &[
+            change(2016, "Curry makes 402 threes and wins the MVP unanimously; Golden State wins 73 games."),
+            change(2018, "Houston attempts more threes than twos over a season, the first team to do so."),
+        ],
+    },
+];
 
 /// Familiar names for the dynasties the data produces at the default thresholds, by
 /// franchise key and first title; a run without a name is "<franchise> dynasty".
@@ -323,6 +417,8 @@ pub struct GroupRow {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Grouping {
     pub query: GroupQuery,
+    /// The facets the groups were computed within, when the query had any.
+    pub scope: Option<Scope>,
     pub dynasties: Vec<Dynasty>,
     pub groups: Vec<GroupRow>,
     /// The notes of every period the groups belong to, keyed by `<dimension>:<label>`.
@@ -377,6 +473,14 @@ fn labels(dim: Dimension, league: League, season: SeasonYear, ctx: &Context<'_>)
         Dimension::Player => active_in(league, season)
             .map(|p| p.name.to_string())
             .collect(),
+        Dimension::Theme => match league {
+            League::Aba => Vec::new(),
+            League::Nba => THEME_ERAS
+                .iter()
+                .filter(|t| t.active(season))
+                .map(|t| t.name.to_string())
+                .collect(),
+        },
     }
 }
 
@@ -405,6 +509,10 @@ fn note_of(dim: Dimension, label: &str, ctx: &Context<'_>) -> Option<Note> {
             .iter()
             .find(|p| p.name == label)
             .map(|p| mk(p.name, p.summary, p.changes)),
+        Dimension::Theme => THEME_ERAS
+            .iter()
+            .find(|t| t.name == label)
+            .map(|t| mk(t.name, t.summary, t.changes)),
         Dimension::Dynasty => {
             // A nickname can name several runs (the two Bulls three-peats at a small gap):
             // every run with the label belongs to the note.
@@ -449,11 +557,233 @@ fn note_of(dim: Dimension, label: &str, ctx: &Context<'_>) -> Option<Note> {
     }
 }
 
-/// Group the team-seasons by the query's dimensions and compute each group's records.
+/// The labels a facet may match: those of [`labels`], except that a season in two overlapping
+/// dynasty runs matches each run on its own (the group label joins them).
+fn facet_labels(
+    dim: Dimension,
+    league: League,
+    season: SeasonYear,
+    ctx: &Context<'_>,
+) -> Vec<String> {
+    let all = labels(dim, league, season, ctx);
+    match dim {
+        Dimension::Dynasty => all
+            .iter()
+            .flat_map(|l| l.split(" + ").map(str::to_string))
+            .collect(),
+        _ => all,
+    }
+}
+
+/// The seasons a set of facets selects, with what the page needs to describe them.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Scope {
+    pub facets: Vec<Facet>,
+    /// Every (season, league) in the data that the facets select.
+    #[serde(skip)]
+    pub members: BTreeSet<(SeasonYear, League)>,
+    /// Distinct seasons selected.
+    pub seasons: usize,
+    pub first_season: Option<SeasonYear>,
+    pub last_season: Option<SeasonYear>,
+    pub leagues: Vec<League>,
+    /// The records of the selected team-seasons; `None` when nothing is selected.
+    pub stats: Option<GroupStats>,
+    /// The notes of the facets that name a period or a player, in facet order.
+    pub notes: Vec<Note>,
+}
+
+impl Scope {
+    pub fn contains(&self, season: SeasonYear, league: League) -> bool {
+        self.members.contains(&(season, league))
+    }
+
+    /// The scope as the store's game queries take it.
+    pub fn season_scope(&self) -> SeasonScope {
+        let of = |league: League| -> Vec<SeasonYear> {
+            self.members
+                .iter()
+                .filter(|(_, l)| *l == league)
+                .map(|(s, _)| *s)
+                .collect()
+        };
+        SeasonScope {
+            nba: of(League::Nba),
+            aba: of(League::Aba),
+        }
+    }
+}
+
+/// Select the seasons the facets name: within one dimension a season matches any of the
+/// facets, across dimensions it must match every one. `Err` names a label no season in the
+/// data carries, so a typo answers with a message rather than an empty page.
+pub fn scope(
+    facets: &[Facet],
+    stats: &[TeamSeasonStat],
+    sizes: &BTreeMap<(SeasonYear, League), usize>,
+    dynasty_titles: usize,
+    dynasty_gap: usize,
+) -> Result<Scope, String> {
+    let dynasties = dynasties(stats, dynasty_titles, dynasty_gap);
+    let ctx = Context {
+        sizes,
+        dynasties: &dynasties,
+    };
+    let universe: BTreeSet<(SeasonYear, League)> = stats
+        .iter()
+        .map(|s| (s.season, League::of_code(&s.code)))
+        .collect();
+    let mut by_dim: BTreeMap<&str, Vec<&Facet>> = BTreeMap::new();
+    for f in facets {
+        by_dim.entry(f.dimension.as_str()).or_default().push(f);
+    }
+    // The labels of every season along each dimension asked for, computed once.
+    let mut season_labels: HashMap<(SeasonYear, League, Dimension), Vec<String>> = HashMap::new();
+    for &(season, league) in &universe {
+        for f in facets {
+            season_labels
+                .entry((season, league, f.dimension))
+                .or_insert_with(|| facet_labels(f.dimension, league, season, &ctx));
+        }
+    }
+    for f in facets {
+        let known = universe.iter().any(|&(season, league)| {
+            season_labels[&(season, league, f.dimension)].contains(&f.label)
+        });
+        if !known {
+            return Err(format!(
+                "no season has the {} {:?}",
+                f.dimension.title().to_ascii_lowercase(),
+                f.label
+            ));
+        }
+    }
+    let members: BTreeSet<(SeasonYear, League)> = universe
+        .into_iter()
+        .filter(|&(season, league)| {
+            by_dim.values().all(|group| {
+                let dim = group[0].dimension;
+                let have = &season_labels[&(season, league, dim)];
+                group.iter().any(|f| have.contains(&f.label))
+            })
+        })
+        .collect();
+    let seasons: BTreeSet<SeasonYear> = members.iter().map(|(s, _)| *s).collect();
+    let leagues: Vec<League> = {
+        let mut v: Vec<League> = members.iter().map(|(_, l)| *l).collect();
+        v.sort_unstable();
+        v.dedup();
+        v
+    };
+    let notes = facets
+        .iter()
+        .filter_map(|f| note_of(f.dimension, &f.label, &ctx))
+        .collect();
+    let selected: Vec<&TeamSeasonStat> = stats
+        .iter()
+        .filter(|s| members.contains(&(s.season, League::of_code(&s.code))))
+        .collect();
+    Ok(Scope {
+        facets: facets.to_vec(),
+        first_season: seasons.iter().next().copied(),
+        last_season: seasons.iter().next_back().copied(),
+        seasons: seasons.len(),
+        leagues,
+        stats: group_stats(&selected),
+        members,
+        notes,
+    })
+}
+
+/// One value a facet may take, with the seasons that carry it.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct FacetValue {
+    pub label: String,
+    pub first_season: SeasonYear,
+    pub last_season: SeasonYear,
+    /// Distinct seasons with the label.
+    pub seasons: usize,
+    pub summary: Option<String>,
+}
+
+/// The values of one dimension present in the data.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct FacetDimension {
+    pub dimension: Dimension,
+    pub title: &'static str,
+    pub values: Vec<FacetValue>,
+}
+
+/// Every facet the data offers: for each dimension, its labels in order of first season,
+/// each with its span, season count and the summary of its period or player when there is one.
+pub fn facets(
+    stats: &[TeamSeasonStat],
+    sizes: &BTreeMap<(SeasonYear, League), usize>,
+    dynasty_titles: usize,
+    dynasty_gap: usize,
+) -> Vec<FacetDimension> {
+    let dynasties = dynasties(stats, dynasty_titles, dynasty_gap);
+    let ctx = Context {
+        sizes,
+        dynasties: &dynasties,
+    };
+    let universe: BTreeSet<(SeasonYear, League)> = stats
+        .iter()
+        .map(|s| (s.season, League::of_code(&s.code)))
+        .collect();
+    Dimension::ALL
+        .iter()
+        .map(|&dim| {
+            let mut seasons_of: BTreeMap<String, BTreeSet<SeasonYear>> = BTreeMap::new();
+            for &(season, league) in &universe {
+                for label in facet_labels(dim, league, season, &ctx) {
+                    seasons_of.entry(label).or_default().insert(season);
+                }
+            }
+            let mut values: Vec<FacetValue> = seasons_of
+                .into_iter()
+                .filter_map(|(label, seasons)| {
+                    Some(FacetValue {
+                        first_season: *seasons.iter().next()?,
+                        last_season: *seasons.iter().next_back()?,
+                        seasons: seasons.len(),
+                        summary: note_of(dim, &label, &ctx).map(|n| n.summary),
+                        label,
+                    })
+                })
+                .collect();
+            // In order of first season, except league sizes, which read best by team count.
+            let count = |v: &FacetValue| -> usize {
+                v.label
+                    .split(' ')
+                    .next()
+                    .and_then(|n| n.parse().ok())
+                    .unwrap_or(0)
+            };
+            values.sort_by(|a, b| {
+                let order = if dim == Dimension::Size {
+                    count(a).cmp(&count(b))
+                } else {
+                    a.first_season.cmp(&b.first_season)
+                };
+                order.then_with(|| a.label.cmp(&b.label))
+            });
+            FacetDimension {
+                dimension: dim,
+                title: dim.title(),
+                values,
+            }
+        })
+        .collect()
+}
+
+/// Group the team-seasons by the query's dimensions and compute each group's records, over
+/// the seasons of `scope` when there is one.
 pub fn group(
     query: &GroupQuery,
     stats: &[TeamSeasonStat],
     sizes: &BTreeMap<(SeasonYear, League), usize>,
+    scope: Option<&Scope>,
 ) -> Grouping {
     let dynasties = dynasties(stats, query.dynasty_titles, query.dynasty_gap);
     let ctx = Context {
@@ -467,6 +797,7 @@ pub fn group(
         if query.league.is_some_and(|l| l != league)
             || query.from.is_some_and(|f| s.season < f)
             || query.to.is_some_and(|t| s.season > t)
+            || scope.is_some_and(|sc| !sc.contains(s.season, league))
         {
             continue;
         }
@@ -537,6 +868,7 @@ pub fn group(
     groups.sort_by(|a, b| a.first_season.cmp(&b.first_season).then(a.key.cmp(&b.key)));
     Grouping {
         query: query.clone(),
+        scope: scope.cloned(),
         dynasties,
         groups,
         notes,
@@ -676,7 +1008,7 @@ mod tests {
             dimensions: vec![Dimension::Cba],
             ..Default::default()
         };
-        let g = group(&q, &stats, &sz);
+        let g = group(&q, &stats, &sz, None);
         let keys: Vec<&str> = g.groups.iter().map(|r| r.key.as_str()).collect();
         assert_eq!(
             keys,
@@ -697,7 +1029,7 @@ mod tests {
             from: Some(SeasonYear::of(1987)),
             ..Default::default()
         };
-        let g = group(&q, &stats, &sz);
+        let g = group(&q, &stats, &sz, None);
         let keys: Vec<&str> = g.groups.iter().map(|r| r.key.as_str()).collect();
         assert_eq!(
             keys,
@@ -711,7 +1043,7 @@ mod tests {
             to: Some(SeasonYear::of(1987)),
             ..Default::default()
         };
-        let g = group(&q, &stats, &sz);
+        let g = group(&q, &stats, &sz, None);
         let keys: Vec<&str> = g.groups.iter().map(|r| r.key.as_str()).collect();
         assert!(
             keys.contains(&"Larry Bird")
@@ -725,7 +1057,7 @@ mod tests {
         let mcadoo = g.groups.iter().find(|r| r.key == "Bob McAdoo").unwrap();
         assert_eq!(mcadoo.seasons, 1);
         // No dimension: one group of everything.
-        let g = group(&GroupQuery::default(), &stats, &sz);
+        let g = group(&GroupQuery::default(), &stats, &sz, None);
         assert_eq!(g.groups.len(), 1);
         assert_eq!(g.groups[0].key, "All seasons");
         assert_eq!(g.groups[0].seasons, 4);
@@ -736,7 +1068,7 @@ mod tests {
             dynasty_gap: 0,
             ..Default::default()
         };
-        let g = group(&q, &stats, &sz);
+        let g = group(&q, &stats, &sz, None);
         assert!(g.dynasties.iter().any(|d| d.label == "Team CLE dynasty"));
         assert!(g
             .groups
@@ -778,9 +1110,199 @@ mod tests {
         for y in [1991, 1992, 1993, 1996, 1997, 1998] {
             bulls.push(stat(y, "CHI", "CHI", 1800.0, true));
         }
-        let g = group(&q, &bulls, &sizes(&bulls));
+        let g = group(&q, &bulls, &sizes(&bulls), None);
         let row = g.groups.iter().find(|r| r.key == "Jordan Bulls").unwrap();
         assert_eq!(row.stats.titles, 6);
         assert_eq!(g.notes["dynasty:Jordan Bulls"].changes.len(), 6);
+    }
+
+    fn scope_fixture() -> Vec<TeamSeasonStat> {
+        vec![
+            stat(1986, "BOS", "BOS", 1816.0, true),
+            stat(1986, "LAL", "LAL", 1760.0, false),
+            stat(1987, "LAL", "LAL", 1780.0, true),
+            stat(1987, "BOS", "BOS", 1750.0, false),
+            stat(2016, "CLE", "CLE", 1750.0, true),
+            stat(2016, "GSW", "GSW", 1839.0, false),
+            stat(1974, "INA", "INA", 1650.0, true),
+        ]
+    }
+
+    #[test]
+    fn facets_parse_and_print() {
+        let f: Facet = "player:LeBron James".parse().unwrap();
+        assert_eq!(
+            (f.dimension, f.label.as_str()),
+            (Dimension::Player, "LeBron James")
+        );
+        assert_eq!(f.to_string(), "player:LeBron James");
+        let f: Facet = " Rule : Hand-check ban ".parse().unwrap();
+        assert_eq!(
+            (f.dimension, f.label.as_str()),
+            (Dimension::Rule, "Hand-check ban")
+        );
+        assert!("LeBron James".parse::<Facet>().is_err());
+        assert!("salary:cap".parse::<Facet>().is_err());
+        assert!("player:".parse::<Facet>().is_err());
+        assert!(format!("player:{}", "x".repeat(MAX_FACET_LABEL + 1))
+            .parse::<Facet>()
+            .is_err());
+    }
+
+    #[test]
+    fn scope_adds_within_a_dimension_and_intersects_across() {
+        let stats = scope_fixture();
+        let sz = sizes(&stats);
+        let facet = |s: &str| s.parse::<Facet>().unwrap();
+        // One player: the seasons he was active, NBA only.
+        let sc = scope(&[facet("player:Larry Bird")], &stats, &sz, 3, 3).unwrap();
+        assert_eq!(sc.seasons, 2);
+        assert_eq!(
+            (sc.first_season, sc.last_season),
+            (Some(SeasonYear::of(1986)), Some(SeasonYear::of(1987)))
+        );
+        assert_eq!(sc.leagues, [League::Nba]);
+        assert!(sc.contains(SeasonYear::of(1986), League::Nba));
+        assert!(!sc.contains(SeasonYear::of(2016), League::Nba));
+        assert_eq!(sc.notes.len(), 1);
+        assert_eq!(sc.notes[0].name, "Larry Bird");
+        let st = sc.stats.as_ref().unwrap();
+        assert_eq!((st.titles, st.best.code.as_str()), (2, "BOS"));
+        // Season-end ratings are the peak less ten in the fixture: 1778 and 1755 averaged.
+        assert!((st.mean_elo.unwrap() - (1778.0 + 1755.0) / 2.0).abs() < 1e-9);
+        let store = sc.season_scope();
+        assert_eq!(store.nba, [SeasonYear::of(1986), SeasonYear::of(1987)]);
+        assert!(store.aba.is_empty());
+        // Two players add up; a rule period intersects.
+        let sc = scope(
+            &[facet("player:Larry Bird"), facet("player:LeBron James")],
+            &stats,
+            &sz,
+            3,
+            3,
+        )
+        .unwrap();
+        assert_eq!(sc.seasons, 3);
+        let sc = scope(
+            &[
+                facet("player:Larry Bird"),
+                facet("player:LeBron James"),
+                facet("rule:Hand-check ban"),
+            ],
+            &stats,
+            &sz,
+            3,
+            3,
+        )
+        .unwrap();
+        assert_eq!(sc.seasons, 1);
+        assert!(sc.contains(SeasonYear::of(2016), League::Nba));
+        assert_eq!(sc.notes.len(), 3);
+        // The league facet keeps the ABA season; the decade facet is computed.
+        let sc = scope(&[facet("league:ABA")], &stats, &sz, 3, 3).unwrap();
+        assert_eq!(sc.members.len(), 1);
+        assert!(sc.contains(SeasonYear::of(1974), League::Aba));
+        assert_eq!(sc.season_scope().aba, [SeasonYear::of(1974)]);
+        let sc = scope(&[facet("decade:1980s")], &stats, &sz, 3, 3).unwrap();
+        assert_eq!(sc.seasons, 2);
+        // A dynasty facet matches each run on its own; the thresholds are the query's.
+        let sc = scope(&[facet("dynasty:Team CLE dynasty")], &stats, &sz, 1, 0).unwrap();
+        assert_eq!(sc.seasons, 1);
+        assert_eq!(sc.notes[0].changes.len(), 1);
+        // A label no season carries is an error, as is a label of a stricter dynasty rule.
+        assert!(scope(&[facet("player:Nobody")], &stats, &sz, 3, 3).is_err());
+        assert!(scope(&[facet("dynasty:Team CLE dynasty")], &stats, &sz, 3, 3).is_err());
+        // No facet selects everything; an impossible pair selects nothing and has no stats.
+        let sc = scope(&[], &stats, &sz, 3, 3).unwrap();
+        assert_eq!(sc.members.len(), 4);
+        assert!(sc.notes.is_empty());
+        let none = scope(
+            &[facet("league:ABA"), facet("rule:Hand-check ban")],
+            &stats,
+            &sz,
+            3,
+            3,
+        )
+        .unwrap();
+        assert!(none.members.is_empty() && none.stats.is_none());
+        // Groups computed within a scope only see its seasons.
+        let q = GroupQuery {
+            dimensions: vec![Dimension::Cba],
+            ..Default::default()
+        };
+        let sc = scope(&[facet("player:Larry Bird")], &stats, &sz, 3, 3).unwrap();
+        let g = group(&q, &stats, &sz, Some(&sc));
+        let keys: Vec<&str> = g.groups.iter().map(|r| r.key.as_str()).collect();
+        assert_eq!(keys, ["First salary cap"]);
+        assert_eq!(g.scope.as_ref().map(|s| s.seasons), Some(2));
+    }
+
+    #[test]
+    fn facet_listing_covers_every_dimension() {
+        let stats = scope_fixture();
+        let sz = sizes(&stats);
+        let dims = facets(&stats, &sz, 1, 0);
+        assert_eq!(dims.len(), Dimension::ALL.len());
+        let of = |d: Dimension| dims.iter().find(|x| x.dimension == d).unwrap();
+        let cba = of(Dimension::Cba);
+        let labels: Vec<&str> = cba.values.iter().map(|v| v.label.as_str()).collect();
+        assert_eq!(
+            labels,
+            ["ABA (no agreement)", "First salary cap", "2011 agreement"]
+        );
+        let cap = &cba.values[1];
+        assert_eq!((cap.seasons, cap.first_season.end_year()), (2, 1986));
+        assert!(cap.summary.is_some());
+        assert!(cba.values[0].summary.is_none());
+        let players = of(Dimension::Player);
+        assert!(players.values.iter().any(|v| v.label == "Larry Bird"));
+        assert!(players
+            .values
+            .windows(2)
+            .all(|w| w[0].first_season <= w[1].first_season));
+        let dyn_ = of(Dimension::Dynasty);
+        let labels: Vec<&str> = dyn_.values.iter().map(|v| v.label.as_str()).collect();
+        // Every NBA season of the fixture has a champion, so at one title per run each is a
+        // dynasty of its own; the ABA season is marked as not computed.
+        assert!(labels.contains(&"Team CLE dynasty") && labels.contains(&"ABA (not computed)"));
+        assert!(!labels.iter().any(|l| l.contains(" + ")));
+        let strict = facets(&stats, &sz, 3, 3);
+        let dyn_ = strict
+            .iter()
+            .find(|x| x.dimension == Dimension::Dynasty)
+            .unwrap();
+        assert_eq!(
+            dyn_.values
+                .iter()
+                .map(|v| v.label.as_str())
+                .collect::<Vec<_>>(),
+            ["ABA (not computed)", "No dynasty"]
+        );
+        let league = of(Dimension::League);
+        assert_eq!(league.values.len(), 2);
+        let size = of(Dimension::Size);
+        assert_eq!(
+            size.values
+                .iter()
+                .map(|v| v.label.as_str())
+                .collect::<Vec<_>>(),
+            ["1 teams", "2 teams"]
+        );
+        // Themes: 2015-16 belongs to both; the 1980s seasons and the ABA to none.
+        let theme = of(Dimension::Theme);
+        let labels: Vec<&str> = theme.values.iter().map(|v| v.label.as_str()).collect();
+        assert_eq!(labels, ["Reddit NBA era", "Three-point dominance era"]);
+        assert!(theme.values.iter().all(|v| v.seasons == 1));
+        let sc = scope(
+            &["theme:Reddit NBA era".parse().unwrap()],
+            &stats,
+            &sz,
+            3,
+            3,
+        )
+        .unwrap();
+        assert!(sc.contains(SeasonYear::of(2016), League::Nba) && sc.seasons == 1);
+        assert!(THEME_ERAS[0].active(SeasonYear::of(2030)));
+        assert!(!THEME_ERAS[0].active(SeasonYear::of(2008)));
     }
 }

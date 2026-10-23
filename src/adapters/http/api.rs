@@ -1,6 +1,6 @@
 //! JSON API handlers.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use axum::extract::{Multipart, Path, Query, State};
 use axum::http::StatusCode;
@@ -24,10 +24,15 @@ use crate::application::{results_sync, scheduler};
 use crate::config::APP_VERSION;
 use crate::domain::backtesting::BacktestParams;
 use crate::domain::elo;
+use crate::domain::eras::{
+    self, Dimension, Facet, GroupQuery, Scope, DYNASTY_GAP, DYNASTY_TITLES, MAX_DIMENSIONS,
+    MAX_FACETS,
+};
 use crate::domain::ids::SeasonYear;
 use crate::domain::models::{JobKind, SimulationJob};
 use crate::domain::playoffs::bracket::ModelSpec;
 use crate::domain::playoffs::season::SeasonParams;
+use crate::domain::records::{league_sizes, League, TeamSeasonStat};
 use crate::domain::reference;
 use crate::domain::simulation::alpha::AlphaParams;
 use crate::domain::simulation::exact;
@@ -71,37 +76,46 @@ pub async fn seasons(State(app): State<AppState>) -> ApiResult<Value> {
     Ok(Json(json!(app.store.seasons().await?)))
 }
 
-/// Elo records: all-time, by decade, by league and league size, season and game records,
-/// and the best and worst conferences and divisions.
-pub async fn records(State(app): State<AppState>) -> ApiResult<Value> {
-    let stats = app.store.team_season_stats().await?;
-    use crate::domain::records::{GameRecords, MatchupOrder, LIST_LEN, MATCHUP_LEN};
-    let games = GameRecords {
-        swings: app.store.biggest_swings(LIST_LEN as i64).await?,
-        greatest_matchups: app
-            .store
-            .matchups(MatchupOrder::Strongest, MATCHUP_LEN as i64)
-            .await?,
-        weakest_per_season: app.store.weakest_matchup_per_season().await?,
-        champion_roads: app.store.champion_roads().await?,
-    };
-    let rosters = app.store.season_rosters().await?;
-    Ok(Json(json!(crate::domain::records::compute(
-        &stats, games, &rosters
-    ))))
+/// The parameters the records endpoints share, read as repeated pairs so `facet` may appear
+/// more than once. Every value is text so a bad value answers with a JSON message, not
+/// axum's plain text.
+#[derive(Debug, Default)]
+struct EraParams {
+    facets: Vec<Facet>,
+    /// Comma-separated dimensions of a group query, for example `cba,size`.
+    by: String,
+    league: Option<String>,
+    from: Option<String>,
+    to: Option<String>,
+    dynasty_titles: Option<String>,
+    dynasty_gap: Option<String>,
 }
 
-/// Every field is text so a bad value answers with a JSON message, not axum's plain text.
-#[derive(Deserialize)]
-pub struct GroupsQuery {
-    /// Comma-separated dimensions, for example `cba,size`.
-    #[serde(default)]
-    pub by: String,
-    pub league: Option<String>,
-    pub from: Option<String>,
-    pub to: Option<String>,
-    pub dynasty_titles: Option<String>,
-    pub dynasty_gap: Option<String>,
+fn era_params(pairs: &[(String, String)]) -> Result<EraParams, ApiError> {
+    let mut p = EraParams::default();
+    for (key, value) in pairs {
+        match key.as_str() {
+            "facet" => {
+                let f: Facet = value.parse().map_err(ApiError::bad_request)?;
+                if !p.facets.contains(&f) {
+                    p.facets.push(f);
+                }
+                if p.facets.len() > MAX_FACETS {
+                    return Err(ApiError::bad_request(format!(
+                        "at most {MAX_FACETS} facets"
+                    )));
+                }
+            }
+            "by" => p.by = value.clone(),
+            "league" => p.league = Some(value.clone()),
+            "from" => p.from = Some(value.clone()),
+            "to" => p.to = Some(value.clone()),
+            "dynasty_titles" => p.dynasty_titles = Some(value.clone()),
+            "dynasty_gap" => p.dynasty_gap = Some(value.clone()),
+            _ => {}
+        }
+    }
+    Ok(p)
 }
 
 fn whole_number(value: Option<&str>, what: &str) -> Result<Option<i64>, ApiError> {
@@ -114,17 +128,125 @@ fn whole_number(value: Option<&str>, what: &str) -> Result<Option<i64>, ApiError
     }
 }
 
-/// Era builder: the records of every group of seasons the chosen dimensions make.
+fn season_param(value: Option<&str>, what: &str) -> Result<Option<SeasonYear>, ApiError> {
+    whole_number(value, what)?
+        .map(|y| {
+            i32::try_from(y)
+                .ok()
+                .and_then(|y| SeasonYear::try_new(y).ok())
+                .ok_or_else(|| {
+                    ApiError::bad_request(format!(
+                        "{what} must be a season end year between 1947 and 2100"
+                    ))
+                })
+        })
+        .transpose()
+}
+
+/// The dynasty thresholds of a group query, clamped to the ranges the page offers. They
+/// shape the group rows only: the dynasty facets, their listing and the scope of every
+/// endpoint use the defaults, so the three endpoints always agree on what a dynasty is.
+fn dynasty_thresholds(p: &EraParams) -> Result<(usize, usize), ApiError> {
+    Ok((
+        whole_number(p.dynasty_titles.as_deref(), "dynasty_titles")?
+            .map_or(DYNASTY_TITLES, |n| n.clamp(1, 20) as usize),
+        whole_number(p.dynasty_gap.as_deref(), "dynasty_gap")?
+            .map_or(DYNASTY_GAP, |n| n.clamp(0, 20) as usize),
+    ))
+}
+
+/// The team-seasons, the schedule rosters and the league sizes, with the scope the facets
+/// select (`None` without facets) at the default dynasty thresholds. An unknown label
+/// answers 400.
+struct EraData {
+    stats: Vec<TeamSeasonStat>,
+    rosters: Vec<(SeasonYear, String)>,
+    sizes: BTreeMap<(SeasonYear, League), usize>,
+    scope: Option<Scope>,
+}
+
+async fn era_data(app: &AppState, p: &EraParams) -> Result<EraData, ApiError> {
+    let stats = app.store.team_season_stats().await?;
+    let rosters = app.store.season_rosters().await?;
+    let sizes = league_sizes(&stats, &rosters);
+    let scope = if p.facets.is_empty() {
+        None
+    } else {
+        Some(
+            eras::scope(&p.facets, &stats, &sizes, DYNASTY_TITLES, DYNASTY_GAP)
+                .map_err(ApiError::bad_request)?,
+        )
+    };
+    Ok(EraData {
+        stats,
+        rosters,
+        sizes,
+        scope,
+    })
+}
+
+/// Elo records: all-time, by decade, by league and league size, season and game records,
+/// and the best and worst conferences and divisions. With `facet` parameters, the same
+/// tables over the seasons the facets select, and `scope` describes the selection. Other
+/// parameters are ignored.
+pub async fn records(
+    State(app): State<AppState>,
+    Query(pairs): Query<Vec<(String, String)>>,
+) -> ApiResult<Value> {
+    use crate::domain::records::{GameRecords, MatchupOrder, LIST_LEN, MATCHUP_LEN};
+    let params = era_params(&pairs)?;
+    let EraData {
+        mut stats,
+        mut rosters,
+        scope,
+        ..
+    } = era_data(&app, &params).await?;
+    let season_scope = scope.as_ref().map(Scope::season_scope);
+    if let Some(sc) = &scope {
+        stats.retain(|s| sc.contains(s.season, League::of_code(&s.code)));
+        rosters.retain(|(season, code)| sc.contains(*season, League::of_code(code)));
+    }
+    let sc = season_scope.as_ref();
+    let games = GameRecords {
+        swings: app.store.biggest_swings(sc, LIST_LEN as i64).await?,
+        greatest_matchups: app
+            .store
+            .matchups(sc, MatchupOrder::Strongest, MATCHUP_LEN as i64)
+            .await?,
+        weakest_per_season: app.store.weakest_matchup_per_season(sc).await?,
+        champion_roads: app.store.champion_roads(sc).await?,
+    };
+    let mut answer = json!(crate::domain::records::compute(&stats, games, &rosters));
+    answer["scope"] = json!(scope);
+    Ok(Json(answer))
+}
+
+/// The facets the data offers: every dimension with its labels, spans and season counts,
+/// the dynasties at the default thresholds. Takes no parameters.
+pub async fn records_facets(State(app): State<AppState>) -> ApiResult<Value> {
+    let stats = app.store.team_season_stats().await?;
+    let rosters = app.store.season_rosters().await?;
+    let sizes = league_sizes(&stats, &rosters);
+    Ok(Json(json!({
+        "dimensions": eras::facets(&stats, &sizes, DYNASTY_TITLES, DYNASTY_GAP),
+        "max_facets": MAX_FACETS,
+    })))
+}
+
+/// Era builder: the records of every group of seasons the chosen dimensions make, within
+/// the facets when there are any.
 pub async fn records_groups(
     State(app): State<AppState>,
-    Query(q): Query<GroupsQuery>,
+    Query(pairs): Query<Vec<(String, String)>>,
 ) -> ApiResult<Value> {
-    use crate::domain::eras::{
-        self, Dimension, GroupQuery, DYNASTY_GAP, DYNASTY_TITLES, MAX_DIMENSIONS,
-    };
-    use crate::domain::records::{league_sizes, League};
+    let params = era_params(&pairs)?;
     let mut dimensions: Vec<Dimension> = Vec::new();
-    for part in q.by.split(',').map(str::trim).filter(|s| !s.is_empty()) {
+    for part in params
+        .by
+        .split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
         let d: Dimension = part.parse().map_err(ApiError::bad_request)?;
         if !dimensions.contains(&d) {
             dimensions.push(d);
@@ -135,7 +257,11 @@ pub async fn records_groups(
             "at most {MAX_DIMENSIONS} dimensions"
         )));
     }
-    let league = match q.league.as_deref().map(|l| l.trim().to_ascii_lowercase()) {
+    let league = match params
+        .league
+        .as_deref()
+        .map(|l| l.trim().to_ascii_lowercase())
+    {
         None => None,
         Some(l) if l.is_empty() || l == "all" => None,
         Some(l) if l == "nba" => Some(League::Nba),
@@ -147,41 +273,34 @@ pub async fn records_groups(
             )));
         }
     };
-    let season = |y: Option<&str>, what: &str| {
-        whole_number(y, what)?
-            .map(|y| {
-                i32::try_from(y)
-                    .ok()
-                    .and_then(|y| SeasonYear::try_new(y).ok())
-                    .ok_or_else(|| {
-                        ApiError::bad_request(format!(
-                            "{what} must be a season end year between 1947 and 2100"
-                        ))
-                    })
-            })
-            .transpose()
-    };
-    let from = season(q.from.as_deref(), "from")?;
-    let to = season(q.to.as_deref(), "to")?;
+    let from = season_param(params.from.as_deref(), "from")?;
+    let to = season_param(params.to.as_deref(), "to")?;
     if let (Some(f), Some(t)) = (from, to) {
         if f > t {
             return Err(ApiError::bad_request("from must not be after to"));
         }
     }
+    let (dynasty_titles, dynasty_gap) = dynasty_thresholds(&params)?;
     let query = GroupQuery {
         dimensions,
         league,
         from,
         to,
-        dynasty_titles: whole_number(q.dynasty_titles.as_deref(), "dynasty_titles")?
-            .map_or(DYNASTY_TITLES, |n| n.clamp(1, 20) as usize),
-        dynasty_gap: whole_number(q.dynasty_gap.as_deref(), "dynasty_gap")?
-            .map_or(DYNASTY_GAP, |n| n.clamp(0, 20) as usize),
+        dynasty_titles,
+        dynasty_gap,
     };
-    let stats = app.store.team_season_stats().await?;
-    let rosters = app.store.season_rosters().await?;
-    let sizes = league_sizes(&stats, &rosters);
-    Ok(Json(json!(eras::group(&query, &stats, &sizes))))
+    let EraData {
+        stats,
+        sizes,
+        scope,
+        ..
+    } = era_data(&app, &params).await?;
+    Ok(Json(json!(eras::group(
+        &query,
+        &stats,
+        &sizes,
+        scope.as_ref()
+    ))))
 }
 
 fn colors_json(key: &str) -> Value {
@@ -1110,5 +1229,65 @@ fn ask_error(e: AskError) -> ApiError {
             ApiError::Upstream("the language model could not be reached; see the log".to_string())
         }
         AskError::Store(s) => s.into(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn pairs(list: &[(&str, &str)]) -> Vec<(String, String)> {
+        list.iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
+    }
+
+    #[test]
+    fn era_params_read_repeated_facets_and_scalar_keys() {
+        let p = era_params(&pairs(&[
+            ("facet", "player:LeBron James"),
+            ("facet", "rule:Hand-check ban"),
+            ("facet", "player:LeBron James"),
+            ("by", "cba"),
+            ("by", "rule"),
+            ("league", "nba"),
+            ("unknown", "ignored"),
+            ("dynasty_titles", "4"),
+        ]))
+        .unwrap();
+        let shown: Vec<String> = p.facets.iter().map(ToString::to_string).collect();
+        assert_eq!(shown, ["player:LeBron James", "rule:Hand-check ban"]);
+        // A repeated scalar key keeps its last value; an unknown key is ignored.
+        assert_eq!(p.by, "rule");
+        assert_eq!(p.league.as_deref(), Some("nba"));
+        assert_eq!(dynasty_thresholds(&p).unwrap(), (4, DYNASTY_GAP));
+        assert_eq!(
+            dynasty_thresholds(&EraParams::default()).unwrap(),
+            (DYNASTY_TITLES, DYNASTY_GAP)
+        );
+        assert_eq!(
+            dynasty_thresholds(&era_params(&pairs(&[("dynasty_gap", "99")])).unwrap()).unwrap(),
+            (DYNASTY_TITLES, 20)
+        );
+    }
+
+    #[test]
+    fn era_params_reject_bad_facets_and_too_many() {
+        for bad in ["LeBron James", "salary:cap", "player:", "player:   "] {
+            assert!(era_params(&pairs(&[("facet", bad)])).is_err(), "{bad}");
+        }
+        let nine: Vec<(String, String)> = (0..9)
+            .map(|i| ("facet".to_string(), format!("decade:{}0s", 194 + i)))
+            .collect();
+        match era_params(&nine) {
+            Err(ApiError::BadRequest(msg)) => assert!(msg.contains("at most 8 facets"), "{msg}"),
+            other => panic!("expected a bad request, got {other:?}"),
+        }
+        assert_eq!(era_params(&nine[..8]).unwrap().facets.len(), 8);
+        assert!(era_params(&pairs(&[("dynasty_titles", "many")])).is_ok());
+        assert!(
+            dynasty_thresholds(&era_params(&pairs(&[("dynasty_titles", "many")])).unwrap())
+                .is_err()
+        );
     }
 }

@@ -19,7 +19,9 @@ use crate::domain::models::{
     JobStatus, PlayoffResult, ResultSource, Season, SimulationJob, Team, TeamSeason,
     TeamSeasonView,
 };
-use crate::domain::records::{ChampionRoad, GameSwing, Matchup, MatchupOrder, TeamSeasonStat};
+use crate::domain::records::{
+    ChampionRoad, GameSwing, Matchup, MatchupOrder, SeasonScope, TeamSeasonStat,
+};
 
 /// Error from any store port. Adapters convert their own errors into these variants.
 #[derive(Debug, thiserror::Error)]
@@ -362,17 +364,31 @@ pub trait AnalysisStore: Send + Sync {
     async fn insert_forecast(&self, forecast: &NewForecast<'_>) -> StoreResult<()>;
     /// Every team-season with its rating extremes, for the Elo records.
     async fn team_season_stats(&self) -> StoreResult<Vec<TeamSeasonStat>>;
-    /// The `limit` games with the largest rating gain for the winner.
-    async fn biggest_swings(&self, limit: i64) -> StoreResult<Vec<GameSwing>>;
+    /// The `limit` games with the largest rating gain for the winner, within `scope` when
+    /// there is one (the seasons of each league; a game belongs to the league of its teams).
+    async fn biggest_swings(
+        &self,
+        scope: Option<&SeasonScope>,
+        limit: i64,
+    ) -> StoreResult<Vec<GameSwing>>;
     /// Played games ranked by the two teams' combined pre-game rating: the `limit` strongest
-    /// or weakest, in that order.
-    async fn matchups(&self, order: MatchupOrder, limit: i64) -> StoreResult<Vec<Matchup>>;
-    /// The weakest played game of every season, once for NBA/BAA games and once for ABA
-    /// games (a game belongs to the league of its teams); in season order.
-    async fn weakest_matchup_per_season(&self) -> StoreResult<Vec<Matchup>>;
-    /// Every champion (from the championships table, curated ones included) with the mean
-    /// rating of its opponents before each regular-season and playoff game.
-    async fn champion_roads(&self) -> StoreResult<Vec<ChampionRoad>>;
+    /// or weakest, in that order, within `scope` when there is one.
+    async fn matchups(
+        &self,
+        scope: Option<&SeasonScope>,
+        order: MatchupOrder,
+        limit: i64,
+    ) -> StoreResult<Vec<Matchup>>;
+    /// The weakest played game of every season in `scope` (every season without one), once
+    /// for NBA/BAA games and once for ABA games; in season order.
+    async fn weakest_matchup_per_season(
+        &self,
+        scope: Option<&SeasonScope>,
+    ) -> StoreResult<Vec<Matchup>>;
+    /// Every champion (from the championships table, curated ones included) of the seasons in
+    /// `scope` with the mean rating of its opponents before each regular-season and playoff
+    /// game.
+    async fn champion_roads(&self, scope: Option<&SeasonScope>) -> StoreResult<Vec<ChampionRoad>>;
     /// Every (season, team code) with at least one game, played or scheduled: the league's
     /// membership for the season, which the played games alone understate early in a season.
     async fn season_rosters(&self) -> StoreResult<Vec<(SeasonYear, String)>>;
