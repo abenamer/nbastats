@@ -5,6 +5,7 @@
 - Initial application: Engines A, B and C, backtesting, dynasty laboratory, nine pages, PostgreSQL 17 persistence, Docker Compose, backup and restore scripts.
 - Aligned with REAS 1.2.0-draft: domain, application and adapters layout; six ports and one `PostgresStore` adapter; `TeamId`, `FranchiseId` and `SeasonYear` newtypes; typed errors; conditional job transitions; documentation checker, terminology, self-audit and decisions.
 
+- Dependencies: tokio 1.54.1 (RUSTSEC-2026-0384, a race condition in `tokio::time::Interval` on 1.54.0, which was yanked).
 - Results sync: the first sync of a season fetches the whole schedule; later syncs fetch only the days from the last played game to today and keep the stored games outside that window, so the daily refresh needs one or two requests instead of thirteen.
 - Elo Explorer: the season chart shows a dot for a team with one game and a line from two games on, adds a shaded strip for the games not played yet (with their count and the last scheduled date), and keeps its date ticks on whole days.
 - Curated champions and runner-ups for 1946-47 to 1959-60 and 1967-68 to 1982-83, where the archive's playoff data does not resolve a bracket; existing installations are backfilled at start.
