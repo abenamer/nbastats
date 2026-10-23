@@ -18,6 +18,7 @@ use crate::application::jobs::{self, Limits, Submit};
 use crate::application::ports::{
     AnalysisStore, GameLog, ImportLog, JobStore, LanguageModel, ModelError, ResultsSource,
 };
+use crate::application::reports::{self, Fetching, PlayedGame, ReportError};
 use crate::application::{dashboard, dynasty};
 use crate::application::{results_sync, scheduler};
 use crate::config::APP_VERSION;
@@ -982,6 +983,77 @@ pub async fn coverage(State(app): State<AppState>) -> ApiResult<Value> {
             })
         }),
     })))
+}
+
+// ---------------------------------------------------------------------------------------
+// Game reports
+// ---------------------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+pub struct ReportsQuery {
+    /// Comma-separated dates, YYYY-MM-DD.
+    #[serde(default)]
+    pub dates: String,
+}
+
+/// The report links for the games of the given dates (at most 40). Dates not looked up yet
+/// are fetched a few per request; the rest come back as `pending` for a later request.
+pub async fn game_reports(
+    State(app): State<AppState>,
+    Query(q): Query<ReportsQuery>,
+) -> ApiResult<reports::Reports> {
+    let mut dates: Vec<NaiveDate> = Vec::new();
+    for part in q.dates.split(',').map(str::trim).filter(|s| !s.is_empty()) {
+        if dates.len() >= reports::MAX_DATES {
+            return Err(ApiError::bad_request(ReportError::TooManyDates.to_string()));
+        }
+        let d = NaiveDate::parse_from_str(part, "%Y-%m-%d")
+            .map_err(|_| ApiError::bad_request("dates must be YYYY-MM-DD, comma-separated"))?;
+        if !dates.contains(&d) {
+            dates.push(d);
+        }
+    }
+    // The played games of each date, by season.
+    let teams = app.teams().await?;
+    let mut games: std::collections::BTreeMap<NaiveDate, Vec<PlayedGame>> = Default::default();
+    let mut seasons: Vec<SeasonYear> = dates
+        .iter()
+        .map(|d| scheduler::season_of_date(*d))
+        .collect();
+    seasons.sort_unstable();
+    seasons.dedup();
+    for season in seasons {
+        let Ok(data) = app.season_data(season).await else {
+            continue;
+        };
+        for g in data
+            .games
+            .iter()
+            .filter(|g| g.is_played() && dates.contains(&g.game_date))
+        {
+            if let (Some(h), Some(a)) = (teams.get(&g.home_team_id), teams.get(&g.away_team_id)) {
+                games.entry(g.game_date).or_default().push(PlayedGame {
+                    home_code: h.code.clone(),
+                    away_code: a.code.clone(),
+                });
+            }
+        }
+    }
+    let team_list: Vec<_> = teams.values().cloned().collect();
+    // One lookup at a time: a request that finds the slot taken answers from the store.
+    let slot = app.report_slot.try_acquire().ok();
+    let fetching = match (&app.reports, &slot) {
+        (None, _) => Fetching::Off,
+        (Some(_), None) => Fetching::Busy,
+        (Some(source), Some(_)) => Fetching::With(source),
+    };
+    let out = reports::for_dates(&app.store, fetching, &team_list, &games, &dates)
+        .await
+        .map_err(|e| match e {
+            ReportError::TooManyDates => ApiError::bad_request(e.to_string()),
+            ReportError::Store(s) => s.into(),
+        })?;
+    Ok(Json(out))
 }
 
 // ---------------------------------------------------------------------------------------

@@ -14,8 +14,8 @@ REAS favours ports and adapters for human-maintained code and asks three questio
 
 ## Decision
 
-* The application defines eight ports in `src/application/ports.rs`: `GameLog`, `GameStore`, `ImportLog`, `JobStore`, `AnalysisStore`, `DatasetSource`, `ResultsSource`, `LanguageModel`.
-* One adapter type, `PostgresStore`, implements the five store ports. `HttpDatasetSource` implements `DatasetSource`. `BalldontlieSource` implements `ResultsSource` (added 2026-10-21 when the archive no longer covered the current season). `OpenRouterModel` implements `LanguageModel` (added 2026-10-23 for the question box, [ADR 0005](0005-question-box-via-openrouter.md)).
+* The application defines ten ports in `src/application/ports.rs`: `GameLog`, `GameStore`, `ImportLog`, `JobStore`, `AnalysisStore`, `ReportStore`, `DatasetSource`, `ResultsSource`, `LanguageModel`, `ReportSource`.
+* One adapter type, `PostgresStore`, implements the six store ports. `HttpDatasetSource` implements `DatasetSource`. `BalldontlieSource` implements `ResultsSource` (added 2026-10-21 when the archive no longer covered the current season). `OpenRouterModel` implements `LanguageModel` (added 2026-10-23 for the question box, [ADR 0005](0005-question-box-via-openrouter.md)). `EspnReportSource` implements `ReportSource` and `PostgresStore` also implements `ReportStore` (added 2026-10-23 for the game report links).
 * `App` holds the concrete adapters. Use cases that benefit from fakes (import, job runner, refresh) take the ports as generic parameters. HTTP handlers call the ports through `app.store`.
 * `main.rs` is the composition root.
 

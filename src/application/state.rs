@@ -12,6 +12,7 @@ use uuid::Uuid;
 
 use crate::adapters::balldontlie::BalldontlieSource;
 use crate::adapters::dataset::HttpDatasetSource;
+use crate::adapters::espn::EspnReportSource;
 use crate::adapters::openrouter::OpenRouterModel;
 use crate::adapters::postgres::PostgresStore;
 use crate::application::results_sync::SyncPhase;
@@ -62,6 +63,10 @@ pub struct App {
     pub model: Option<OpenRouterModel>,
     /// Questions answered at the same time; the rest get status 429.
     pub ask_slots: tokio::sync::Semaphore,
+    /// Game report source; `None` when the lookups are turned off.
+    pub reports: Option<EspnReportSource>,
+    /// One report lookup at a time; a request that finds it taken answers from the store.
+    pub report_slot: tokio::sync::Semaphore,
     /// Held while a results sync runs (manual or scheduled); at most one at a time.
     pub sync_lock: Arc<tokio::sync::Mutex<()>>,
     sync_phase: std::sync::Mutex<SyncPhase>,
@@ -84,6 +89,7 @@ impl App {
         results: Option<BalldontlieSource>,
         sync_schedule: Option<SyncSchedule>,
         model: Option<OpenRouterModel>,
+        reports: Option<EspnReportSource>,
     ) -> Self {
         Self {
             config,
@@ -93,6 +99,8 @@ impl App {
             sync_schedule,
             model,
             ask_slots: tokio::sync::Semaphore::new(ASK_SLOTS),
+            reports,
+            report_slot: tokio::sync::Semaphore::new(1),
             sync_lock: Arc::new(tokio::sync::Mutex::new(())),
             sync_phase: std::sync::Mutex::new(SyncPhase::Idle),
             started_at: chrono::Utc::now(),

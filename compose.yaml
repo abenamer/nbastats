@@ -67,6 +67,8 @@ services:
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
       OPENROUTER_MODEL: ${OPENROUTER_MODEL:-openai/gpt-4o-mini}
       OPENROUTER_BASE_URL: ${OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}
+      GAME_REPORTS_ENABLED: ${GAME_REPORTS_ENABLED:-true}
+      ESPN_BASE_URL: ${ESPN_BASE_URL:-https://site.api.espn.com}
     ports:
       - "${APP_HOST_BIND:-127.0.0.1}:${APP_HOST_PORT:-3000}:3000"
     volumes:

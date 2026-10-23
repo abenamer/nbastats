@@ -38,6 +38,7 @@ These are project-specific technical terms. They are not a reproduction of the A
 | Fetch window | The dates a results sync asks the source for: the whole season on the first sync, then the days from the last played game to today. |
 | Franchise | The organisation, followed through relocations and renamings. Identified by `FranchiseId` and a key such as `GSW`. |
 | Game log | The stored list of games with the application's Elo before and after each game, and the archive's reference ratings for archive games. |
+| Game report | The wire-service recap of a played game (the Associated Press recap that ESPN hosts), linked from the game's score when the lookup finds one; stored by date and team codes. |
 | Information cutoff | The last date whose games a forecast may use. |
 | Job | A stored simulation request with parameters, seed, versions, progress and result. |
 | Language model | A chat model with tool calling behind the `LanguageModel` port; the `OpenRouterModel` adapter calls it through OpenRouter's OpenAI-compatible API. |

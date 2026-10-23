@@ -10,6 +10,7 @@ use tracing_subscriber::EnvFilter;
 
 use nba_elo_simulator::adapters::balldontlie::{BalldontlieConfig, BalldontlieSource};
 use nba_elo_simulator::adapters::dataset::HttpDatasetSource;
+use nba_elo_simulator::adapters::espn::EspnReportSource;
 use nba_elo_simulator::adapters::http;
 use nba_elo_simulator::adapters::openrouter::{OpenRouterConfig, OpenRouterModel};
 use nba_elo_simulator::adapters::postgres::PostgresStore;
@@ -195,6 +196,11 @@ async fn serve(
     model: Option<OpenRouterModel>,
 ) -> anyhow::Result<()> {
     std::fs::create_dir_all(&config.data_dir)?;
+    let reports = if config.game_reports_enabled {
+        Some(EspnReportSource::new(config.espn_base_url.clone())?)
+    } else {
+        None
+    };
     let interrupted = store.mark_running_jobs_interrupted().await?;
     if interrupted > 0 {
         warn!(
@@ -244,7 +250,11 @@ async fn serve(
         results,
         sync_schedule,
         model,
+        reports,
     ));
+    if let Some(r) = &app.reports {
+        info!(base_url = r.base_url(), "game report lookups enabled");
+    }
     if let Some(m) = &app.model {
         info!(
             model = m.model_name(),

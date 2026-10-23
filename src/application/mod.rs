@@ -8,6 +8,7 @@ pub mod imports;
 pub mod jobs;
 pub mod ports;
 pub mod recompute;
+pub mod reports;
 pub mod results_sync;
 pub mod scheduler;
 pub mod state;

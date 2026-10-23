@@ -89,6 +89,7 @@ canvas { max-width:100%; }
 .chip[aria-pressed=true] { background:#14202e; color:#fff; border-color:#14202e; }
 .chip.preset { background:#fff; }
 tr.thin td { color:var(--muted); }
+a.report { font-size:.78rem; margin-left:.3rem; white-space:nowrap; }
 .notes details { margin:.25rem 0; } .notes summary { cursor:pointer; } .notes ul { margin:.2rem 0 .4rem 1.2rem; }
 .compare { display:grid; grid-template-columns:repeat(auto-fit, minmax(260px, 1fr)); gap:.8rem; margin-top:.8rem; }
 .compare .card h3 { margin:0 0 .4rem; font-size:1rem; }

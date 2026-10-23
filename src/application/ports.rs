@@ -580,3 +580,66 @@ pub trait LanguageModel: Send + Sync {
     fn model_name(&self) -> &str;
     async fn chat(&self, request: ChatRequest<'_>) -> Result<ChatReply, ModelError>;
 }
+
+// ---------------------------------------------------------------------------------------
+// Game reports (a link to the wire-service report of a played game)
+// ---------------------------------------------------------------------------------------
+
+/// A report found for a game, stored by date and team codes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct GameReport {
+    pub game_date: NaiveDate,
+    pub home_code: String,
+    pub away_code: String,
+    pub url: String,
+    pub title: Option<String>,
+    pub source: String,
+}
+
+/// One date asked of the report source, with how many reports it gave.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReportLookup {
+    pub game_date: NaiveDate,
+    pub source: String,
+    pub fetched_at: chrono::DateTime<chrono::Utc>,
+    pub found: i32,
+}
+
+#[allow(async_fn_in_trait)]
+pub trait ReportStore: Send + Sync {
+    async fn reports_on(&self, dates: &[NaiveDate]) -> StoreResult<Vec<GameReport>>;
+    async fn lookups_on(&self, dates: &[NaiveDate]) -> StoreResult<Vec<ReportLookup>>;
+    /// Record one date's lookup and its reports in one transaction.
+    async fn save_lookup(
+        &self,
+        date: NaiveDate,
+        source: &str,
+        reports: &[GameReport],
+    ) -> StoreResult<()>;
+}
+
+/// A report the source lists for a date, with the teams as the source names them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReportCandidate {
+    pub home_abbr: String,
+    pub away_abbr: String,
+    pub home_name: String,
+    pub away_name: String,
+    pub url: String,
+    pub title: Option<String>,
+}
+
+/// What the source lists for a date: how many games, and the reports among them. A date
+/// the source lists no game for is not treated as final (the feed may have been empty).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ReportListing {
+    pub games_listed: usize,
+    pub reports: Vec<ReportCandidate>,
+}
+
+/// Where game reports come from. The concrete adapter is `adapters::espn::EspnReportSource`.
+#[allow(async_fn_in_trait)]
+pub trait ReportSource: Send + Sync {
+    fn name(&self) -> &'static str;
+    async fn reports_on(&self, date: NaiveDate) -> Result<ReportListing, SourceError>;
+}
