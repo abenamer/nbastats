@@ -2,6 +2,29 @@
 {% block content %}
 <div class="records">
 <p class="muted">The highest and lowest Elo ratings in the game log, 1946-47 to today. A team's rating after each game is the measure; "peak" and "low" are the best and worst single-game ratings of a season, and "Reached in" names the phase of that game: regular season, play-in, cup final or playoffs. Reg. W-L is the regular-season record; Playoff W-L counts playoff games only. Conference and division records use the mean pre-playoff rating of the teams. Before 1970-71 the league's two divisions (Eastern and Western) stand in for conferences. ABA teams are not aligned. <span id="status"></span></p>
+<section>
+  <div class="panel" id="builder"><h2>Era builder</h2>
+    <p class="muted small">Group the seasons your way and read one row per group: the best and weakest team-season, the titles and their winners, the title HHI and the Elo spread. Combining dimensions intersects them, so only combinations that occur appear. Dynasty eras are computed from the champions (a franchise's run of titles; the thresholds are below). Player eras are curated careers of every league and Finals MVP, so a season belongs to each player active in it. The ⓘ link beside a group's label opens what its periods changed. Read a difference between groups as association, not cause.</p>
+    <div class="builder-rows">
+      <div class="builder-row"><span class="builder-label">Presets</span><div class="chips" id="presets">
+        <button class="chip preset" data-preset="cba">By CBA</button><button class="chip preset" data-preset="rule">By rule period</button><button class="chip preset" data-preset="format">By format</button><button class="chip preset" data-preset="dynasty">By dynasty era</button><button class="chip preset" data-preset="player">By player era</button><button class="chip preset" data-preset="cba,rule">CBA × rule period</button><button class="chip preset" data-preset="player,rule">Player era × rule period</button><button class="chip preset" data-preset="dynasty,cba">Dynasty × CBA</button></div></div>
+      <div class="builder-row"><span class="builder-label">Group by</span><div class="chips" id="dims"></div></div>
+      <div class="builder-row"><span class="builder-label">Filter</span><div class="row" style="margin:0">
+        <label>League <select id="gLeague"><option value="all">NBA/BAA and ABA</option><option value="nba" selected>NBA/BAA</option><option value="aba">ABA</option></select></label>
+        <label>Seasons from <input id="gFrom" type="number" min="1947" max="2100" style="width:5.5rem" placeholder="1947"></label>
+        <label>to <input id="gTo" type="number" min="1947" max="2100" style="width:5.5rem" placeholder="latest"></label>
+        <label title="A dynasty is a franchise's run of titles: at least this many titles, with no gap longer than the limit between two of them, from its first title to its last.">Dynasty: at least <input id="gTitles" type="number" min="1" max="20" value="3" style="width:4rem"> titles, gaps of at most <input id="gGap" type="number" min="0" max="20" value="3" style="width:4rem"> seasons</label>
+        <label>Grey groups under <input id="gMin" type="number" min="1" max="20" value="4" style="width:4rem"> seasons</label>
+      </div></div>
+      <div class="row"><button id="gUpdate" class="primary">Update</button><button id="gCopy">Copy link</button><span id="gStatus" class="muted small"></span></div>
+      <p class="small"><code id="gUrl" class="muted"></code></p>
+    </div>
+    <div id="groups" class="table-wrap"></div>
+    <p class="muted small" id="gThin"></p>
+    <div id="groupNotes"></div>
+    <div id="compare" class="compare"></div>
+  </div>
+</section>
 <section class="grid2">
   <div class="panel"><h2>Highest ratings ever</h2><div id="allTimeHigh" class="table-wrap"></div></div>
   <div class="panel"><h2>Lowest ratings ever</h2><div id="allTimeLow" class="table-wrap"></div></div>
@@ -34,4 +57,4 @@
 </section>
 </div>
 {% endblock %}
-{% block scripts %}<script src="/static/js/records.js?v={{ layout.assets }}" defer></script>{% endblock %}
+{% block scripts %}<script src="/static/js/records.js?v={{ layout.assets }}" defer></script><script src="/static/js/eras.js?v={{ layout.assets }}" defer></script>{% endblock %}

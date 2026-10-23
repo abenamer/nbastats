@@ -15,6 +15,38 @@ use crate::domain::reference;
 /// Share of a season's median game count a team must reach before its season counts as
 /// full. Schedules ran from 48 to 82 games, so the floor follows the season, not a fixed number.
 pub const FULL_SEASON_SHARE: f64 = 0.8;
+
+/// One change a period brought, dated to a season. The period tables (rule periods,
+/// bargaining periods, competition formats, player eras) list their changes this way.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct Change {
+    pub season: SeasonYear,
+    pub text: &'static str,
+}
+
+pub const fn change(end_year: i32, text: &'static str) -> Change {
+    Change {
+        season: SeasonYear::of(end_year),
+        text,
+    }
+}
+
+/// A change as the API serves it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ChangeNote {
+    pub season: SeasonYear,
+    pub text: String,
+}
+
+impl From<&Change> for ChangeNote {
+    fn from(c: &Change) -> Self {
+        Self {
+            season: c.season,
+            text: c.text.to_string(),
+        }
+    }
+}
+
 /// A rule period groups the eras of the records page. A period starts with a rule change;
 /// an era also starts there.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -23,6 +55,9 @@ pub struct RulePeriod {
     pub first_season: SeasonYear,
     pub name: &'static str,
     pub rule: &'static str,
+    /// The changes of the period, dated, for the era builder's notes.
+    #[serde(skip)]
+    pub changes: &'static [Change],
 }
 
 /// The rule periods, in season order within each league. The NBA's 3-point line came in
@@ -33,36 +68,69 @@ pub const RULE_PERIODS: &[RulePeriod] = &[
         first_season: SeasonYear::of(1947),
         name: "Pre shot clock",
         rule: "The BAA's founding; no shot clock",
+        changes: &[
+            change(1947, "The BAA opens with 48-minute games and a ban on zone defense."),
+            change(1950, "A 19-18 Fort Wayne win over Minneapolis shows what stalling does to the game."),
+            change(1950, "The BAA and the NBL merge into the NBA (seventeen teams in 1949-50)."),
+            change(1952, "The lane is widened from six to twelve feet to move George Mikan away from the basket."),
+        ],
     },
     RulePeriod {
         league: League::Nba,
         first_season: SeasonYear::of(1955),
         name: "Shot clock",
         rule: "The 24-second shot clock",
+        changes: &[
+            change(1955, "The 24-second shot clock and a limit on team fouls per quarter with bonus free throws."),
+            change(1965, "The lane is widened from twelve to sixteen feet."),
+            change(1968, "The ABA plays with a three-point line and a 30-second clock."),
+            change(1977, "The ABA merger brings four teams, not yet the three-point line."),
+        ],
     },
     RulePeriod {
         league: League::Nba,
         first_season: SeasonYear::of(1980),
         name: "Three-point line",
         rule: "The 3-point line",
+        changes: &[
+            change(1980, "The three-point line at 23 feet 9 inches, 22 feet in the corners."),
+            change(1982, "Illegal-defense guidelines tightened: no zones, each defender guards a man."),
+            change(1989, "A third referee on the floor."),
+            change(1995, "Hand-checking banned from the baseline to the foul line; the line is shortened to 22 feet for three seasons, then restored in 1997-98."),
+        ],
     },
     RulePeriod {
         league: League::Nba,
         first_season: SeasonYear::of(2002),
         name: "Zone defense",
         rule: "Illegal-defense rules abolished; zone defense allowed",
+        changes: &[
+            change(2002, "Zone defense allowed; the illegal-defense rules are dropped and a defensive three-second rule added."),
+            change(2002, "Eight seconds, not ten, to advance the ball past half court."),
+            change(2002, "No contact with a dribbler beyond the free-throw line extended, the first step of the hand-check ban."),
+        ],
     },
     RulePeriod {
         league: League::Nba,
         first_season: SeasonYear::of(2005),
         name: "Hand-check ban",
         rule: "Perimeter hand-checking enforced",
+        changes: &[
+            change(2005, "Hand-checking, forearm contact and body checks on perimeter players called strictly; scoring and pace rise."),
+            change(2019, "The shot clock resets to 14 seconds after an offensive rebound; the coach's challenge arrives the next season."),
+            change(2022, "No fouls for unnatural shooting motions drawn into contact."),
+            change(2024, "Flopping penalised with a technical free throw."),
+        ],
     },
     RulePeriod {
         league: League::Aba,
         first_season: SeasonYear::of(1968),
         name: "ABA",
         rule: "The 3-point line and a 30-second clock from the first season",
+        changes: &[
+            change(1968, "A three-point line and a 30-second shot clock from the first season; the red, white and blue ball."),
+            change(1976, "The first slam-dunk contest at the All-Star Game; the league folds into the NBA that summer."),
+        ],
     },
 ];
 
@@ -515,6 +583,26 @@ pub fn eras(
     out
 }
 
+/// The number of teams of each league in each season: from the schedule where it is known
+/// (an in-progress season has teams that have not played yet), else from the team-seasons.
+pub fn league_sizes(
+    stats: &[TeamSeasonStat],
+    rosters: &[(SeasonYear, String)],
+) -> BTreeMap<(SeasonYear, League), usize> {
+    let mut sizes: BTreeMap<(SeasonYear, League), usize> = BTreeMap::new();
+    for (season, code) in rosters {
+        *sizes.entry((*season, League::of_code(code))).or_default() += 1;
+    }
+    for s in stats {
+        if !rosters.iter().any(|(season, _)| *season == s.season) {
+            *sizes
+                .entry((s.season, League::of_code(&s.code)))
+                .or_default() += 1;
+        }
+    }
+    sizes
+}
+
 /// Decade of the season's start year: 1959-60 (end year 1960) belongs to the 1950s.
 pub fn decade_of(season: SeasonYear) -> i32 {
     ((season.end_year() - 1) / 10) * 10
@@ -727,19 +815,7 @@ pub fn compute(
         .collect();
     by_league.sort_by_key(|r| r.first_season);
 
-    // League sizes: number of teams of that league in that season, from the schedule where
-    // it is known (an in-progress season has teams that have not played yet).
-    let mut sizes: BTreeMap<(SeasonYear, League), usize> = BTreeMap::new();
-    for (season, code) in rosters {
-        *sizes.entry((*season, League::of_code(code))).or_default() += 1;
-    }
-    for s in stats {
-        if !rosters.iter().any(|(season, _)| *season == s.season) {
-            *sizes
-                .entry((s.season, League::of_code(&s.code)))
-                .or_default() += 1;
-        }
-    }
+    let sizes = league_sizes(stats, rosters);
     let mut by_size_map: BTreeMap<(usize, &'static str), (League, Vec<&TeamSeasonStat>)> =
         BTreeMap::new();
     for s in stats {
