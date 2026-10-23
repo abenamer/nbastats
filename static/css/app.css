@@ -49,6 +49,10 @@ table { border-collapse:collapse; width:100%; font-size:.88rem; }
 th, td { padding:.35rem .5rem; border-bottom:1px solid var(--line); text-align:right; white-space:nowrap; }
 th:first-child, td:first-child, td.l, th.l { text-align:left; }
 th { background:#f8fafc; position:sticky; top:0; font-weight:600; color:#374151; }
+table.sortable th { cursor:pointer; user-select:none; }
+table.sortable th:hover { color:#111827; }
+table.sortable th.asc::after { content:" \25B4"; color:#2563eb; }
+table.sortable th.desc::after { content:" \25BE"; color:#2563eb; }
 tr:hover td { background:#f8fafc; }
 td.good { color:var(--good); font-weight:600; } td.warn { color:var(--warn); } td.bad { color:var(--bad); }
 .bar { display:inline-block; height:.6rem; background:#93c5fd; border-radius:3px; vertical-align:middle; margin-right:.3rem; }
