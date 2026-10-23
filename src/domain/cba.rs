@@ -313,6 +313,7 @@ pub fn summaries(stats: &[TeamSeasonStat]) -> Vec<CbaSummary> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::models::GameType;
     use chrono::NaiveDate;
 
     fn stat(
@@ -331,10 +332,14 @@ mod tests {
             games: 82,
             peak,
             peak_date: NaiveDate::from_ymd_opt(season, 5, 1).unwrap(),
+            peak_game_type: GameType::Regular,
             low: peak - 200.0,
             low_date: NaiveDate::from_ymd_opt(season - 1, 11, 1).unwrap(),
+            low_game_type: GameType::Regular,
             wins: 50,
             losses: 32,
+            playoff_wins: 0,
+            playoff_losses: 0,
             elo_start: Some(1500.0),
             elo_pre_playoffs: Some(end),
             elo_end: Some(end),

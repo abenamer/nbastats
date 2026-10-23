@@ -326,6 +326,36 @@ async fn records_queries_summarise_the_game_log(pool: PgPool) {
         .filter(|g| g.involves(gsw_id) && g.is_played())
         .collect();
     assert_eq!(gsw.games as usize, gsw_games.len());
+    // The 2015-16 Warriors went 15-9 in the playoffs; the champion Cavaliers 16-5.
+    assert_eq!((gsw.playoff_wins, gsw.playoff_losses), (15, 9));
+    let peak_game = gsw_games
+        .iter()
+        .max_by(|a, b| {
+            a.elo_of(gsw_id)
+                .1
+                .total_cmp(&b.elo_of(gsw_id).1)
+                .then(b.game_date.cmp(&a.game_date))
+        })
+        .unwrap();
+    assert_eq!(gsw.peak_game_type, peak_game.game_type);
+    let low_game = gsw_games
+        .iter()
+        .min_by(|a, b| {
+            a.elo_of(gsw_id)
+                .1
+                .total_cmp(&b.elo_of(gsw_id).1)
+                .then(a.game_date.cmp(&b.game_date))
+        })
+        .unwrap();
+    assert_eq!(gsw.low_game_type, low_game.game_type);
+    let cle = stats.iter().find(|s| s.code == "CLE").unwrap();
+    assert_eq!(
+        cle.peak_game_type,
+        GameType::Playoff,
+        "the champion peaked in the playoffs"
+    );
+    assert_eq!(cle.low_game_type, GameType::Regular);
+    assert_eq!((cle.playoff_wins, cle.playoff_losses), (16, 5));
     let peak = gsw_games
         .iter()
         .map(|g| g.elo_of(gsw_id).1)

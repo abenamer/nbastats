@@ -7,11 +7,15 @@
   // The winner of a game and its margin, e.g. "NYK by 10"; a tie (none in the log) reads "tie".
   const winner = (home, hs, away, as_) => hs === as_ ? 'tie' : hs > as_ ? `${home} by ${hs - as_}` : `${away} by ${as_ - hs}`;
   // `endLabel` adds the rating after the team's last game (for a champion, the clinching game).
+  const po = e => (e.playoff_wins || e.playoff_losses) ? `${e.playoff_wins}-${e.playoff_losses}` : '–';
+  // With a date (a peak or low line), "Reached in" names the phase of the game that set the value.
+  const PHASE = { regular: 'Regular season', play_in: 'Play-in', cup_final: 'Cup final', playoff: 'Playoffs' };
   const entryCols = (valueLabel, withDate = true, endLabel = null) => [
     { label: 'Season', value: e => labelOf(e.season), left: true }, { label: 'Team', value: team, left: true }, { label: 'Lg', value: e => league(e.league), left: true },
-    { label: valueLabel, value: e => num(e.value, 0) }, ...(withDate ? [{ label: 'Date', value: e => e.date || '', left: true }] : []),
+    { label: valueLabel, value: e => num(e.value, 0) },
+    ...(withDate ? [{ label: 'Date', value: e => e.date || '', left: true }, { label: 'Reached in', value: e => PHASE[e.game_type] || '', left: true }] : []),
     ...(endLabel ? [{ label: endLabel, value: e => num(e.elo_end, 0) }] : []),
-    { label: 'W-L', value: rec, left: true }, { label: 'Result', value: e => RESULT[e.playoff_result] || e.playoff_result, left: true, cls: e => e.playoff_result === 'champion' ? 'good' : '' }];
+    { label: 'Reg. W-L', value: rec, left: true }, { label: 'Playoff W-L', value: po, left: true }, { label: 'Result', value: e => RESULT[e.playoff_result] || e.playoff_result, left: true, cls: e => e.playoff_result === 'champion' ? 'good' : '' }];
   const list = (id, rows, valueLabel, withDate, endLabel) => { document.getElementById(id).innerHTML = rows.length ? table(entryCols(valueLabel, withDate, endLabel), rows) : '<p class="muted">No data.</p>'; };
   const pair = (x, which) => `${x.extremes[which].code} ${num(x.extremes[which].value, 0)} (${labelOf(x.extremes[which].season)})`;
   const groupCols = [

@@ -1,6 +1,7 @@
 # Bundle update log
 
 ## 2026-10-23
+* **Update**: Records lines show where a peak was reached and the playoff record; noted in the [Application overview](/concepts/application.md).
 * **New**: [Rule periods and bargaining periods](/concepts/periods.md) lists the two period tables and what each period changed; the Records page gains the records by collective bargaining agreement; the terms Bargaining period, Title HHI and Elo spread are defined; the API reference and the [Application overview](/concepts/application.md) follow.
 * **Update**: The example configuration is regrouped; the [start runbook](/runbooks/start.md) and the [configuration reference](/reference/configuration.md) follow. After the security review of the question box: the scope rule counts only lookups that returned data, the per-question result budget and the no-redirect rule are documented in the concept and the [Security model](/concepts/security.md).
 * **New**: [Question box](/concepts/question-box.md) describes the dashboard's question box, its tools, its scope and what leaves the computer; [ADR 0005](/decisions/0005-question-box-via-openrouter.md) records the decision; [ADR 0001](/decisions/0001-ports-at-three-boundaries.md) lists the eighth port; the API and configuration references, the [Security model](/concepts/security.md) and the [Application overview](/concepts/application.md) follow; the terms Language model, Lookup and Question box are defined.

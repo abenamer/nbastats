@@ -9,7 +9,7 @@ use serde::Serialize;
 use crate::domain::ids::SeasonYear;
 use std::collections::BTreeMap;
 
-use crate::domain::models::{Conference, PlayoffResult};
+use crate::domain::models::{Conference, GameType, PlayoffResult};
 use crate::domain::reference;
 
 /// Share of a season's median game count a team must reach before its season counts as
@@ -126,10 +126,17 @@ pub struct TeamSeasonStat {
     pub games: i64,
     pub peak: f64,
     pub peak_date: NaiveDate,
+    /// The type of the game that set the peak (regular, play-in, cup final or playoff).
+    pub peak_game_type: GameType,
     pub low: f64,
     pub low_date: NaiveDate,
+    pub low_game_type: GameType,
+    /// Regular-season record.
     pub wins: i32,
     pub losses: i32,
+    /// Playoff record (play-in and cup games excluded).
+    pub playoff_wins: i32,
+    pub playoff_losses: i32,
     pub elo_start: Option<f64>,
     pub elo_pre_playoffs: Option<f64>,
     pub elo_end: Option<f64>,
@@ -272,6 +279,10 @@ pub struct Entry {
     pub elo_end: Option<f64>,
     pub wins: i32,
     pub losses: i32,
+    pub playoff_wins: i32,
+    pub playoff_losses: i32,
+    /// For a peak or low line: the type of the game that set the value.
+    pub game_type: Option<GameType>,
     pub playoff_result: PlayoffResult,
 }
 
@@ -389,6 +400,15 @@ pub struct Records {
 }
 
 fn entry(s: &TeamSeasonStat, value: f64, date: Option<NaiveDate>) -> Entry {
+    entry_of(s, value, date, None)
+}
+
+fn entry_of(
+    s: &TeamSeasonStat,
+    value: f64,
+    date: Option<NaiveDate>,
+    game_type: Option<GameType>,
+) -> Entry {
     Entry {
         season: s.season,
         code: s.code.clone(),
@@ -400,16 +420,19 @@ fn entry(s: &TeamSeasonStat, value: f64, date: Option<NaiveDate>) -> Entry {
         elo_end: s.elo_end,
         wins: s.wins,
         losses: s.losses,
+        playoff_wins: s.playoff_wins,
+        playoff_losses: s.playoff_losses,
+        game_type,
         playoff_result: s.playoff_result,
     }
 }
 
 pub(crate) fn peak(s: &TeamSeasonStat) -> Entry {
-    entry(s, s.peak, Some(s.peak_date))
+    entry_of(s, s.peak, Some(s.peak_date), Some(s.peak_game_type))
 }
 
 pub(crate) fn low(s: &TeamSeasonStat) -> Entry {
-    entry(s, s.low, Some(s.low_date))
+    entry_of(s, s.low, Some(s.low_date), Some(s.low_game_type))
 }
 
 fn top<'a>(
@@ -913,10 +936,14 @@ mod tests {
             games: 82,
             peak,
             peak_date: d("2017-06-07"),
+            peak_game_type: GameType::Playoff,
             low,
             low_date: d("2016-10-25"),
+            low_game_type: GameType::Regular,
             wins: 50,
             losses: 32,
+            playoff_wins: 8,
+            playoff_losses: 4,
             elo_start: Some(1500.0),
             elo_pre_playoffs: Some(peak - 20.0),
             elo_end: Some(peak - 10.0),

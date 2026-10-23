@@ -157,17 +157,24 @@ impl AnalysisStore for PostgresStore {
     async fn team_season_stats(&self) -> StoreResult<Vec<TeamSeasonStat>> {
         Ok(sqlx::query_as::<_, TeamSeasonStat>(
             "WITH p AS (
-                 SELECT g.season, t.id AS team_id, g.game_date,
-                        CASE WHEN g.home_team_id = t.id THEN g.home_elo_post ELSE g.away_elo_post END AS elo_post
+                 SELECT g.season, t.id AS team_id, g.game_date, g.game_type,
+                        CASE WHEN g.home_team_id = t.id THEN g.home_elo_post ELSE g.away_elo_post END AS elo_post,
+                        CASE WHEN g.home_score = g.away_score THEN NULL
+                             WHEN g.home_team_id = t.id THEN g.home_score > g.away_score ELSE g.away_score > g.home_score END AS won
                  FROM games g JOIN teams t ON t.id IN (g.home_team_id, g.away_team_id)
                  WHERE g.home_score IS NOT NULL
              ), a AS (
                  SELECT season, team_id, count(*) AS games, max(elo_post) AS peak, min(elo_post) AS low,
                         (array_agg(game_date ORDER BY elo_post DESC, game_date))[1] AS peak_date,
-                        (array_agg(game_date ORDER BY elo_post ASC, game_date))[1] AS low_date
+                        (array_agg(game_type ORDER BY elo_post DESC, game_date))[1] AS peak_game_type,
+                        (array_agg(game_date ORDER BY elo_post ASC, game_date))[1] AS low_date,
+                        (array_agg(game_type ORDER BY elo_post ASC, game_date))[1] AS low_game_type,
+                        (count(*) FILTER (WHERE game_type = 'playoff' AND won))::int AS playoff_wins,
+                        (count(*) FILTER (WHERE game_type = 'playoff' AND NOT won))::int AS playoff_losses
                  FROM p GROUP BY season, team_id
              )
-             SELECT a.season, t.code, t.name, f.key AS franchise_key, a.games, a.peak, a.peak_date, a.low, a.low_date,
+             SELECT a.season, t.code, t.name, f.key AS franchise_key, a.games, a.peak, a.peak_date, a.peak_game_type,
+                    a.low, a.low_date, a.low_game_type, a.playoff_wins, a.playoff_losses,
                     ts.wins, ts.losses, ts.elo_start, ts.elo_pre_playoffs, ts.elo_end,
                     CASE WHEN c.champion_team_id = a.team_id THEN 'champion'
                          WHEN c.season IS NOT NULL AND ts.playoff_result = 'champion' THEN 'finals'
