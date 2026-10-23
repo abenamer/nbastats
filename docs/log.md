@@ -1,6 +1,7 @@
 # Bundle update log
 
 ## 2026-10-23
+* **Update**: Compute first. [Elo continuation](/concepts/elo-continuation.md) restated around the application's own computation with the full validation against the archive; [Historical data](/concepts/historical-data.md), the import runbook and the API reference follow; [ADR 0004](/decisions/0004-compute-first.md) records the decision; the terms Elo source, Game log, Reference rating and Result source are restated or added. After the security review: the rules state that every write of ratings is one transaction, and the runbook states what a failed recompute leaves behind and that the daily sync tries the previous season once.
 * **Update**: Eras are grouped into named rule periods; the term Rule period is defined and Era is restated.
 * **Update**: Champion lists on the Records page show the rating at the clinch next to the peak, the East-against-West table names the title's conference, the game tables name each winner, and the panels widen so the tables stop scrolling sideways; noted in the [Application overview](/concepts/application.md).
 * **Update**: Roads to the title are shown by era. [Elo continuation](/concepts/elo-continuation.md) gains a Validation section: the application's Elo code re-rates the archive to its own numbers, checked by an integration test.

@@ -10,7 +10,7 @@ use crate::application::ports::{
 };
 use crate::domain::ids::{SeasonYear, TeamId};
 use crate::domain::models::{
-    Conference, EloSource, Game, GameType, PlayoffResult, Team, TeamSeason,
+    Conference, EloSource, Game, GameType, PlayoffResult, ResultSource, Team, TeamSeason,
 };
 use crate::domain::playoffs::reconstruct;
 use crate::domain::reference;
@@ -161,6 +161,10 @@ pub async fn rebuild_seasons<S: GameStore>(
                 computed_game_count: games
                     .iter()
                     .filter(|g| g.elo_source == EloSource::Computed)
+                    .count() as i32,
+                archive_game_count: games
+                    .iter()
+                    .filter(|g| g.result_source == ResultSource::Archive)
                     .count() as i32,
                 scheduled_game_count: games.iter().filter(|g| !g.is_played()).count() as i32,
                 playoff_game_count: games.iter().filter(|g| g.is_playoff()).count() as i32,

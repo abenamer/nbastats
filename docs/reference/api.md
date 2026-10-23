@@ -37,13 +37,13 @@ sources:
 | `GET /api/dashboard?from=2004&to=2025` | Title distribution and concentration. |
 | `GET /api/dynasty?franchise=GSW&from=2015&to=2022&alpha=3` | Dynasty report and concentration comparison. |
 | `GET /api/data/imports` | Import history. |
-| `GET /api/data/coverage` | Season coverage, missing seasons, the next season without data, an example of the results layout, the configured results source (`null` when none) and the daily sync schedule with its next run (`null` when disabled). |
+| `GET /api/data/coverage` | Season coverage (per season: game counts, `archive_games`, `computed_games`, `scheduled_games`, `removable`), missing seasons, the next season without data, an example of the results layout, the configured results source (`null` when none) and the daily sync schedule with its next run (`null` when disabled). |
 | `POST /api/data/refresh` | Download and import the source. Body: `{"force": false}`. |
 | `POST /api/data/upload` | Multipart upload. Fields: `file`, `force`. |
-| `POST /api/data/project` | Preseason projection with computed Elo. Body: `{"season": 2026}`. Refused when the season has imported games. |
-| `POST /api/data/results` | Multipart upload in the results layout with computed Elo. Fields: `file`, `season`. |
-| `DELETE /api/data/seasons/{season}` | Remove a season that holds only computed games or no games. Status 400 for a season with imported games. |
-| `POST /api/data/sync` | Start a background sync of a season from BALLDONTLIE; for a season with archive games, only the games after the archive are added. Body: `{"season": 2026}`. Returns at once. Status 400 when `BALLDONTLIE_API_KEY` is not set, 409 when a sync is already running. |
+| `POST /api/data/project` | Preseason projection. Body: `{"season": 2026}`. Refused when the season has archive games. |
+| `POST /api/data/results` | Multipart upload in the results layout. Fields: `file`, `season`. Archive games of the season stand; the season's ratings are computed again. |
+| `DELETE /api/data/seasons/{season}` | Remove a season without archive games. Status 400 for a season with archive games. |
+| `POST /api/data/sync` | Start a background sync of a season from BALLDONTLIE; archive games stand and only the games the archive does not have are added. Body: `{"season": 2026}`. Returns at once. Status 400 when `BALLDONTLIE_API_KEY` is not set, 409 when a sync is already running. |
 | `GET /api/data/sync/status` | State of the last or current sync: `idle`, `fetching` (season, trigger, requests, games, seconds until the next request), `done` (outcome) or `failed` (error). |
 
 # Jobs

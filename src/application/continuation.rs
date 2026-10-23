@@ -14,11 +14,11 @@ use chrono::{Datelike, NaiveDate};
 use tracing::info;
 
 use crate::adapters::csv::{self, ResultRow};
-use crate::domain::continuation::{
-    rate_games, season_start_ratings, ContinuationError, ResultGame,
-};
+use crate::domain::continuation::{rate_games, ContinuationError, ResultGame};
 use crate::domain::ids::{SeasonYear, TeamId};
-use crate::domain::models::{EloSource, Game, GameType};
+use crate::domain::models::{EloSource, Game, GameType, ResultSource};
+
+use super::recompute;
 
 use super::imports::{self, derived, ImportOutcome};
 use super::ports::{
@@ -28,20 +28,14 @@ use super::ports::{
 
 #[derive(Debug, thiserror::Error)]
 pub enum ContinuationUseCaseError {
-    #[error("season {0} is already covered by imported Elo data; computed ratings are only for later seasons")]
-    SeasonHasImportedElo(SeasonYear),
+    #[error("season {0} has results from the archive; a projection or a removal is only for seasons without archive games")]
+    SeasonHasArchiveResults(SeasonYear),
     #[error("season {0} has no games; the previous season must exist to continue from")]
     NoPreviousSeason(SeasonYear),
     #[error("unknown team codes: {0}")]
     UnknownTeams(String),
     #[error("no games for season {0}: the source has nothing for it yet, so nothing was stored")]
     NoGames(SeasonYear),
-    #[error("season {season}: a game on {date} is not in the archive (matched by date and the two teams) but predates its last archive game ({last_imported}); the archive part of a season cannot be changed")]
-    InsideImportedRange {
-        season: SeasonYear,
-        date: NaiveDate,
-        last_imported: NaiveDate,
-    },
     #[error("season {0} is outside the supported range")]
     OutOfRange(i32),
     #[error(transparent)]
@@ -54,93 +48,44 @@ pub enum ContinuationUseCaseError {
     Store(#[from] StoreError),
 }
 
-/// Final rating of every team after the last game of `season` (playoffs included), which is
-/// what FiveThirtyEight reverts toward the mean for the next season.
-fn final_ratings(games: &[Game]) -> HashMap<TeamId, f64> {
-    games
-        .iter()
-        .filter(|g| g.is_played())
-        .fold(HashMap::new(), |mut m, g| {
-            m.insert(g.home_team_id, g.home_elo_post);
-            m.insert(g.away_team_id, g.away_elo_post);
-            m
-        })
-}
-
-async fn start_ratings<S: GameStore>(
+async fn guard_not_archived<S: GameStore>(
     store: &S,
     season: SeasonYear,
+) -> Result<(), ContinuationUseCaseError> {
+    let existing = store.season_games(season).await?;
+    if existing
+        .iter()
+        .any(|g| g.result_source == ResultSource::Archive)
+    {
+        return Err(ContinuationUseCaseError::SeasonHasArchiveResults(season));
+    }
+    Ok(())
+}
+
+/// Start ratings of `season` for `members`: the previous season's franchise end ratings,
+/// reverted; a franchise without one takes the archive's first rating of the season when
+/// `archive` has it, else the new-franchise rating. Without a previous season and without
+/// archive games there is nothing to chain from.
+async fn start_for<S: GameStore>(
+    store: &S,
+    season: SeasonYear,
+    archive: &[Game],
+    members: impl IntoIterator<Item = TeamId>,
 ) -> Result<HashMap<TeamId, f64>, ContinuationUseCaseError> {
     let previous = season
         .previous()
         .ok_or(ContinuationUseCaseError::OutOfRange(season.end_year() - 1))?;
     let prev_games = store.season_games(previous).await?;
-    if prev_games.is_empty() {
+    if prev_games.is_empty() && archive.is_empty() {
         return Err(ContinuationUseCaseError::NoPreviousSeason(previous));
     }
-    Ok(season_start_ratings(&final_ratings(&prev_games)))
-}
-
-async fn guard_not_imported<S: GameStore>(
-    store: &S,
-    season: SeasonYear,
-) -> Result<(), ContinuationUseCaseError> {
-    let existing = store.season_games(season).await?;
-    if existing.iter().any(|g| g.elo_source == EloSource::Imported) {
-        return Err(ContinuationUseCaseError::SeasonHasImportedElo(season));
-    }
-    Ok(())
-}
-
-/// Where the computed ratings of a season start.
-enum Baseline {
-    /// No imported game: reverted ratings from the previous season's final ratings.
-    NewSeason(HashMap<TeamId, f64>),
-    /// Imported games exist (the archive covers part of the season): ratings after the last
-    /// imported game. Only games after `last_imported` that are not in the archive are added.
-    Completion {
-        last_imported: NaiveDate,
-        ratings: HashMap<TeamId, f64>,
-        imported_keys: HashSet<(NaiveDate, TeamId, TeamId)>,
-    },
-}
-
-impl Baseline {
-    fn ratings(&self) -> &HashMap<TeamId, f64> {
-        match self {
-            Baseline::NewSeason(r) | Baseline::Completion { ratings: r, .. } => r,
-        }
-    }
-}
-
-async fn baseline<S: GameStore>(
-    store: &S,
-    season: SeasonYear,
-) -> Result<Baseline, ContinuationUseCaseError> {
-    let existing = store.season_games(season).await?;
-    let imported: Vec<&Game> = existing
-        .iter()
-        .filter(|g| g.elo_source == EloSource::Imported)
-        .collect();
-    let Some(last) = imported.iter().map(|g| g.game_date).max() else {
-        return Ok(Baseline::NewSeason(start_ratings(store, season).await?));
-    };
-    let ratings = imported
-        .iter()
-        .filter(|g| g.is_played())
-        .fold(HashMap::new(), |mut m, g| {
-            m.insert(g.home_team_id, g.home_elo_post);
-            m.insert(g.away_team_id, g.away_elo_post);
-            m
-        });
-    Ok(Baseline::Completion {
-        last_imported: last,
-        ratings,
-        imported_keys: imported
-            .iter()
-            .map(|g| game_key(g.game_date, g.home_team_id, g.away_team_id))
-            .collect(),
-    })
+    let teams = store.team_map().await?;
+    Ok(recompute::start_ratings(
+        &prev_games,
+        archive,
+        members,
+        &teams,
+    ))
 }
 
 /// Identity of a game for matching a source against the archive: the date and the two teams
@@ -154,39 +99,39 @@ fn game_key(date: NaiveDate, a: TeamId, b: TeamId) -> (NaiveDate, TeamId, TeamId
     }
 }
 
-/// Keep the games the baseline does not cover. For a completion, games already in the
-/// archive are dropped and a game dated before the last archive game is an error, because
-/// a computed game cannot sit inside the imported rating chain.
-fn games_to_rate(
-    games: Vec<ResultGame>,
-    baseline: &Baseline,
-    season: SeasonYear,
-) -> Result<(Vec<ResultGame>, usize), ContinuationUseCaseError> {
-    match baseline {
-        Baseline::NewSeason(_) => Ok((games, 0)),
-        Baseline::Completion {
-            last_imported,
-            imported_keys,
-            ..
-        } => {
-            let mut kept = Vec::with_capacity(games.len());
-            let mut skipped = 0usize;
-            for g in games {
-                if imported_keys.contains(&game_key(g.date, g.home, g.away)) {
-                    skipped += 1;
-                } else if g.date <= *last_imported {
-                    return Err(ContinuationUseCaseError::InsideImportedRange {
-                        season,
-                        date: g.date,
-                        last_imported: *last_imported,
-                    });
-                } else {
-                    kept.push(g);
-                }
-            }
-            Ok((kept, skipped))
+/// The incoming games the archive does not have. An incoming game that matches an archive
+/// game (same date, same two teams) is dropped: the archive result stands. Returns the games
+/// kept and the number dropped.
+fn not_in_archive(archive: &[Game], incoming: Vec<ResultGame>) -> (Vec<ResultGame>, usize) {
+    let keys: HashSet<(NaiveDate, TeamId, TeamId)> = archive
+        .iter()
+        .map(|g| game_key(g.game_date, g.home_team_id, g.away_team_id))
+        .collect();
+    let mut kept = Vec::with_capacity(incoming.len());
+    let mut dropped = 0usize;
+    for g in incoming {
+        if keys.contains(&game_key(g.date, g.home, g.away)) {
+            dropped += 1;
+        } else {
+            kept.push(g);
         }
     }
+    (kept, dropped)
+}
+
+fn archive_of(games: &[Game]) -> Vec<Game> {
+    games
+        .iter()
+        .filter(|g| g.result_source == ResultSource::Archive)
+        .cloned()
+        .collect()
+}
+
+/// Every team with a game in the archive rows or the incoming games.
+fn members_of(archive: &[Game], incoming: &[ResultGame]) -> Vec<TeamId> {
+    recompute::teams_in(archive)
+        .chain(incoming.iter().flat_map(|g| [g.home, g.away]))
+        .collect()
 }
 
 /// Where computed games came from, for the import log.
@@ -196,6 +141,8 @@ struct Origin<'a> {
     source_url: Option<&'a str>,
     file_name: Option<&'a str>,
     format: &'a str,
+    /// Where the results came from. Archive rows of the season keep their own source.
+    result_source: ResultSource,
 }
 
 /// Resolve team codes to identifiers. Unknown codes are collected and reported together.
@@ -232,10 +179,14 @@ fn resolve_games(
     }
 }
 
+/// Rate the season's archive games and `incoming` as one chain from `start`, then store the
+/// result: the archive rows keep their identity and get the new ratings; the incoming games
+/// replace the season's results and projection rows. One transaction.
 async fn store_rated<S: GameStore + ImportLog>(
     store: &S,
     season: SeasonYear,
-    games: Vec<ResultGame>,
+    archive: &[Game],
+    incoming: Vec<ResultGame>,
     start: &HashMap<TeamId, f64>,
     origin: Origin<'_>,
     sha: &str,
@@ -245,8 +196,12 @@ async fn store_rated<S: GameStore + ImportLog>(
         source_url,
         file_name,
         format,
+        result_source,
     } = origin;
+    let mut games: Vec<ResultGame> = archive.iter().map(recompute::as_result_game).collect();
+    games.extend(incoming);
     let rated = rate_games(start, &games)?;
+    let (ratings, new_games) = recompute::ratings_of(archive, &rated);
     let import_id = store
         .start_import(&ImportStart {
             source,
@@ -256,7 +211,7 @@ async fn store_rated<S: GameStore + ImportLog>(
             format,
         })
         .await?;
-    let rows: Vec<NewGame> = rated
+    let rows: Vec<NewGame> = new_games
         .iter()
         .map(|r| NewGame {
             season,
@@ -278,19 +233,24 @@ async fn store_rated<S: GameStore + ImportLog>(
             away_elo_post: r.away_elo_post,
             home_win_prob: Some(r.home_win_prob),
             elo_source: EloSource::Computed,
+            result_source,
+            reference: None,
         })
         .collect();
     let result: Result<ImportOutcome, StoreError> = async {
         store.ensure_season(season).await?;
-        // Recompute from scratch: ratings chain through every game, so a partial update is wrong.
-        store.delete_computed_games(season).await?;
-        let counts = store.upsert_games(import_id, &rows).await?;
+        // Every rating of the season is computed again from the start ratings, because the
+        // chain runs through every game. Archive rows stay (their ratings update); results and
+        // projection rows are replaced.
+        let counts = store
+            .replace_season_games(season, import_id, &rows, &ratings)
+            .await?;
         store.sync_alignments().await?;
         derived::rebuild_seasons(store, &[season]).await?;
         Ok(ImportOutcome {
             import_id,
             format: format.to_string(),
-            rows_read: rows.len() as i64,
+            rows_read: games.len() as i64,
             rows_rejected: 0,
             games_inserted: counts.inserted,
             games_updated: counts.updated,
@@ -298,7 +258,7 @@ async fn store_rated<S: GameStore + ImportLog>(
             seasons_touched: vec![season],
             skipped_duplicate: false,
             notes: vec![format!("Elo computed by the application from {} starting ratings ({} games with results, {} scheduled)",
-                start.len(), rows.iter().filter(|r| r.home_score.is_some()).count(), rows.iter().filter(|r| r.home_score.is_none()).count())],
+                start.len(), games.iter().filter(|g| g.home_score.is_some()).count(), games.iter().filter(|g| g.home_score.is_none()).count())],
         })
     }
     .await;
@@ -342,39 +302,41 @@ pub async fn import_results<S: GameStore + ImportLog>(
     if records.is_empty() {
         return Err(ContinuationUseCaseError::NoGames(season));
     }
-    let games = resolve_games(&teams, &records)?;
-    let base = baseline(store, season).await?;
-    let (games, skipped) = games_to_rate(games, &base, season)?;
+    let incoming = resolve_games(&teams, &records)?;
+    let archive = archive_of(&store.season_games(season).await?);
+    let (incoming, dropped) = not_in_archive(&archive, incoming);
+    if incoming.is_empty() {
+        return Err(ContinuationUseCaseError::NoGames(season));
+    }
+    let start = start_for(store, season, &archive, members_of(&archive, &incoming)).await?;
     let sha = imports::sha256_hex(bytes);
     let origin = Origin {
         source: "results",
         source_url: None,
         file_name,
         format: "results",
+        result_source: ResultSource::Results,
     };
-    let mut outcome = store_rated(store, season, games, base.ratings(), origin, &sha).await?;
+    let mut outcome = store_rated(store, season, &archive, incoming, &start, origin, &sha).await?;
     outcome.rows_read = report.rows_read;
     outcome.rows_rejected = report.rows_rejected;
     outcome.notes.extend(report.rejections);
-    note_completion(&mut outcome, &base, skipped, season);
+    note_archive(&mut outcome, &archive, dropped, season);
     Ok(outcome)
 }
 
-fn note_completion(
-    outcome: &mut ImportOutcome,
-    base: &Baseline,
-    skipped: usize,
-    season: SeasonYear,
-) {
-    if let Baseline::Completion { last_imported, .. } = base {
+fn note_archive(outcome: &mut ImportOutcome, archive: &[Game], dropped: usize, season: SeasonYear) {
+    if archive.is_empty() {
+        return;
+    }
+    outcome.notes.push(format!(
+        "season {season} keeps its {} archive games ({dropped} incoming games were already in the archive); every rating of the season is computed again",
+        archive.len()
+    ));
+    if let Some(next) = season.next() {
         outcome.notes.push(format!(
-            "season {season} keeps its {skipped} archive games (through {last_imported}); the new games chain from the archive ratings"
+            "season {next} starts from these final ratings: sync it again to update its chain"
         ));
-        if let Some(next) = season.next() {
-            outcome.notes.push(format!(
-                "season {next} starts from these final ratings: sync it again to update its chain"
-            ));
-        }
     }
 }
 
@@ -419,28 +381,28 @@ pub async fn sync_results<S: GameStore + ImportLog, R: ResultsSource>(
     );
     let teams = store.team_code_map().await?;
     let fetched = resolve_games(&teams, &fetch.records)?;
+    // Results and projection rows merge with the fetch inside the window; archive rows stand.
+    let archive = archive_of(&stored);
     let kept_stored = stored
         .iter()
-        .filter(|g| g.elo_source == EloSource::Computed)
-        .map(stored_game)
+        .filter(|g| g.result_source != ResultSource::Archive)
+        .map(recompute::as_result_game)
         .collect();
-    let games = merge_games(kept_stored, fetched, window);
-    if games.is_empty() {
+    let merged = merge_games(kept_stored, fetched, window);
+    let (incoming, dropped) = not_in_archive(&archive, merged);
+    if incoming.is_empty() {
         return Err(ContinuationUseCaseError::NoGames(season));
     }
-    let base = baseline(store, season).await?;
-    let (games, skipped) = games_to_rate(games, &base, season)?;
-    if games.is_empty() {
-        return Err(ContinuationUseCaseError::NoGames(season));
-    }
-    let sha = imports::sha256_hex(format!("{games:?}").as_bytes());
+    let start = start_for(store, season, &archive, members_of(&archive, &incoming)).await?;
+    let sha = imports::sha256_hex(format!("{incoming:?}").as_bytes());
     let origin = Origin {
         source: source.name(),
         source_url: Some(&fetch.source_url),
         file_name: None,
         format: "results",
+        result_source: ResultSource::Results,
     };
-    let mut outcome = store_rated(store, season, games, base.ratings(), origin, &sha).await?;
+    let mut outcome = store_rated(store, season, &archive, incoming, &start, origin, &sha).await?;
     outcome.notes.push(match (window.from, window.to) {
         (Some(from), Some(to)) => format!(
             "{} games fetched with {} requests for {from} to {to}; earlier games kept from the store",
@@ -453,7 +415,7 @@ pub async fn sync_results<S: GameStore + ImportLog, R: ResultsSource>(
             fetch.requests
         ),
     });
-    note_completion(&mut outcome, &base, skipped, season);
+    note_archive(&mut outcome, &archive, dropped, season);
     Ok(outcome)
 }
 
@@ -470,18 +432,6 @@ fn fetch_window(stored: &[Game], today: NaiveDate) -> FetchWindow {
     {
         Some(last) => FetchWindow::between(last.min(today), today),
         None => FetchWindow::all(),
-    }
-}
-
-fn stored_game(g: &Game) -> ResultGame {
-    ResultGame {
-        date: g.game_date,
-        home: g.home_team_id,
-        away: g.away_team_id,
-        neutral: g.neutral,
-        playoff: g.game_type != GameType::Regular,
-        home_score: g.home_score,
-        away_score: g.away_score,
     }
 }
 
@@ -512,7 +462,7 @@ pub async fn remove_season<S: GameStore>(
     store: &S,
     season: SeasonYear,
 ) -> Result<u64, ContinuationUseCaseError> {
-    guard_not_imported(store, season).await?;
+    guard_not_archived(store, season).await?;
     let deleted = store.delete_season(season).await?;
     info!(season = %season, games = deleted, "season removed");
     Ok(deleted)
@@ -524,7 +474,7 @@ pub async fn project_season<S: GameStore + ImportLog>(
     store: &S,
     season: SeasonYear,
 ) -> Result<ImportOutcome, ContinuationUseCaseError> {
-    guard_not_imported(store, season).await?;
+    guard_not_archived(store, season).await?;
     let previous = season
         .previous()
         .ok_or(ContinuationUseCaseError::OutOfRange(season.end_year() - 1))?;
@@ -532,7 +482,6 @@ pub async fn project_season<S: GameStore + ImportLog>(
     if prev_games.is_empty() {
         return Err(ContinuationUseCaseError::NoPreviousSeason(previous));
     }
-    let start = season_start_ratings(&final_ratings(&prev_games));
     let schedule: Vec<ResultGame> = prev_games
         .iter()
         .filter(|g| g.game_type == GameType::Regular)
@@ -546,14 +495,16 @@ pub async fn project_season<S: GameStore + ImportLog>(
             away_score: None,
         })
         .collect();
+    let start = start_for(store, season, &[], members_of(&[], &schedule)).await?;
     let sha = imports::sha256_hex(format!("projection:{season}:{}", prev_games.len()).as_bytes());
     let origin = Origin {
         source: "projection",
         source_url: None,
         file_name: None,
         format: "projection",
+        result_source: ResultSource::Projection,
     };
-    store_rated(store, season, schedule, &start, origin, &sha).await
+    store_rated(store, season, &[], schedule, &start, origin, &sha).await
 }
 
 fn shift_one_year(d: NaiveDate) -> NaiveDate {
@@ -595,11 +546,69 @@ mod tests {
             away_elo_post: 1500.0,
             home_win_prob: None,
             elo_source: EloSource::Computed,
+            result_source: ResultSource::Results,
+            ref_home_elo_pre: None,
+            ref_away_elo_pre: None,
+            ref_home_elo_post: None,
+            ref_away_elo_post: None,
         }
     }
 
     fn result(date: &str, home: i32, away: i32, score: Option<(i32, i32)>) -> ResultGame {
-        stored_game(&game(date, home, away, score))
+        recompute::as_result_game(&game(date, home, away, score))
+    }
+
+    #[test]
+    fn archive_games_stand_and_their_duplicates_are_dropped() {
+        let mut archived = game("2026-10-21", 1, 2, Some((100, 90)));
+        archived.result_source = ResultSource::Archive;
+        let incoming = vec![
+            result("2026-10-21", 2, 1, Some((90, 100))), // the archive game, teams swapped
+            result("2026-10-23", 3, 4, Some((99, 98))),
+        ];
+        let (kept, dropped) = not_in_archive(&[archived.clone()], incoming);
+        assert_eq!(dropped, 1);
+        assert_eq!(kept.len(), 1);
+        assert_eq!(kept[0].home.as_i32(), 3);
+        assert_eq!(
+            members_of(&[archived], &kept)
+                .iter()
+                .map(|t| t.as_i32())
+                .collect::<Vec<_>>(),
+            [1, 2, 3, 4]
+        );
+        // Without archive games everything incoming is kept.
+        assert_eq!(
+            not_in_archive(&[], vec![result("2026-10-23", 3, 4, None)])
+                .0
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn archive_rows_keep_their_identity_when_rerated() {
+        // Two archive rows of a same-day rematch at the same venue (seq 0 and 1) and one
+        // incoming game: the archive rows map back to their ids in stored order, the
+        // incoming game becomes a new row.
+        let mut first = game("2026-10-21", 1, 2, Some((100, 90)));
+        first.id = 10;
+        first.result_source = ResultSource::Archive;
+        let mut second = first.clone();
+        second.id = 11;
+        second.seq = 1;
+        second.home_score = Some(80);
+        let archive = [first, second];
+        let mut games: Vec<ResultGame> = archive.iter().map(recompute::as_result_game).collect();
+        games.push(result("2026-10-23", 3, 4, Some((99, 98))));
+        let start: HashMap<TeamId, f64> = (1..=4).map(|t| (TeamId::new(t), 1500.0)).collect();
+        let rated = rate_games(&start, &games).unwrap();
+        let (ratings, new_games) = recompute::ratings_of(&archive, &rated);
+        assert_eq!(ratings.iter().map(|r| r.id).collect::<Vec<_>>(), [10, 11]);
+        // The second row's pre-game rating is the first row's post-game rating.
+        assert!((ratings[1].home_elo_pre - ratings[0].home_elo_post).abs() < 1e-9);
+        assert_eq!(new_games.len(), 1);
+        assert_eq!(new_games[0].game.home.as_i32(), 3);
     }
 
     #[test]

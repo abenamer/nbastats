@@ -1,21 +1,25 @@
 //! `GameLog` and `GameStore` for PostgreSQL.
 
 use chrono::NaiveDate;
+use sqlx::PgConnection;
 
 use crate::application::ports::{
-    EloPoint, GameLog, GameStore, NewChampionship, NewGame, SeasonSummary, StoreResult,
+    EloPoint, GameLog, GameRating, GameStore, NewChampionship, NewGame, SeasonSummary, StoreResult,
     UpsertCounts,
 };
 use crate::domain::ids::{FranchiseId, SeasonYear, TeamId};
-use crate::domain::models::{EloSource, Franchise, Game, GameType, Season, Team, TeamSeason};
+use crate::domain::models::{
+    EloSource, Franchise, Game, GameType, ResultSource, Season, Team, TeamSeason,
+};
 use crate::domain::reference;
 
 use super::PostgresStore;
 
 const GAME_COLS: &str = "id, season, game_date, seq, home_team_id, away_team_id, neutral, game_type, home_score, away_score,
-    home_elo_pre, away_elo_pre, home_elo_post, away_elo_post, home_win_prob, elo_source";
+    home_elo_pre, away_elo_pre, home_elo_post, away_elo_post, home_win_prob, elo_source, result_source,
+    ref_home_elo_pre, ref_away_elo_pre, ref_home_elo_post, ref_away_elo_post";
 const SEASON_COLS: &str = "season, label, team_count, game_count, playoff_game_count, play_in_game_count, cup_final_game_count,
-    computed_game_count, scheduled_game_count, regular_season_end, playoffs_start, playoffs_end, complete";
+    computed_game_count, archive_game_count, scheduled_game_count, regular_season_end, playoffs_start, playoffs_end, complete";
 
 impl GameLog for PostgresStore {
     async fn teams(&self) -> StoreResult<Vec<Team>> {
@@ -211,85 +215,45 @@ impl GameStore for PostgresStore {
     }
 
     async fn upsert_games(&self, import_id: i64, rows: &[NewGame]) -> StoreResult<UpsertCounts> {
-        let mut counts = UpsertCounts::default();
         let mut tx = self.pool.begin().await?;
-        for chunk in rows.chunks(2000) {
-            let n = chunk.len();
-            let season: Vec<SeasonYear> = chunk.iter().map(|r| r.season).collect();
-            let date: Vec<NaiveDate> = chunk.iter().map(|r| r.date).collect();
-            let seq: Vec<i16> = chunk.iter().map(|r| r.seq).collect();
-            let home: Vec<TeamId> = chunk.iter().map(|r| r.home).collect();
-            let away: Vec<TeamId> = chunk.iter().map(|r| r.away).collect();
-            let neutral: Vec<bool> = chunk.iter().map(|r| r.neutral).collect();
-            let gtype: Vec<GameType> = chunk.iter().map(|r| r.game_type).collect();
-            let hs: Vec<Option<i32>> = chunk.iter().map(|r| r.home_score).collect();
-            let as_: Vec<Option<i32>> = chunk.iter().map(|r| r.away_score).collect();
-            let hpre: Vec<f64> = chunk.iter().map(|r| r.home_elo_pre).collect();
-            let apre: Vec<f64> = chunk.iter().map(|r| r.away_elo_pre).collect();
-            let hpost: Vec<f64> = chunk.iter().map(|r| r.home_elo_post).collect();
-            let apost: Vec<f64> = chunk.iter().map(|r| r.away_elo_post).collect();
-            let prob: Vec<Option<f64>> = chunk.iter().map(|r| r.home_win_prob).collect();
-            let src: Vec<EloSource> = chunk.iter().map(|r| r.elo_source).collect();
-            let returned: Vec<(bool,)> = sqlx::query_as(
-                "INSERT INTO games (season, game_date, seq, home_team_id, away_team_id, neutral, game_type, home_score, away_score,
-                    home_elo_pre, away_elo_pre, home_elo_post, away_elo_post, home_win_prob, import_id, elo_source)
-                 SELECT s, d, q, h, a, n, t, hs, as_, hpre, apre, hpost, apost, p, $15, src
-                 FROM UNNEST($1::int4[], $2::date[], $3::int2[], $4::int4[], $5::int4[], $6::bool[], $7::text[], $8::int4[], $9::int4[],
-                             $10::float8[], $11::float8[], $12::float8[], $13::float8[], $14::float8[], $16::text[])
-                      AS u(s, d, q, h, a, n, t, hs, as_, hpre, apre, hpost, apost, p, src)
-                 ON CONFLICT (game_date, home_team_id, away_team_id, seq) DO UPDATE SET
-                    season = EXCLUDED.season, neutral = EXCLUDED.neutral,
-                    game_type = CASE WHEN games.game_type IN ('play_in', 'cup_final') AND EXCLUDED.game_type = 'regular'
-                                     THEN games.game_type ELSE EXCLUDED.game_type END,
-                    home_score = EXCLUDED.home_score, away_score = EXCLUDED.away_score,
-                    home_elo_pre = EXCLUDED.home_elo_pre, away_elo_pre = EXCLUDED.away_elo_pre,
-                    home_elo_post = EXCLUDED.home_elo_post, away_elo_post = EXCLUDED.away_elo_post,
-                    home_win_prob = EXCLUDED.home_win_prob, import_id = EXCLUDED.import_id, elo_source = EXCLUDED.elo_source,
-                    updated_at = now()
-                 WHERE NOT (games.elo_source = 'imported' AND EXCLUDED.elo_source = 'computed')
-                   AND (games.season, games.neutral, games.home_score, games.away_score, games.home_elo_pre, games.away_elo_pre,
-                        games.home_elo_post, games.away_elo_post, games.home_win_prob, games.elo_source,
-                        CASE WHEN games.game_type IN ('play_in', 'cup_final') THEN 'regular' ELSE games.game_type END)
-                       IS DISTINCT FROM
-                       (EXCLUDED.season, EXCLUDED.neutral, EXCLUDED.home_score, EXCLUDED.away_score, EXCLUDED.home_elo_pre,
-                        EXCLUDED.away_elo_pre, EXCLUDED.home_elo_post, EXCLUDED.away_elo_post, EXCLUDED.home_win_prob,
-                        EXCLUDED.elo_source, EXCLUDED.game_type)
-                 RETURNING (xmax = 0) AS inserted",
-            )
-            .bind(&season)
-            .bind(&date)
-            .bind(&seq)
-            .bind(&home)
-            .bind(&away)
-            .bind(&neutral)
-            .bind(&gtype)
-            .bind(&hs)
-            .bind(&as_)
-            .bind(&hpre)
-            .bind(&apre)
-            .bind(&hpost)
-            .bind(&apost)
-            .bind(&prob)
-            .bind(import_id)
-            .bind(&src)
-            .fetch_all(&mut *tx)
-            .await?;
-            let inserted = returned.iter().filter(|r| r.0).count() as i64;
-            counts.inserted += inserted;
-            counts.updated += returned.len() as i64 - inserted;
-            counts.unchanged += n as i64 - returned.len() as i64;
-        }
+        let counts = upsert_games_in(&mut tx, import_id, rows).await?;
         tx.commit().await?;
         Ok(counts)
     }
 
-    async fn delete_computed_games(&self, season: SeasonYear) -> StoreResult<u64> {
-        let r = sqlx::query("DELETE FROM games WHERE season = $1 AND elo_source = $2")
+    async fn update_ratings(&self, ratings: &[GameRating]) -> StoreResult<u64> {
+        let mut tx = self.pool.begin().await?;
+        let total = update_ratings_in(&mut tx, ratings).await?;
+        tx.commit().await?;
+        Ok(total)
+    }
+
+    async fn replace_season_games(
+        &self,
+        season: SeasonYear,
+        import_id: i64,
+        rows: &[NewGame],
+        ratings: &[GameRating],
+    ) -> StoreResult<UpsertCounts> {
+        let mut tx = self.pool.begin().await?;
+        sqlx::query("DELETE FROM games WHERE season = $1 AND result_source <> 'archive'")
             .bind(season)
-            .bind(EloSource::Computed)
-            .execute(&self.pool)
+            .execute(&mut *tx)
             .await?;
-        Ok(r.rows_affected())
+        let mut counts = upsert_games_in(&mut tx, import_id, rows).await?;
+        let rerated = update_ratings_in(&mut tx, ratings).await? as i64;
+        counts.updated += rerated;
+        counts.unchanged += ratings.len() as i64 - rerated;
+        tx.commit().await?;
+        Ok(counts)
+    }
+
+    async fn has_imported_ratings(&self) -> StoreResult<bool> {
+        let (any,): (bool,) =
+            sqlx::query_as("SELECT EXISTS (SELECT 1 FROM games WHERE elo_source = 'imported')")
+                .fetch_one(&self.pool)
+                .await?;
+        Ok(any)
     }
 
     async fn delete_season(&self, season: SeasonYear) -> StoreResult<u64> {
@@ -330,7 +294,7 @@ impl GameStore for PostgresStore {
         sqlx::query(
             "UPDATE seasons SET team_count = $2, game_count = $3, playoff_game_count = $4, play_in_game_count = $5,
                 cup_final_game_count = $6, regular_season_end = $7, playoffs_start = $8, playoffs_end = $9, complete = $10,
-                computed_game_count = $11, scheduled_game_count = $12, updated_at = now() WHERE season = $1",
+                computed_game_count = $11, scheduled_game_count = $12, archive_game_count = $13, updated_at = now() WHERE season = $1",
         )
         .bind(s.season)
         .bind(s.team_count)
@@ -344,6 +308,7 @@ impl GameStore for PostgresStore {
         .bind(s.complete)
         .bind(s.computed_game_count)
         .bind(s.scheduled_game_count)
+        .bind(s.archive_game_count)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -399,4 +364,153 @@ impl GameStore for PostgresStore {
         .await?;
         Ok(())
     }
+}
+
+/// Upsert `rows` on `conn` (see `GameStore::upsert_games`).
+async fn upsert_games_in(
+    conn: &mut PgConnection,
+    import_id: i64,
+    rows: &[NewGame],
+) -> StoreResult<UpsertCounts> {
+    let mut counts = UpsertCounts::default();
+    for chunk in rows.chunks(2000) {
+        let n = chunk.len();
+        let season: Vec<SeasonYear> = chunk.iter().map(|r| r.season).collect();
+        let date: Vec<NaiveDate> = chunk.iter().map(|r| r.date).collect();
+        let seq: Vec<i16> = chunk.iter().map(|r| r.seq).collect();
+        let home: Vec<TeamId> = chunk.iter().map(|r| r.home).collect();
+        let away: Vec<TeamId> = chunk.iter().map(|r| r.away).collect();
+        let neutral: Vec<bool> = chunk.iter().map(|r| r.neutral).collect();
+        let gtype: Vec<GameType> = chunk.iter().map(|r| r.game_type).collect();
+        let hs: Vec<Option<i32>> = chunk.iter().map(|r| r.home_score).collect();
+        let as_: Vec<Option<i32>> = chunk.iter().map(|r| r.away_score).collect();
+        let hpre: Vec<f64> = chunk.iter().map(|r| r.home_elo_pre).collect();
+        let apre: Vec<f64> = chunk.iter().map(|r| r.away_elo_pre).collect();
+        let hpost: Vec<f64> = chunk.iter().map(|r| r.home_elo_post).collect();
+        let apost: Vec<f64> = chunk.iter().map(|r| r.away_elo_post).collect();
+        let prob: Vec<Option<f64>> = chunk.iter().map(|r| r.home_win_prob).collect();
+        let src: Vec<EloSource> = chunk.iter().map(|r| r.elo_source).collect();
+        let rsrc: Vec<ResultSource> = chunk.iter().map(|r| r.result_source).collect();
+        let rf = |i: usize| -> Vec<Option<f64>> {
+            chunk.iter().map(|r| r.reference.map(|v| v[i])).collect()
+        };
+        let (rhpre, rapre, rhpost, rapost) = (rf(0), rf(1), rf(2), rf(3));
+        // An archive row keeps its result, type, source and reference ratings when a
+        // results-source or projection row arrives for the same game; the application's
+        // ratings always follow the incoming row.
+        let returned: Vec<(bool,)> = sqlx::query_as(
+                "INSERT INTO games (season, game_date, seq, home_team_id, away_team_id, neutral, game_type, home_score, away_score,
+                    home_elo_pre, away_elo_pre, home_elo_post, away_elo_post, home_win_prob, import_id, elo_source,
+                    result_source, ref_home_elo_pre, ref_away_elo_pre, ref_home_elo_post, ref_away_elo_post)
+                 SELECT s, d, q, h, a, n, t, hs, as_, hpre, apre, hpost, apost, p, $15, src, rs, rhpre, rapre, rhpost, rapost
+                 FROM UNNEST($1::int4[], $2::date[], $3::int2[], $4::int4[], $5::int4[], $6::bool[], $7::text[], $8::int4[], $9::int4[],
+                             $10::float8[], $11::float8[], $12::float8[], $13::float8[], $14::float8[], $16::text[], $17::text[],
+                             $18::float8[], $19::float8[], $20::float8[], $21::float8[])
+                      AS u(s, d, q, h, a, n, t, hs, as_, hpre, apre, hpost, apost, p, src, rs, rhpre, rapre, rhpost, rapost)
+                 ON CONFLICT (game_date, home_team_id, away_team_id, seq) DO UPDATE SET
+                    season = EXCLUDED.season,
+                    neutral = CASE WHEN games.result_source = 'archive' AND EXCLUDED.result_source <> 'archive' THEN games.neutral ELSE EXCLUDED.neutral END,
+                    game_type = CASE WHEN games.result_source = 'archive' AND EXCLUDED.result_source <> 'archive' THEN games.game_type
+                                     WHEN games.game_type IN ('play_in', 'cup_final') AND EXCLUDED.game_type = 'regular' THEN games.game_type
+                                     ELSE EXCLUDED.game_type END,
+                    home_score = CASE WHEN games.result_source = 'archive' AND EXCLUDED.result_source <> 'archive' THEN games.home_score ELSE EXCLUDED.home_score END,
+                    away_score = CASE WHEN games.result_source = 'archive' AND EXCLUDED.result_source <> 'archive' THEN games.away_score ELSE EXCLUDED.away_score END,
+                    result_source = CASE WHEN games.result_source = 'archive' THEN 'archive' ELSE EXCLUDED.result_source END,
+                    ref_home_elo_pre = COALESCE(EXCLUDED.ref_home_elo_pre, games.ref_home_elo_pre),
+                    ref_away_elo_pre = COALESCE(EXCLUDED.ref_away_elo_pre, games.ref_away_elo_pre),
+                    ref_home_elo_post = COALESCE(EXCLUDED.ref_home_elo_post, games.ref_home_elo_post),
+                    ref_away_elo_post = COALESCE(EXCLUDED.ref_away_elo_post, games.ref_away_elo_post),
+                    home_elo_pre = CASE WHEN EXCLUDED.elo_source = 'imported' THEN games.home_elo_pre ELSE EXCLUDED.home_elo_pre END,
+                    away_elo_pre = CASE WHEN EXCLUDED.elo_source = 'imported' THEN games.away_elo_pre ELSE EXCLUDED.away_elo_pre END,
+                    home_elo_post = CASE WHEN EXCLUDED.elo_source = 'imported' THEN games.home_elo_post ELSE EXCLUDED.home_elo_post END,
+                    away_elo_post = CASE WHEN EXCLUDED.elo_source = 'imported' THEN games.away_elo_post ELSE EXCLUDED.away_elo_post END,
+                    home_win_prob = CASE WHEN EXCLUDED.elo_source = 'imported' THEN games.home_win_prob ELSE EXCLUDED.home_win_prob END,
+                    import_id = EXCLUDED.import_id,
+                    elo_source = CASE WHEN EXCLUDED.elo_source = 'imported'
+                                        AND (games.ref_home_elo_pre, games.ref_away_elo_pre, games.ref_home_elo_post, games.ref_away_elo_post,
+                                             games.home_score, games.away_score)
+                                            IS NOT DISTINCT FROM
+                                            (EXCLUDED.ref_home_elo_pre, EXCLUDED.ref_away_elo_pre, EXCLUDED.ref_home_elo_post, EXCLUDED.ref_away_elo_post,
+                                             EXCLUDED.home_score, EXCLUDED.away_score)
+                                      THEN games.elo_source ELSE EXCLUDED.elo_source END,
+                    updated_at = now()
+                 WHERE (games.season, games.neutral, games.home_score, games.away_score,
+                        CASE WHEN EXCLUDED.elo_source = 'imported' THEN games.home_elo_pre ELSE EXCLUDED.home_elo_pre END,
+                        CASE WHEN EXCLUDED.elo_source = 'imported' THEN games.away_elo_pre ELSE EXCLUDED.away_elo_pre END,
+                        CASE WHEN EXCLUDED.elo_source = 'imported' THEN games.home_elo_post ELSE EXCLUDED.home_elo_post END,
+                        CASE WHEN EXCLUDED.elo_source = 'imported' THEN games.away_elo_post ELSE EXCLUDED.away_elo_post END,
+                        CASE WHEN EXCLUDED.elo_source = 'imported' THEN games.home_win_prob ELSE EXCLUDED.home_win_prob END,
+                        CASE WHEN EXCLUDED.elo_source = 'imported' THEN games.elo_source ELSE EXCLUDED.elo_source END, games.result_source,
+                        games.ref_home_elo_pre, games.ref_away_elo_pre, games.ref_home_elo_post, games.ref_away_elo_post,
+                        CASE WHEN games.game_type IN ('play_in', 'cup_final') THEN 'regular' ELSE games.game_type END)
+                       IS DISTINCT FROM
+                       (EXCLUDED.season, EXCLUDED.neutral, EXCLUDED.home_score, EXCLUDED.away_score,
+                        games.home_elo_pre, games.away_elo_pre, games.home_elo_post, games.away_elo_post, games.home_win_prob,
+                        games.elo_source, CASE WHEN games.result_source = 'archive' THEN 'archive' ELSE EXCLUDED.result_source END,
+                        COALESCE(EXCLUDED.ref_home_elo_pre, games.ref_home_elo_pre), COALESCE(EXCLUDED.ref_away_elo_pre, games.ref_away_elo_pre),
+                        COALESCE(EXCLUDED.ref_home_elo_post, games.ref_home_elo_post), COALESCE(EXCLUDED.ref_away_elo_post, games.ref_away_elo_post),
+                        EXCLUDED.game_type)
+                 RETURNING (xmax = 0) AS inserted",
+            )
+            .bind(&season)
+            .bind(&date)
+            .bind(&seq)
+            .bind(&home)
+            .bind(&away)
+            .bind(&neutral)
+            .bind(&gtype)
+            .bind(&hs)
+            .bind(&as_)
+            .bind(&hpre)
+            .bind(&apre)
+            .bind(&hpost)
+            .bind(&apost)
+            .bind(&prob)
+            .bind(import_id)
+            .bind(&src)
+            .bind(&rsrc)
+            .bind(&rhpre)
+            .bind(&rapre)
+            .bind(&rhpost)
+            .bind(&rapost)
+            .fetch_all(&mut *conn)
+            .await?;
+        let inserted = returned.iter().filter(|r| r.0).count() as i64;
+        counts.inserted += inserted;
+        counts.updated += returned.len() as i64 - inserted;
+        counts.unchanged += n as i64 - returned.len() as i64;
+    }
+    Ok(counts)
+}
+
+/// Write `ratings` on `conn` (see `GameStore::update_ratings`).
+async fn update_ratings_in(conn: &mut PgConnection, ratings: &[GameRating]) -> StoreResult<u64> {
+    let mut total = 0u64;
+    for chunk in ratings.chunks(5000) {
+        let ids: Vec<i64> = chunk.iter().map(|r| r.id).collect();
+        let hpre: Vec<f64> = chunk.iter().map(|r| r.home_elo_pre).collect();
+        let apre: Vec<f64> = chunk.iter().map(|r| r.away_elo_pre).collect();
+        let hpost: Vec<f64> = chunk.iter().map(|r| r.home_elo_post).collect();
+        let apost: Vec<f64> = chunk.iter().map(|r| r.away_elo_post).collect();
+        let prob: Vec<Option<f64>> = chunk.iter().map(|r| r.home_win_prob).collect();
+        let r = sqlx::query(
+                "UPDATE games g SET home_elo_pre = u.hpre, away_elo_pre = u.apre, home_elo_post = u.hpost,
+                        away_elo_post = u.apost, home_win_prob = u.p, elo_source = 'computed', updated_at = now()
+                 FROM UNNEST($1::int8[], $2::float8[], $3::float8[], $4::float8[], $5::float8[], $6::float8[])
+                      AS u(id, hpre, apre, hpost, apost, p)
+                 WHERE g.id = u.id
+                   AND (g.home_elo_pre, g.away_elo_pre, g.home_elo_post, g.away_elo_post, g.home_win_prob, g.elo_source)
+                       IS DISTINCT FROM (u.hpre, u.apre, u.hpost, u.apost, u.p, 'computed')",
+            )
+            .bind(&ids)
+            .bind(&hpre)
+            .bind(&apre)
+            .bind(&hpost)
+            .bind(&apost)
+            .bind(&prob)
+            .execute(&mut *conn)
+            .await?;
+        total += r.rows_affected();
+    }
+    Ok(total)
 }

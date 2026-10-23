@@ -10,7 +10,7 @@
   </div>
 </section>
 <section class="panel"><h2>Seasons beyond the Elo dataset</h2>
-  <p class="small">The Elo archive ends with the 2024-25 regular season. For later seasons the application computes ratings itself with FiveThirtyEight's formulas (25% reversion toward 1505 between seasons, K = 20 with the margin-of-victory multiplier), starting from the previous season's final ratings. These games are marked <code>computed</code>.</p>
+  <p class="small">The application computes every rating itself with FiveThirtyEight's formulas (25% reversion toward 1505 between seasons, K = 20 with the margin-of-victory multiplier, a new franchise at 1300), season after season from 1946-47. The archive supplies results and schedules through the 2024-25 regular season, and its own ratings stay stored as reference values; the application's ratings reproduce them to a mean difference below 0.01 points. Later results come from the BALLDONTLIE API or a CSV upload.</p>
   <div class="row">
     <label>Season (end year) <input id="nextSeason" type="number" min="1948" max="2100" style="width:6rem"></label>
     <button id="project" class="primary">Project preseason (synthetic schedule)</button>
@@ -22,7 +22,7 @@
   </div>
   <div id="syncStatus" class="small" style="margin:.5rem 0"></div>
   <form id="resultsForm" class="row"><input type="file" id="resultsFile" accept=".csv,.gz"><button type="submit">Upload results / schedule CSV for that season</button></form>
-  <p class="muted small">CSV layout: <code>date,home,away,home_score,away_score,neutral,playoff</code>. Leave the scores empty for games not yet played. Team codes as in the Elo Explorer (OKC, GSW, …). Uploading again replaces the computed games of that season.</p>
+  <p class="muted small">CSV layout: <code>date,home,away,home_score,away_score,neutral,playoff</code>. Leave the scores empty for games not yet played. Team codes as in the Elo Explorer (OKC, GSW, …). Uploading again replaces the season's games that did not come from the archive; archive games always stand.</p>
 </section>
 <section class="panel"><h2>Season coverage</h2><div id="coverage" class="table-wrap"></div></section>
 <section class="panel"><h2>Import history</h2><div id="imports" class="table-wrap"></div></section>

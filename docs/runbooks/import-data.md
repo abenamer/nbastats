@@ -54,9 +54,9 @@ The sync runs in the background. The line under the button shows its progress: r
 When `BALLDONTLIE_API_KEY` is set, the application syncs the current season every day at `RESULTS_SYNC_TIME` in `RESULTS_SYNC_TIMEZONE` (default 04:00 America/New_York, after the last West Coast game). The current season is the one that ends next year from September to December, and the one that ends this year from January to August.
 
 * At start, the application runs the sync at once if no sync has completed since the last scheduled time (for example after the computer was off at 04:00).
-* When the previous season is not in the store yet (the first run after a new season starts), the application syncs that season first, so the ratings chain from the archive.
+* When the previous season is not in the store yet (the first run after a new season starts), the application syncs that season first, so the ratings chain from the archive. It tries this once per run: when the previous season yields nothing either, the run stops and the log says so.
 * The Data page shows the next run time. The import history shows each run with the source `balldontlie`.
-* A season with imported archive data is skipped; the log says so.
+* A season whose archive games already cover everything the source has stores nothing; the log says so and the current season still runs.
 * Set `RESULTS_SYNC_ENABLED=false` to turn the daily sync off and keep the button.
 
 Command line alternative, for an external scheduler:
@@ -75,9 +75,9 @@ Example:
     2025-10-21,OKC,HOU,125,124,0,0
     2025-10-22,LAL,GSW,,,0,0
 
-Each upload replaces the computed games of that season. Rows with a tied score, one missing score, or an unknown team code are rejected and reported.
+Each upload replaces the season's games that did not come from the archive, then computes every rating of the season again. Rows with a tied score, one missing score, or an unknown team code are rejected and reported.
 
-A projection is refused for a season that has imported archive games. A results sync or upload of such a season keeps the archive games and adds only the games after them (for 2024-25: the play-in and the playoffs). A source or file with no new games stores nothing.
+A projection is refused for a season that has archive games. A results sync or upload of such a season keeps every archive game and adds only the games the archive does not have (for 2024-25: the play-in and the playoffs). A source or file with no new games stores nothing.
 
 ## Complete 2024-25
 
@@ -86,16 +86,24 @@ The archive stops after the 2024-25 regular season. To add its play-in and playo
 1. On the Data page, enter 2025 and click **Sync results from BALLDONTLIE**.
 2. When it completes, enter 2026 and sync again, so 2025-26 starts from the completed ratings.
 
-The coverage table then shows 2024-25 as complete, with the derived champion, and the Elo column as `imported + computed`.
+The coverage table then shows 2024-25 as complete, with the derived champion, and the "Results from" column as archive plus results.
 
-## Remove a computed season
+## Remove a season without archive games
 
-A projection, or a sync of a season the source does not have yet, can be removed. In the coverage table, click **Remove** on the row. The application deletes the season's computed games, standings, derived champion and forecasts. The button is not shown for seasons with imported archive games, and those are never removed.
+A projection, or a sync of a season the source does not have yet, can be removed. In the coverage table, click **Remove** on the row. The application deletes the season's games, standings, derived champion and forecasts. The button is not shown for seasons with archive games, and those are never removed.
+
+## Recompute every rating
+
+The application computes every rating at an archive import and, once, at the first start after the upgrade to compute first (the log says so; 80 seasons take about 15 seconds). To run it by hand:
+
+    docker compose exec nba-app nba-elo-simulator recompute
+
+The ratings of every season are written in one transaction. When the computation fails, no rating changes: an archive import is then marked failed with the reason, although its games are stored, and the start continues with the ratings it has. Fix the cause (the log names it) and run the command above, or restart the application.
 
 # After an import
 
 * The Data page shows the import with row counts and rejected rows.
-* The coverage table shows each season, its game counts, whether its Elo is imported or computed, how many games are not played yet, and whether the postseason is complete.
+* The coverage table shows each season, its game counts, where its results come from (archive, results, projection), how many games are not played yet, and whether the postseason is complete.
 * Seasons without playoff records show no derived champion unless the curated table has one.
 
 # Limits
