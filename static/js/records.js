@@ -61,12 +61,11 @@
       { label: 'Combined', value: e => num(e.game.home_elo_pre + e.game.away_elo_pre, 0) },
       { label: 'Score', value: e => `${e.game.home_score}-${e.game.away_score}${e.game.playoff ? ' (playoffs)' : ''}`, left: true }], rows); };
     clankers('clankersNba', r.clankers_by_era.filter(e => e.league === 'nba')); clankers('clankersAba', r.clankers_by_era.filter(e => e.league === 'aba'));
-    const roads = (id, rows) => { document.getElementById(id).innerHTML = table([
-      { label: 'Season', value: c => labelOf(c.season), left: true }, { label: 'Champion', value: c => `<span title="${esc(c.name)}">${esc(c.code)}</span>`, raw: true, left: true },
-      { label: 'Reg. opp. Elo', value: c => num(c.regular_opponent_elo, 0) }, { label: 'Playoff opp. Elo', value: c => num(c.playoff_opponent_elo, 0) },
-      { label: 'Road', value: c => num(c.road, 0) },
-      { label: 'Toughest opponent', value: c => `${c.toughest_opponent_code} (${num(c.toughest_opponent_elo, 0)})`, left: true }], rows); };
-    roads('hardestRoad', r.hardest_roads); roads('easiestRoad', r.easiest_roads);
+    const champ = c => `${labelOf(c.season)} <span title="${esc(c.name)} · regular-season opponents ${num(c.regular_opponent_elo, 0)}, playoff opponents ${num(c.playoff_opponent_elo, 0)}, toughest ${esc(c.toughest_opponent_code)} (${num(c.toughest_opponent_elo, 0)})">${esc(c.code)}</span>`;
+    document.getElementById('roadsByEra').innerHTML = table([
+      { label: 'Era', value: e => e.first_season === e.last_season ? labelOf(e.first_season) : `${labelOf(e.first_season)} to ${labelOf(e.last_season)}`, left: true }, { label: 'Teams', value: 'teams' }, { label: 'Titles', value: 'champions' },
+      { label: 'Hardest road', value: e => champ(e.hardest), raw: true, left: true }, { label: 'Road', value: e => num(e.hardest.road, 0) }, { label: 'Toughest opp.', value: e => `${e.hardest.toughest_opponent_code} (${num(e.hardest.toughest_opponent_elo, 0)})`, left: true },
+      { label: 'Easiest road', value: e => champ(e.easiest), raw: true, left: true }, { label: 'Road', value: e => num(e.easiest.road, 0) }], r.roads_by_era.filter(e => e.league === 'nba'));
     setStatus(status, '');
   } catch (e) { setStatus(status, e.message, true); }
 })();

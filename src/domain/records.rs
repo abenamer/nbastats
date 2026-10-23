@@ -143,6 +143,20 @@ pub struct EraClanker {
     pub game: Matchup,
 }
 
+/// The hardest and the easiest road to the title within one era. With one champion in the
+/// era, both are that champion.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct EraRoads {
+    pub league: League,
+    pub first_season: SeasonYear,
+    pub last_season: SeasonYear,
+    pub teams: usize,
+    pub three_point: bool,
+    pub champions: usize,
+    pub hardest: ChampionRoad,
+    pub easiest: ChampionRoad,
+}
+
 /// The game-level record inputs the store ranks for `compute`.
 #[derive(Debug, Clone, Default)]
 pub struct GameRecords {
@@ -288,10 +302,8 @@ pub struct Records {
     pub greatest_matchups: Vec<Matchup>,
     /// The weakest game of each era, in era order (NBA/BAA first, then the ABA).
     pub clankers_by_era: Vec<EraClanker>,
-    /// Champions by road rating, hardest first.
-    pub hardest_roads: Vec<ChampionRoad>,
-    /// Champions by road rating, easiest first.
-    pub easiest_roads: Vec<ChampionRoad>,
+    /// The hardest and easiest road to the title of each era, in era order.
+    pub roads_by_era: Vec<EraRoads>,
 }
 
 fn entry(s: &TeamSeasonStat, value: f64, date: Option<NaiveDate>) -> Entry {
@@ -553,7 +565,7 @@ pub fn compute(
         champion_roads,
     } = games;
     greatest_matchups.sort_by(|a, b| b.combined_elo().total_cmp(&a.combined_elo()));
-    let (hardest_roads, easiest_roads) = rank_roads(champion_roads);
+    let champion_roads = roads_with_rating(champion_roads);
     let all = || stats.iter();
     let floors = season_floors(stats);
 
@@ -655,6 +667,7 @@ pub fn compute(
         by_era.extend(eras(league, &members, &league_sizes));
     }
     let clankers_by_era = era_clankers(&by_era, &weakest_per_season);
+    let roads_by_era = era_roads(&by_era, &champion_roads);
 
     let champions = || {
         stats
@@ -697,8 +710,7 @@ pub fn compute(
         swings,
         greatest_matchups,
         clankers_by_era,
-        hardest_roads,
-        easiest_roads,
+        roads_by_era,
     }
 }
 
@@ -727,20 +739,44 @@ fn era_clankers(eras: &[EraRecord], weakest_per_season: &[Matchup]) -> Vec<EraCl
         .collect()
 }
 
-/// The `LIST_LEN` hardest and easiest roads among champions with games in both phases.
-fn rank_roads(roads: Vec<ChampionRoad>) -> (Vec<ChampionRoad>, Vec<ChampionRoad>) {
-    let mut roads: Vec<ChampionRoad> = roads
+/// The champions with games in both phases, each with its road rating filled.
+fn roads_with_rating(roads: Vec<ChampionRoad>) -> Vec<ChampionRoad> {
+    roads
         .into_iter()
         .filter(|r| r.regular_games > 0 && r.playoff_games > 0)
         .map(|mut r| {
             r.road = r.compute_road();
             r
         })
-        .collect();
-    roads.sort_by(|a, b| b.road.total_cmp(&a.road));
-    let hardest = roads.iter().take(LIST_LEN).cloned().collect();
-    let easiest = roads.iter().rev().take(LIST_LEN).cloned().collect();
-    (hardest, easiest)
+        .collect()
+}
+
+/// The hardest and easiest road of each era among the champions of that era's league.
+fn era_roads(eras: &[EraRecord], roads: &[ChampionRoad]) -> Vec<EraRoads> {
+    eras.iter()
+        .filter_map(|e| {
+            let members: Vec<&ChampionRoad> = roads
+                .iter()
+                .filter(|r| {
+                    League::of_code(&r.code) == e.league
+                        && e.first_season <= r.season
+                        && r.season <= e.last_season
+                })
+                .collect();
+            let hardest = members.iter().max_by(|a, b| a.road.total_cmp(&b.road))?;
+            let easiest = members.iter().min_by(|a, b| a.road.total_cmp(&b.road))?;
+            Some(EraRoads {
+                league: e.league,
+                first_season: e.first_season,
+                last_season: e.last_season,
+                teams: e.teams,
+                three_point: e.three_point,
+                champions: members.len(),
+                hardest: (*hardest).clone(),
+                easiest: (*easiest).clone(),
+            })
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -1005,7 +1041,7 @@ mod tests {
     }
 
     #[test]
-    fn roads_rank_champions_by_the_mean_of_both_phases() {
+    fn roads_by_era_pick_the_hardest_and_easiest_champion_of_each_era() {
         let road =
             |year: i32, code: &str, regular: f64, playoff: f64, playoff_games: i64| ChampionRoad {
                 season: SeasonYear::of(year),
@@ -1025,23 +1061,46 @@ mod tests {
             road(1999, "SAS", 1490.0, 1600.0, 17), // (1490*82 + 1600*17) / 99 = 1508.9
             road(2025, "UNF", 1600.0, 0.0, 0),     // no playoffs yet: left out
         ];
-        let (hardest, easiest) = rank_roads(roads);
-        let codes = |v: &[ChampionRoad]| v.iter().map(|r| r.code.clone()).collect::<Vec<_>>();
-        assert_eq!(codes(&hardest), vec!["CLE", "GSW", "SAS"]);
-        assert_eq!(codes(&easiest), vec!["SAS", "GSW", "CLE"]);
-        assert!((hardest[0].road - (1500.0 * 82.0 + 1700.0 * 21.0) / 103.0).abs() < 1e-9);
-        assert!(hardest
-            .iter()
-            .all(|r| (r.road - r.compute_road()).abs() < 1e-9));
-        let r = compute(
-            &[],
-            GameRecords {
-                champion_roads: vec![road(2016, "CLE", 1500.0, 1700.0, 21)],
-                ..Default::default()
+        let rated = roads_with_rating(roads);
+        assert_eq!(rated.len(), 3, "the champion without playoffs is left out");
+        assert!((rated[0].road - (1500.0 * 82.0 + 1700.0 * 21.0) / 103.0).abs() < 1e-9);
+        let era = |first: i32, last: i32| EraRecord {
+            league: League::Nba,
+            first_season: SeasonYear::of(first),
+            last_season: SeasonYear::of(last),
+            seasons: (last - first + 1) as usize,
+            teams: 30,
+            three_point: true,
+            extremes: Extremes {
+                best: entry(
+                    &stat(first, "X", 1500.0, 1400.0, PlayoffResult::Missed),
+                    1500.0,
+                    None,
+                ),
+                worst: entry(
+                    &stat(first, "Y", 1500.0, 1400.0, PlayoffResult::Missed),
+                    1400.0,
+                    None,
+                ),
             },
-            &[],
+        };
+        let by_era = era_roads(&[era(1996, 2004), era(2005, 2026)], &rated);
+        assert_eq!(by_era.len(), 2);
+        assert_eq!(
+            (by_era[0].champions, by_era[0].hardest.code.as_str()),
+            (1, "SAS")
         );
-        assert_eq!((r.hardest_roads.len(), r.easiest_roads.len()), (1, 1));
+        assert_eq!(by_era[0].easiest.code, "SAS");
+        assert_eq!(
+            (
+                by_era[1].champions,
+                by_era[1].hardest.code.as_str(),
+                by_era[1].easiest.code.as_str()
+            ),
+            (2, "CLE", "GSW")
+        );
+        // An era without a champion in the list yields no row.
+        assert!(era_roads(&[era(1947, 1950)], &rated).is_empty());
     }
 
     #[test]

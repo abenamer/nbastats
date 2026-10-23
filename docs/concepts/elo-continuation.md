@@ -31,6 +31,16 @@ The application verified these formulas against rows of the archive. They reprod
 
 A game without a result does not change the ratings. The application records the ratings before the game, so the forecast engines can use the schedule.
 
+# Validation against the archive
+
+The archive carries FiveThirtyEight's rating before and after every game. On 2026-10-23 the application's rating code was replayed once, by hand, over eleven archive seasons from 1947-48 to 2024-25 (the ABA included) and compared with those numbers:
+
+* One step: the application's update applied to a game's imported pre-game ratings reproduces its imported post-game ratings. Mean difference 0.000 points; the largest difference is 0.08 points, on neutral-site games.
+* Season start: the reversion rule reproduces every team's imported first rating of the next season exactly.
+* Season chain: rating a whole season from its first ratings reproduces the imported season-end ratings. The one exception is 2020-21, where the archive itself moves two teams by 2.49 points between games without a game to explain it (a correction in the source data); the application carries the games forward consistently.
+
+Only the 2015-16 check runs on every build: the integration test `elo_replay_reproduces_the_archive_ratings` repeats the one-step and the chain check on that season and fails above 0.1 points.
+
 # Three ways to add a season
 
 | Method | Input | Result |
