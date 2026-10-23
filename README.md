@@ -112,6 +112,7 @@ See [Develop and test](docs/runbooks/develop.md).
     scripts/               backup, restore, verify, documentation checker
     tests/                 PostgreSQL integration tests and documentation checker tests
     docs/                  OKF knowledge bundle (concepts, runbooks, reference, decisions, self-audit)
+    research/              literature reviews with their notes and scripts, and the papers they cite
 
 ## Checks
 
