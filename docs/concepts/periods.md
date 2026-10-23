@@ -51,15 +51,20 @@ The ABA had no agreement of this kind, so only NBA/BAA seasons belong to a barga
 
 # Competition formats
 
-The era builder also groups by competition format, curated in `domain::eras`: early playoffs from 1946-47 (division-based fields that changed often), the 16-team field from 1983-84, best-of-seven in every round from 2002-03, the play-in era from 2020-21 and the NBA Cup era from 2023-24. ABA seasons are one format of their own. The rule periods above also carry dated changes, shown in the era builder's notes.
+The Records page also offers the competition format, curated in `domain::eras`: early playoffs from 1946-47 (division-based fields that changed often), the 16-team field from 1983-84, best-of-seven in every round from 2002-03, the play-in era from 2020-21 and the NBA Cup era from 2023-24. ABA seasons are one format of their own. The rule periods above also carry dated changes, shown in the notes of the [era builder](era-builder.md).
+
+# Themed eras
+
+Two themed eras, curated in `domain::eras`, name how the game was played or followed rather than a rule or an agreement: the Reddit NBA era from 2008-09 (the seasons followed on r/nba, with a game thread and a post-game thread for every game) and the three-point dominance era from 2015-16 (the season of Stephen Curry's 402 threes and the Warriors' 73 wins, after which the league's three-point attempts rise every season). Themes overlap, so a season belongs to every theme active in it, and neither has ended.
 
 # The records of a bargaining period
 
-For each period present in the data, the Records page shows: the seasons it covers, the best team-season (season peak) and the weakest (season low), the titles and the franchises that won them (a relocated champion keeps its count), the number of distinct champions, the title HHI and the Elo spread.
+For each period present in the data, the Records page shows: the seasons it covers, the best team-season (season peak) and the weakest (season low), the titles and the franchises that won them (a relocated champion keeps its count), the number of distinct champions, the title HHI, the mean Elo and the Elo spread.
 
 * **Title HHI** is the Herfindahl-Hirschman index of the titles: the sum of each champion's squared share of the period's titles. It is 1.0 when one franchise won every title and 1 divided by the number of champions when every champion won once; lower means the titles were spread out.
+* **Mean Elo** is the mean season-end rating across the league in each season, averaged over the period's seasons, so every season weighs the same whatever its team count. It answers whether the ratings drift: a game moves points from the loser to the winner and nothing else, so the league's mean changes only through the season-start regression towards the base rating and the teams that join or leave (expansion teams enter at a low rating, teams that fold take their rating with them, the merger teams carried their ABA rating into the NBA). In the archive the NBA/BAA mean by decade is about 1400 in the 1940s (every founding team started at 1300 and a quarter of the gap closes per season), about 1515 in the 1950s (the weakest teams folded in 1950), about 1480 to 1500 in the 1960s and 1970s (with expansion seasons as low as 1440) and within five points of 1505 from the 1980s on, while the highest peaks rise from the low 1700s to the 1860s: the level holds and the tails widen as the league grows.
 * **Elo spread** is the standard deviation of season-end ratings across the league in each season, averaged over the period's seasons. A wider spread means a more unequal league.
 
 # Verification
 
-The period tables (rule, bargaining, format) and their changes, and the player careers of the [era builder](era-builder.md), are curated from memory of the public record and need a check against a reference before they are relied on. The checks of this bundle do not verify them.
+The period tables (rule, bargaining, format, theme) and their changes, and the player careers of the [era builder](era-builder.md), are curated from memory of the public record and need a check against a reference before they are relied on. The checks of this bundle do not verify them.

@@ -24,7 +24,7 @@ These are project-specific technical terms. They are not a reproduction of the A
 | Cup final | The NBA Cup (in-season tournament) final. An extra game that does not count in the standings. |
 | Current season | The season the daily sync targets: ends next year from September to December, ends this year from January to August. |
 | Decade | Ten seasons grouped by the start year of the season: 1959-60 belongs to the 1950s. |
-| Dimension | A way to label seasons in the era builder: bargaining period, rule period, league size, league, decade, competition format, dynasty era or player era. Combining dimensions intersects them. |
+| Dimension | A way to label seasons on the Records page: bargaining period, rule period, league size, league, decade, competition format, dynasty era, player era or themed era. A facet picks one label; a group query combines dimensions. |
 | Dynasty era | A franchise's run of titles, at least a given number with no gap longer than a given number of seasons, from its first title to its last; computed from the champions. |
 | Elo | A rating that gives game probabilities from the rating difference. |
 | Elo continuation | The computation of every rating by the application, season after season from the first season in the store. |
@@ -34,7 +34,8 @@ These are project-specific technical terms. They are not a reproduction of the A
 | Engine B | The playoff bracket simulator (`domain::playoffs::bracket`). |
 | Engine C | The full-season simulator with play-in (`domain::playoffs::season`). |
 | Era | Consecutive seasons of one league with the same number of teams inside one rule period. |
-| Era builder | The Records page panel that groups seasons by chosen dimensions and shows the records of each group; `GET /api/records/groups`. |
+| Era builder | The Records page's facets and group panel: the facets replay every table over the seasons of the picked eras (`GET /api/records?facet=`), the group panel computes one row of records per combination of dimensions (`GET /api/records/groups`). |
+| Facet | One label along a dimension, written `dimension:label`, that keeps the seasons carrying it. Within one dimension facets add up, across dimensions they intersect. |
 | Fetch window | The dates a results sync asks the source for: the whole season on the first sync, then the days from the last played game to today. |
 | Franchise | The organisation, followed through relocations and renamings. Identified by `FranchiseId` and a key such as `GSW`. |
 | Game log | The stored list of games with the application's Elo before and after each game, and the archive's reference ratings for archive games. |
@@ -45,6 +46,7 @@ These are project-specific technical terms. They are not a reproduction of the A
 | League size | The number of teams of one league (NBA/BAA or ABA) in one season. |
 | Lookup | One tool call the language model makes to read the store (tool, arguments, rows). The question box lists the lookups under each answer. |
 | Matchup (greatest, clanker) | A played game ranked by the combined Elo of the two teams before tip-off: the 20 highest are the greatest matchups; the lowest of each era, per league, is its clanker. |
+| Mean Elo | The mean season-end rating across a league in a season, averaged over a group's seasons. A check that the ratings hold their level between periods. |
 | Play-in | The games that decide seeds 7 and 8 (2020-21 and later), or the 8 seed (2019-20). |
 | Player era | The seasons a listed player was active, from the curated table in `domain::players`; a season belongs to every listed player active in it. |
 | Port | A trait in `application::ports` that the application requires from the outside world. |
@@ -61,4 +63,5 @@ These are project-specific technical terms. They are not a reproduction of the A
 | Series | A best-of-five or best-of-seven playoff matchup. A `SeriesState` is either in progress or decided. |
 | Store | The `PostgresStore` adapter, which implements every store port. |
 | Team | A team code and era, such as SEA or OKC. Identified by `TeamId`. |
+| Themed era | A curated span of NBA/BAA seasons named for how the game was played or followed (the Reddit NBA era, the three-point dominance era); a season belongs to every theme active in it. |
 | Title HHI | The Herfindahl-Hirschman index of a group's titles: the sum of each champion's squared share. 1.0 when one franchise won every title; lower when the titles spread out. |

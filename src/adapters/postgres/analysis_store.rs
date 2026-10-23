@@ -7,7 +7,9 @@ use chrono::NaiveDate;
 use crate::application::ports::{AnalysisStore, NewForecast, StoreHealth, StoreResult};
 use crate::domain::ids::{FranchiseId, SeasonYear};
 use crate::domain::models::{ChampionshipView, TeamSeasonView};
-use crate::domain::records::{ChampionRoad, GameSwing, Matchup, MatchupOrder, TeamSeasonStat};
+use crate::domain::records::{
+    ChampionRoad, GameSwing, Matchup, MatchupOrder, SeasonScope, TeamSeasonStat,
+};
 use crate::domain::reference;
 
 use super::PostgresStore;
@@ -16,6 +18,44 @@ const TS_VIEW_COLS: &str = "ts.season, ts.team_id, t.code, t.name AS team_name, 
     f.name AS franchise_name, ts.conference, ts.division, ts.wins, ts.losses, ts.win_pct, ts.elo_start, ts.elo_regular_end,
     ts.elo_pre_playoffs, ts.elo_end, ts.elo_peak, ts.made_play_in, ts.made_playoffs, ts.seed, ts.playoff_result";
 
+/// The season scope as three bound parameters: the NBA/BAA seasons (`NULL` for no scope),
+/// the ABA team codes and the ABA seasons. A query keeps a game when the scope is `NULL` or
+/// when the game's season is in the list of its league, the league being that of the team
+/// the query names (see [`SCOPE_SQL`]).
+type ScopeBinds = (Option<Vec<i32>>, Vec<String>, Option<Vec<i32>>);
+
+fn scope_binds(scope: Option<&SeasonScope>) -> ScopeBinds {
+    let aba_codes: Vec<String> = reference::ABA_TEAM_CODES
+        .iter()
+        .map(|c| c.to_string())
+        .collect();
+    let years = |v: &[SeasonYear]| v.iter().map(|s| i32::from(*s)).collect::<Vec<i32>>();
+    match scope {
+        None => (None, aba_codes, None),
+        Some(sc) => (Some(years(&sc.nba)), aba_codes, Some(years(&sc.aba))),
+    }
+}
+
+/// The scope test with the team alias `T` and the parameter numbers of the NBA seasons, the
+/// ABA codes and the ABA seasons spelled out by the caller.
+macro_rules! scope_sql {
+    ($team:literal, $nba:literal, $codes:literal, $aba:literal) => {
+        concat!(
+            "(",
+            $nba,
+            "::int[] IS NULL OR CASE WHEN ",
+            $team,
+            ".code = ANY(",
+            $codes,
+            ") THEN g.season = ANY(",
+            $aba,
+            ") ELSE g.season = ANY(",
+            $nba,
+            ") END)"
+        )
+    };
+}
+
 /// The matchup query with its sort direction, which cannot be a bound parameter.
 macro_rules! matchups_sql {
     ($direction:literal) => {
@@ -23,8 +63,9 @@ macro_rules! matchups_sql {
             "SELECT g.season, g.game_date, h.code, h.name, a.code, a.name, ",
             "g.home_elo_pre, g.away_elo_pre, g.home_score, g.away_score, g.game_type = 'playoff' AS playoff ",
             "FROM games g JOIN teams h ON h.id = g.home_team_id JOIN teams a ON a.id = g.away_team_id ",
-            "WHERE g.home_score IS NOT NULL ",
-            "ORDER BY g.home_elo_pre + g.away_elo_pre ",
+            "WHERE g.home_score IS NOT NULL AND ",
+            scope_sql!("h", "$2", "$3", "$4"),
+            " ORDER BY g.home_elo_pre + g.away_elo_pre ",
             $direction,
             ", g.game_date LIMIT $1"
         )
@@ -189,7 +230,7 @@ impl AnalysisStore for PostgresStore {
         .await?)
     }
 
-    async fn champion_roads(&self) -> StoreResult<Vec<ChampionRoad>> {
+    async fn champion_roads(&self, scope: Option<&SeasonScope>) -> StoreResult<Vec<ChampionRoad>> {
         type Row = (
             SeasonYear,
             String,
@@ -201,14 +242,18 @@ impl AnalysisStore for PostgresStore {
             Option<String>,
             Option<f64>,
         );
-        let rows: Vec<Row> = sqlx::query_as(
+        let (nba, aba_codes, aba) = scope_binds(scope);
+        let rows: Vec<Row> = sqlx::query_as(concat!(
             "WITH o AS (
                  SELECT g.season, c.champion_team_id AS team_id, g.game_type,
                         CASE WHEN g.home_team_id = c.champion_team_id THEN g.away_elo_pre ELSE g.home_elo_pre END AS opp_elo,
                         CASE WHEN g.home_team_id = c.champion_team_id THEN g.away_team_id ELSE g.home_team_id END AS opp_id
                  FROM championships c
+                 JOIN teams ct ON ct.id = c.champion_team_id
                  JOIN games g ON g.season = c.season AND c.champion_team_id IN (g.home_team_id, g.away_team_id)
-                 WHERE g.home_score IS NOT NULL AND g.game_type <> 'cup_final'
+                 WHERE g.home_score IS NOT NULL AND g.game_type <> 'cup_final' AND ",
+            scope_sql!("ct", "$1", "$2", "$3"),
+            "
              )
              SELECT o.season, t.code, t.name,
                     avg(o.opp_elo) FILTER (WHERE o.game_type = 'regular'),
@@ -219,8 +264,11 @@ impl AnalysisStore for PostgresStore {
                     max(o.opp_elo) FILTER (WHERE o.game_type <> 'regular')
              FROM o JOIN teams t ON t.id = o.team_id JOIN teams p ON p.id = o.opp_id
              GROUP BY o.season, t.code, t.name
-             ORDER BY o.season",
-        )
+             ORDER BY o.season"
+        ))
+        .bind(nba)
+        .bind(aba_codes)
+        .bind(aba)
         .fetch_all(&self.pool)
         .await?;
         Ok(rows
@@ -252,39 +300,56 @@ impl AnalysisStore for PostgresStore {
             .collect())
     }
 
-    async fn matchups(&self, order: MatchupOrder, limit: i64) -> StoreResult<Vec<Matchup>> {
+    async fn matchups(
+        &self,
+        scope: Option<&SeasonScope>,
+        order: MatchupOrder,
+        limit: i64,
+    ) -> StoreResult<Vec<Matchup>> {
         let sql = match order {
             MatchupOrder::Strongest => MATCHUPS_DESC,
             MatchupOrder::Weakest => MATCHUPS_ASC,
         };
+        let (nba, aba_codes, aba) = scope_binds(scope);
         let rows: Vec<MatchupRow> = sqlx::query_as(sql)
             .bind(limit)
+            .bind(nba)
+            .bind(aba_codes)
+            .bind(aba)
             .fetch_all(&self.pool)
             .await?;
         Ok(rows.into_iter().map(matchup_from_row).collect())
     }
 
-    async fn weakest_matchup_per_season(&self) -> StoreResult<Vec<Matchup>> {
+    async fn weakest_matchup_per_season(
+        &self,
+        scope: Option<&SeasonScope>,
+    ) -> StoreResult<Vec<Matchup>> {
         // A game belongs to the league of its teams; the ABA codes are bound as an array.
-        let aba: Vec<String> = reference::ABA_TEAM_CODES
-            .iter()
-            .map(|c| c.to_string())
-            .collect();
-        let rows: Vec<MatchupRow> = sqlx::query_as(
+        let (nba, aba_codes, aba) = scope_binds(scope);
+        let rows: Vec<MatchupRow> = sqlx::query_as(concat!(
             "SELECT DISTINCT ON (g.season, h.code = ANY($1))
                     g.season, g.game_date, h.code, h.name, a.code, a.name,
                     g.home_elo_pre, g.away_elo_pre, g.home_score, g.away_score, g.game_type = 'playoff' AS playoff
              FROM games g JOIN teams h ON h.id = g.home_team_id JOIN teams a ON a.id = g.away_team_id
-             WHERE g.home_score IS NOT NULL AND (h.code = ANY($1)) = (a.code = ANY($1))
-             ORDER BY g.season, h.code = ANY($1), g.home_elo_pre + g.away_elo_pre ASC, g.game_date",
-        )
-        .bind(&aba)
+             WHERE g.home_score IS NOT NULL AND (h.code = ANY($1)) = (a.code = ANY($1)) AND ",
+            scope_sql!("h", "$2", "$1", "$3"),
+            "
+             ORDER BY g.season, h.code = ANY($1), g.home_elo_pre + g.away_elo_pre ASC, g.game_date"
+        ))
+        .bind(aba_codes)
+        .bind(nba)
+        .bind(aba)
         .fetch_all(&self.pool)
         .await?;
         Ok(rows.into_iter().map(matchup_from_row).collect())
     }
 
-    async fn biggest_swings(&self, limit: i64) -> StoreResult<Vec<GameSwing>> {
+    async fn biggest_swings(
+        &self,
+        scope: Option<&SeasonScope>,
+        limit: i64,
+    ) -> StoreResult<Vec<GameSwing>> {
         type Row = (
             SeasonYear,
             NaiveDate,
@@ -299,7 +364,8 @@ impl AnalysisStore for PostgresStore {
             f64,
             f64,
         );
-        let rows: Vec<Row> = sqlx::query_as(
+        let (nba, aba_codes, aba) = scope_binds(scope);
+        let rows: Vec<Row> = sqlx::query_as(concat!(
             "SELECT * FROM (
                  SELECT g.season, g.game_date, w.code, w.name, l.code AS opponent_code,
                         CASE WHEN g.home_score > g.away_score THEN g.home_score ELSE g.away_score END AS points,
@@ -312,12 +378,17 @@ impl AnalysisStore for PostgresStore {
                  FROM games g
                  JOIN teams w ON w.id = CASE WHEN g.home_score > g.away_score THEN g.home_team_id ELSE g.away_team_id END
                  JOIN teams l ON l.id = CASE WHEN g.home_score > g.away_score THEN g.away_team_id ELSE g.home_team_id END
-                 WHERE g.home_score IS NOT NULL AND g.home_score <> g.away_score
+                 WHERE g.home_score IS NOT NULL AND g.home_score <> g.away_score AND ",
+            scope_sql!("w", "$2", "$3", "$4"),
+            "
              ) s
              ORDER BY s.elo_post - s.elo_pre DESC, s.game_date
-             LIMIT $1",
-        )
+             LIMIT $1"
+        ))
         .bind(limit)
+        .bind(nba)
+        .bind(aba_codes)
+        .bind(aba)
         .fetch_all(&self.pool)
         .await?;
         Ok(rows

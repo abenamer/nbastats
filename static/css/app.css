@@ -88,6 +88,11 @@ canvas { max-width:100%; }
 .chip { font:inherit; font-size:.85rem; border:1px solid #cbd5e1; background:#f1f5f9; color:inherit; border-radius:999px; padding:.25rem .7rem; cursor:pointer; }
 .chip[aria-pressed=true] { background:#14202e; color:#fff; border-color:#14202e; }
 .chip.preset { background:#fff; }
+.facet-add { font:inherit; font-size:.85rem; max-width:18rem; }
+.scope { margin-top:.6rem; }
+.scope .banner { background:#eef4fb; border:1px solid #cbd5e1; border-radius:.5rem; padding:.6rem .8rem; }
+.scope .banner.empty { background:#fff4f0; }
+details.panel > summary { cursor:pointer; }
 tr.thin td { color:var(--muted); }
 a.report { font-size:.78rem; margin-left:.3rem; white-space:nowrap; }
 .notes details { margin:.25rem 0; } .notes summary { cursor:pointer; } .notes ul { margin:.2rem 0 .4rem 1.2rem; }

@@ -27,7 +27,7 @@ This project follows the [REAS engineering standard](https://github.com/abenamer
 * [Persistence model](concepts/persistence.md) - Which state is durable, where it lives and which commands keep it.
 * [Security model](concepts/security.md) - Threat model of the local-only deployment and the controls in place.
 * [Rule periods and bargaining periods](concepts/periods.md) - The period tables that group seasons on the Records page, with what each period changed.
-* [Era builder](concepts/era-builder.md) - How the Records page groups seasons by combined dimensions and computes the records of each group.
+* [Era builder](concepts/era-builder.md) - How the facets on the Records page replay every record table over the seasons of chosen eras, and how the group panel computes one row of records per combination of dimensions.
 * [Question box](concepts/question-box.md) - How the dashboard answers a question from the stored data through a language model with read-only tools, and what it refuses.
 
 # Runbooks

@@ -173,6 +173,9 @@ pub struct GroupStats {
     /// Herfindahl-Hirschman index of the titles: the sum of each champion's squared share.
     /// 1.0 when one franchise won every title; `None` without a title.
     pub title_hhi: Option<f64>,
+    /// The mean season-end rating across the league, averaged over the group's seasons: the
+    /// level the ratings sat at, which shows whether they drift over time.
+    pub mean_elo: Option<f64>,
     /// The standard deviation of season-end ratings across the league, averaged over the
     /// group's seasons: a measure of how unequal the league was.
     pub elo_spread: Option<f64>,
@@ -207,16 +210,29 @@ pub fn title_hhi(counts: &[usize]) -> Option<f64> {
     )
 }
 
-/// The population standard deviation of the season-end ratings of `stats`, per season,
-/// averaged over the seasons with at least two rated teams.
-pub fn elo_spread(stats: &[&TeamSeasonStat]) -> Option<f64> {
+/// The finite season-end ratings of `stats`, by season.
+fn ratings_by_season(stats: &[&TeamSeasonStat]) -> BTreeMap<SeasonYear, Vec<f64>> {
     let mut by_season: BTreeMap<SeasonYear, Vec<f64>> = BTreeMap::new();
     for s in stats {
         if let Some(e) = s.elo_end.filter(|e| e.is_finite()) {
             by_season.entry(s.season).or_default().push(e);
         }
     }
-    let spreads: Vec<f64> = by_season
+    by_season
+}
+
+fn average(values: &[f64]) -> Option<f64> {
+    if values.is_empty() {
+        None
+    } else {
+        Some(values.iter().sum::<f64>() / values.len() as f64)
+    }
+}
+
+/// The population standard deviation of the season-end ratings of `stats`, per season,
+/// averaged over the seasons with at least two rated teams.
+pub fn elo_spread(stats: &[&TeamSeasonStat]) -> Option<f64> {
+    let spreads: Vec<f64> = ratings_by_season(stats)
         .values()
         .filter(|v| v.len() >= 2)
         .map(|v| {
@@ -224,11 +240,17 @@ pub fn elo_spread(stats: &[&TeamSeasonStat]) -> Option<f64> {
             (v.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / v.len() as f64).sqrt()
         })
         .collect();
-    if spreads.is_empty() {
-        None
-    } else {
-        Some(spreads.iter().sum::<f64>() / spreads.len() as f64)
-    }
+    average(&spreads)
+}
+
+/// The mean season-end rating of `stats`, per season, averaged over the seasons, so every
+/// season weighs the same whatever its team count.
+pub fn mean_elo(stats: &[&TeamSeasonStat]) -> Option<f64> {
+    let means: Vec<f64> = ratings_by_season(stats)
+        .values()
+        .filter_map(|v| average(v))
+        .collect();
+    average(&means)
 }
 
 /// The records of a group of team-seasons; `None` when the group is empty. Titles are
@@ -267,6 +289,7 @@ pub fn group_stats(members: &[&TeamSeasonStat]) -> Option<GroupStats> {
         distinct_champions: champions.len(),
         title_hhi: title_hhi(&counts),
         champions,
+        mean_elo: mean_elo(members),
         elo_spread: elo_spread(members),
     })
 }
@@ -376,6 +399,12 @@ mod tests {
         let mut nan = stat(2000, "C", "C", 1500.0, 1400.0, false);
         nan.elo_end = Some(f64::NAN);
         assert_eq!(elo_spread(&[&a, &b, &nan]), Some(100.0));
+        // The mean weighs every season the same: 1500 in 2000, 1600 in 2001.
+        assert_eq!(mean_elo(&[&a, &b]), Some(1500.0));
+        assert_eq!(mean_elo(&[&a, &b, &lone]), Some(1550.0));
+        assert_eq!(mean_elo(&[&a, &b, &nan]), Some(1500.0));
+        assert_eq!(mean_elo(&[&nan]), None);
+        assert_eq!(mean_elo(&[]), None);
     }
 
     #[test]
@@ -414,6 +443,7 @@ mod tests {
         assert_eq!(p.stats.best.season, SeasonYear::of(2001));
         assert!((p.stats.title_hhi.unwrap() - (4.0 + 1.0) / 9.0).abs() < 1e-12);
         assert!((p.stats.elo_spread.unwrap() - (50.0 + 55.0 + 65.0) / 3.0).abs() < 1e-9);
+        assert!(p.stats.mean_elo.is_some_and(f64::is_finite));
         assert_eq!(p.changes.len(), 4);
         assert_eq!(
             (

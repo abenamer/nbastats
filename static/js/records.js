@@ -23,9 +23,9 @@
     { label: 'Division', value: g => g.division || '', left: true }, { label: 'Teams', value: 'teams' }, { label: 'Mean Elo', value: g => num(g.mean_elo, 0) },
     { label: 'Best', value: g => `${g.best_code} ${num(g.best_elo, 0)}`, left: true }, { label: 'Worst', value: g => `${g.worst_code} ${num(g.worst_elo, 0)}`, left: true }];
   const group = (id, rows) => { document.getElementById(id).innerHTML = rows.length ? table(groupCols, rows) : '<p class="muted">No alignment data.</p>'; };
-  try {
-    setStatus(status, 'Loading…');
-    const r = await getJSON('/api/records');
+  // Everything below the facet panel is drawn from one answer of /api/records, so a facet
+  // change redraws the whole page from a new answer.
+  function render(r) {
     list('allTimeHigh', r.all_time_high, 'Peak Elo'); list('allTimeLow', r.all_time_low, 'Low Elo');
     document.getElementById('byDecade').innerHTML = table([
       { label: 'Decade', value: d => `${d.decade}s`, left: true }, { label: 'Team-seasons', value: 'teams' },
@@ -59,7 +59,7 @@
       { label: 'Best team-season', value: c => `${c.best.code} ${num(c.best.value, 0)} (${labelOf(c.best.season)})`, left: true, cls: () => 'good' },
       { label: 'Weakest', value: c => `${c.weakest.code} ${num(c.weakest.value, 0)} (${labelOf(c.weakest.season)})`, left: true, cls: () => 'bad' },
       { label: 'Titles', value: 'titles' }, { label: 'Champions', value: titleList, raw: true, left: true }, { label: 'Distinct', value: 'distinct_champions' },
-      { label: 'Title HHI', value: c => c.title_hhi == null ? '–' : num(c.title_hhi, 2) }, { label: 'Elo spread', value: c => c.elo_spread == null ? '–' : num(c.elo_spread, 0) }], r.by_cba);
+      { label: 'Title HHI', value: c => c.title_hhi == null ? '–' : num(c.title_hhi, 2) }, { label: 'Mean Elo', value: c => c.mean_elo == null ? '–' : num(c.mean_elo, 0) }, { label: 'Elo spread', value: c => c.elo_spread == null ? '–' : num(c.elo_spread, 0) }], r.by_cba);
     document.getElementById('cbaChanges').innerHTML = r.by_cba.map(c => `<details><summary><strong>${esc(c.name)}</strong> · ${esc(span(c))} <span class="muted small">${esc(c.summary)}</span></summary><ul class="small">${c.changes.map(ch => `<li><span class="muted">${labelOf(ch.season)}</span> ${esc(ch.text)}</li>`).join('')}</ul></details>`).join('');
     group('divBest', r.divisions.best); group('divWorst', r.divisions.worst);
     list('bestChampion', r.best_champion, 'Peak Elo', true, 'At the clinch'); list('worstChampion', r.worst_champion, 'Peak Elo', true, 'At the clinch'); list('bestUncrowned', r.best_uncrowned, 'Peak Elo', true, 'Season end');
@@ -90,7 +90,89 @@
       { label: 'Period', value: 'period', left: true }, { label: 'Era', value: span, left: true }, { label: 'Teams', value: 'teams' }, { label: 'Titles', value: 'champions' },
       { label: 'Hardest road', value: e => champ(e.hardest), raw: true, left: true }, { label: 'Road', value: e => num(e.hardest.road, 0) }, { label: 'Toughest opp.', value: e => `${e.hardest.toughest_opponent_code} (${num(e.hardest.toughest_opponent_elo, 0)})`, left: true },
       { label: 'Easiest road', value: e => champ(e.easiest), raw: true, left: true }, { label: 'Road', value: e => num(e.easiest.road, 0) }], r.roads_by_era.filter(e => e.league === 'nba'));
-    setStatus(status, '');
+    renderScope(r.scope);
     attachReports(document.querySelector('.records'));
-  } catch (e) { setStatus(status, e.message, true); }
+  }
+
+  // --- Facets: the picked labels per dimension; within a row they add up, across rows they intersect.
+  const $ = id => document.getElementById(id);
+  const DIM_TIPS = { cba: 'The collective bargaining agreement in force (NBA/BAA).', rule: 'The rule period: shot clock, three-point line, zone defense, hand-check ban; the ABA on its own.', size: 'The number of teams in the league that season.', league: 'NBA/BAA or ABA.', decade: 'Decade of the season\'s start year.', format: 'The competition format: early playoffs, 16-team field, best-of-seven throughout, play-in era, NBA Cup era.', dynasty: 'A franchise\'s run of titles (at least three, gaps of at most three seasons), computed for NBA/BAA champions only.', player: 'Curated careers of every league and Finals MVP (and George Mikan). A season belongs to every player active in it.', theme: 'Curated themed eras of how the game was played or followed; a season belongs to every theme active in it.' };
+  const CHIP_LIMIT = 24; // more values than this and the row offers a list to add from
+  const picked = new Map();
+  let dims = null, maxFacets = 8, loads = 0;
+  const count = () => [...picked.values()].reduce((n, set) => n + set.size, 0);
+  const has = (dim, label) => picked.has(dim) && picked.get(dim).has(label);
+  // Adds or removes a pick; false when the limit stops an addition.
+  const toggle = (dim, label) => {
+    const set = picked.get(dim) || new Set();
+    if (set.has(label)) set.delete(label);
+    else if (count() >= maxFacets) { setStatus($('fStatus'), `At most ${maxFacets} picks; remove one first.`, true); return false; }
+    else set.add(label);
+    if (set.size) picked.set(dim, set); else picked.delete(dim);
+    setStatus($('fStatus'), '');
+    return true;
+  };
+  const facetParams = () => { const p = new URLSearchParams(); for (const [dim, set] of picked) for (const label of set) p.append('facet', `${dim}:${label}`); return p; };
+  const spanOf = v => v.first_season === v.last_season ? labelOf(v.first_season) : `${labelOf(v.first_season)} to ${labelOf(v.last_season)}`;
+  function renderFacetRows() {
+    if (!dims) return;
+    $('facetRows').innerHTML = dims.filter(d => d.values.length).map(d => {
+      const tip = v => `${v.seasons} season${v.seasons === 1 ? '' : 's'}, ${spanOf(v)}${v.summary ? `. ${v.summary}` : ''}`;
+      const chip = v => `<button class="chip" data-dim="${esc(d.dimension)}" data-label="${esc(v.label)}" aria-pressed="${has(d.dimension, v.label)}" title="${esc(tip(v))}">${esc(v.label)}</button>`;
+      let cells;
+      if (d.values.length > CHIP_LIMIT) {
+        const chosen = d.values.filter(v => has(d.dimension, v.label)).map(chip).join('');
+        const options = d.values.filter(v => !has(d.dimension, v.label)).map(v => `<option value="${esc(v.label)}">${esc(v.label)} (${esc(spanOf(v))})</option>`).join('');
+        cells = `${chosen}<select class="facet-add" data-dim="${esc(d.dimension)}" aria-label="Add a ${esc(d.title.toLowerCase())}"><option value="">Add a ${esc(d.title.toLowerCase())}…</option>${options}</select>`;
+      } else cells = d.values.map(chip).join('');
+      return `<div class="builder-row"><span class="builder-label" title="${esc(DIM_TIPS[d.dimension] || '')}">${esc(d.title)}</span><div class="chips">${cells}</div></div>`;
+    }).join('');
+  }
+  function renderScope(scope) {
+    const el = $('scope');
+    if (!scope) { el.innerHTML = ''; return; }
+    const titleOf = dim => (dims && dims.find(d => d.dimension === dim) || { title: dim }).title;
+    const chips = scope.facets.map(f => `<span class="chip" aria-pressed="true" title="${esc(titleOf(f.dimension))}">${esc(f.label)}</span>`).join(' ');
+    const leagues = scope.leagues.map(l => l === 'aba' ? 'ABA' : 'NBA/BAA').join(' and ');
+    const head = scope.seasons ? `<strong>Showing ${scope.seasons} season${scope.seasons === 1 ? '' : 's'}</strong>, ${scope.first_season === scope.last_season ? labelOf(scope.first_season) : `${labelOf(scope.first_season)} to ${labelOf(scope.last_season)}`} (${esc(leagues)}), for` : '<strong>No season matches all of these picks</strong>:';
+    const st = scope.stats;
+    const summary = st ? `<p class="small" style="margin:.4rem 0 0">Mean season-end Elo ${st.mean_elo == null ? '–' : num(st.mean_elo, 0)} · Elo spread ${st.elo_spread == null ? '–' : num(st.elo_spread, 0)} · best team-season ${esc(st.best.code)} ${num(st.best.value, 0)} (${labelOf(st.best.season)}) · weakest ${esc(st.weakest.code)} ${num(st.weakest.value, 0)} (${labelOf(st.weakest.season)}) · ${st.titles} title${st.titles === 1 ? '' : 's'}, ${st.distinct_champions} champion${st.distinct_champions === 1 ? '' : 's'}${st.title_hhi == null ? '' : `, title HHI ${num(st.title_hhi, 2)}`}</p>` : '';
+    const notes = scope.notes.length ? `<details class="notes" style="margin-top:.4rem"><summary class="small">What changed in these periods</summary>${scope.notes.map(n => `<p class="small" style="margin:.4rem 0 .1rem"><strong>${esc(n.name)}</strong> <span class="muted">${esc(n.summary)}</span></p><ul class="small">${n.changes.map(c => `<li><span class="muted">${labelOf(c.season)}</span> ${esc(c.text)}</li>`).join('')}</ul>`).join('')}</details>` : '';
+    el.innerHTML = `<div class="banner${scope.seasons ? '' : ' empty'}"><div class="chips"><span>${head}</span> ${chips}</div>${summary}${notes}</div>`;
+  }
+  async function load() {
+    const mine = ++loads; // only the latest request may draw the page
+    const pretty = p => p.toString().replace(/%3A/g, ':').replace(/\+/g, '%20');
+    const query = pretty(facetParams());
+    // The address keeps the other parameters (the group panel's) and follows the picks.
+    const address = new URLSearchParams(location.search); address.delete('facet');
+    for (const f of facetParams().getAll('facet')) address.append('facet', f);
+    const shown = pretty(address);
+    history.replaceState(null, '', `${location.pathname}${shown ? `?${shown}` : ''}${location.hash}`);
+    document.dispatchEvent(new CustomEvent('records:scope', { detail: query }));
+    setStatus(status, 'Loading…');
+    try { const r = await getJSON(`/api/records${query ? `?${query}` : ''}`); if (mine !== loads) return; render(r); setStatus(status, ''); }
+    catch (e) { if (mine === loads) setStatus(status, e.message, true); }
+  }
+  $('facetRows').addEventListener('click', e => { const c = e.target.closest('button.chip'); if (!c) return; if (toggle(c.dataset.dim, c.dataset.label)) { renderFacetRows(); load(); } });
+  $('facetRows').addEventListener('change', e => { const sel = e.target.closest('select.facet-add'); if (!sel || !sel.value) return; if (toggle(sel.dataset.dim, sel.value)) { renderFacetRows(); load(); } else sel.value = ''; });
+  $('fClear').addEventListener('click', () => { picked.clear(); setStatus($('fStatus'), ''); renderFacetRows(); load(); });
+  $('fCopy').addEventListener('click', async () => {
+    const url = location.href;
+    try { await navigator.clipboard.writeText(url); setStatus($('fStatus'), 'Link copied.'); } catch { setStatus($('fStatus'), url); }
+  });
+  // A link with facets opens that view; a facet the data does not offer, or one past the
+  // limit, is dropped with a note.
+  const linked = [];
+  for (const f of new URLSearchParams(location.search).getAll('facet')) { const i = f.indexOf(':'); if (i > 0) linked.push([f.slice(0, i).trim().toLowerCase(), f.slice(i + 1).trim()]); }
+  try {
+    const listing = await getJSON('/api/records/facets');
+    dims = listing.dimensions; maxFacets = Number(listing.max_facets) || maxFacets;
+    const offered = (dim, label) => dims.some(d => d.dimension === dim && d.values.some(v => v.label === label));
+    const dropped = [];
+    for (const [dim, label] of linked) { if (has(dim, label)) continue; if (!offered(dim, label) || !toggle(dim, label)) dropped.push(label); }
+    setStatus($('fStatus'), dropped.length ? `Dropped from the link: ${dropped.join(', ')}` : '', dropped.length > 0);
+    renderFacetRows();
+  } catch (e) { $('facetRows').innerHTML = `<span class="bad">${esc(e.message)}</span>`; }
+  load();
 })();
