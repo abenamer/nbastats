@@ -23,15 +23,15 @@ These are project-specific technical terms. They are not a reproduction of the A
 | Current season | The season the daily sync targets: ends next year from September to December, ends this year from January to August. |
 | Decade | Ten seasons grouped by the start year of the season: 1959-60 belongs to the 1950s. |
 | Elo | A rating that gives game probabilities from the rating difference. |
-| Elo continuation | The computation of ratings by the application for seasons after the imported archive ends. |
-| Elo source | The origin of a game's ratings: `imported` from an archive file or `computed` by the application. |
+| Elo continuation | The computation of every rating by the application, season after season from the first season in the store. |
+| Elo source | The origin of a game's ratings. Since compute first every game is `computed`; `imported` marks rows from an older version that the application recomputes at start. |
 | Engine A | The alpha lottery simulator (`domain::simulation::alpha`). |
 | Engine B | The playoff bracket simulator (`domain::playoffs::bracket`). |
 | Engine C | The full-season simulator with play-in (`domain::playoffs::season`). |
 | Era | Consecutive seasons of one league with the same number of teams inside one rule period. |
 | Fetch window | The dates a results sync asks the source for: the whole season on the first sync, then the days from the last played game to today. |
 | Franchise | The organisation, followed through relocations and renamings. Identified by `FranchiseId` and a key such as `GSW`. |
-| Game log | The imported list of games with Elo before and after each game. |
+| Game log | The stored list of games with the application's Elo before and after each game, and the archive's reference ratings for archive games. |
 | Information cutoff | The last date whose games a forecast may use. |
 | Job | A stored simulation request with parameters, seed, versions, progress and result. |
 | League size | The number of teams of one league (NBA/BAA or ABA) in one season. |
@@ -39,7 +39,9 @@ These are project-specific technical terms. They are not a reproduction of the A
 | Play-in | The games that decide seeds 7 and 8 (2020-21 and later), or the 8 seed (2019-20). |
 | Port | A trait in `application::ports` that the application requires from the outside world. |
 | Projection | A placeholder season: the previous season's matchups one year later, no scores, reverted ratings. |
-| Results source | The `ResultsSource` port: game results and schedule of a season without Elo data. The adapter is `BalldontlieSource`. |
+| Reference rating | The archive's rating before or after an archive game, kept beside the application's rating for validation. |
+| Result source | Where a game's result came from: `archive`, `results` (a results source or upload) or `projection`. Archive games always stand. |
+| Results source | The `ResultsSource` port: game results and schedule of a season from the BALLDONTLIE API. The adapter is `BalldontlieSource`. |
 | Road to the title | A champion's mean opponent rating before each game, shown for the regular season and for the playoffs (play-in included), and combined as the mean over every game, so each phase weighs by its games. Each era shows its champion with the highest road (hardest) and the one with the lowest (easiest). |
 | Scenario | A named, completed job that you can reopen and compare. |
 | Rule period | A group of eras that starts with a rule change: for the NBA the BAA's founding (pre shot clock), the 24-second shot clock (1954-55), the 3-point line (1979-80), zone defense (2001-02) and the hand-check ban (2004-05); the ABA is one period. |

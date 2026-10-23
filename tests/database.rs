@@ -442,7 +442,7 @@ async fn curated_championships_backfill_only_missing_seasons(pool: PgPool) {
 async fn computed_elo_continues_from_the_previous_season(pool: PgPool) {
     use nba_elo_simulator::application::continuation;
     use nba_elo_simulator::domain::elo;
-    use nba_elo_simulator::domain::models::EloSource;
+    use nba_elo_simulator::domain::models::{EloSource, ResultSource};
     let (store, teams) = common::setup(pool).await;
     imports::import_bytes(
         &store,
@@ -453,18 +453,22 @@ async fn computed_elo_continues_from_the_previous_season(pool: PgPool) {
     .await
     .unwrap();
     let s2017 = SeasonYear::of(2017);
-    // Imported games are never changed: a game inside the archive's date range is refused,
-    // and a projection of an imported season is refused.
-    let err =
-        continuation::import_results(&store, S2016, b"date,home,away\n2016-01-01,GSW,CLE\n", None)
-            .await;
+    // Archive results stand: a results file whose only game is already in the archive adds
+    // nothing, and a projection of a season with archive games is refused.
+    let err = continuation::import_results(
+        &store,
+        S2016,
+        b"date,home,away,home_score,away_score,neutral,playoff\n2016-06-19,GSW,CLE,89,93,0,1\n",
+        None,
+    )
+    .await;
     assert!(matches!(
         err,
-        Err(continuation::ContinuationUseCaseError::InsideImportedRange { .. })
+        Err(continuation::ContinuationUseCaseError::NoGames(s)) if s == S2016
     ));
     assert!(matches!(
         continuation::project_season(&store, S2016).await,
-        Err(continuation::ContinuationUseCaseError::SeasonHasImportedElo(_))
+        Err(continuation::ContinuationUseCaseError::SeasonHasArchiveResults(_))
     ));
     // Completing an imported season: archive games are kept, later games chain from them.
     let imported_2016 = store.season_games(S2016).await.unwrap();
@@ -502,10 +506,11 @@ async fn computed_elo_continues_from_the_previous_season(pool: PgPool) {
     assert_eq!(
         games
             .iter()
-            .filter(|g| g.elo_source == EloSource::Imported)
+            .filter(|g| g.result_source == ResultSource::Archive)
             .count(),
         before
     );
+    assert!(games.iter().all(|g| g.elo_source == EloSource::Computed));
     let added = games.last().unwrap();
     assert_eq!(added.elo_source, EloSource::Computed);
     assert!((added.home_elo_pre - gsw_after_archive).abs() < 1e-9);
@@ -521,7 +526,11 @@ async fn computed_elo_continues_from_the_previous_season(pool: PgPool) {
         last_gsw.home_score
     );
     // Remove the computed tail again so the rest of the test sees the archive season as before.
-    store.delete_computed_games(S2016).await.unwrap();
+    store
+        .replace_season_games(S2016, outcome.import_id, &[], &[])
+        .await
+        .unwrap();
+    assert_eq!(store.season_games(S2016).await.unwrap().len(), before);
     // Projection: synthetic schedule, reverted ratings, no results.
     let projected = continuation::project_season(&store, s2017).await.unwrap();
     assert_eq!(projected.games_inserted, 1230);
@@ -676,7 +685,7 @@ async fn computed_elo_continues_from_the_previous_season(pool: PgPool) {
     assert!(store.team_seasons(s2017).await.unwrap().is_empty());
     assert!(matches!(
         continuation::remove_season(&store, S2016).await,
-        Err(continuation::ContinuationUseCaseError::SeasonHasImportedElo(_))
+        Err(continuation::ContinuationUseCaseError::SeasonHasArchiveResults(_))
     ));
 }
 

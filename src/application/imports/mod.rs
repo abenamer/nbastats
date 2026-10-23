@@ -12,7 +12,7 @@ use tracing::{info, warn};
 
 use crate::adapters::csv::{self, ParseError, ParsedGame};
 use crate::domain::ids::SeasonYear;
-use crate::domain::models::{EloSource, GameType};
+use crate::domain::models::{EloSource, GameType, ResultSource};
 
 use super::ports::{
     DatasetSource, DownloadError, GameStore, ImportLog, ImportStart, ImportStats, NewGame,
@@ -165,6 +165,23 @@ pub async fn import_bytes<S: GameStore + ImportLog>(
         .await?;
     match store_games(store, import_id, &report.games).await {
         Ok(mut outcome) => {
+            // Compute first: the application's ratings replace the archive's for every season,
+            // because an archive change can move every later season's chain.
+            match super::recompute::recompute_all(store).await {
+                Ok(r) => outcome.notes.push(format!(
+                    "ratings computed by the application for {} seasons ({} games, {} rows changed)",
+                    r.seasons, r.games, r.updated
+                )),
+                Err(e) => {
+                    // The games are stored and the ratings unchanged (one transaction):
+                    // `recompute` or the next start computes them.
+                    let e = StoreError::InvalidData(format!(
+                        "games stored, but the recompute failed and no rating changed: {e}; run `recompute` or restart the application"
+                    ));
+                    store.fail_import(import_id, &e.to_string()).await?;
+                    return Err(e.into());
+                }
+            }
             outcome.import_id = import_id;
             outcome.format = report.format.clone();
             outcome.rows_read = report.rows_read;
@@ -229,6 +246,13 @@ async fn store_games<S: GameStore>(
                     away_elo_post: g.away_elo_post,
                     home_win_prob: g.home_win_prob,
                     elo_source: EloSource::Imported,
+                    result_source: ResultSource::Archive,
+                    reference: Some([
+                        g.home_elo_pre,
+                        g.away_elo_pre,
+                        g.home_elo_post,
+                        g.away_elo_post,
+                    ]),
                 });
             }
             _ => {

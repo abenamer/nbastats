@@ -838,11 +838,11 @@ pub async fn coverage(State(app): State<AppState>) -> ApiResult<Value> {
             json!({
                 "season": s.season, "label": s.label, "teams": s.team_count, "games": s.game_count,
                 "playoff_games": s.playoff_game_count, "play_in_games": s.play_in_game_count, "cup_final_games": s.cup_final_game_count,
-                "computed_games": s.computed_game_count, "scheduled_games": s.scheduled_game_count,
+                "computed_games": s.computed_game_count, "archive_games": s.archive_game_count, "scheduled_games": s.scheduled_game_count,
                 "regular_season_end": s.regular_season_end, "playoffs_start": s.playoffs_start, "playoffs_end": s.playoffs_end,
                 "complete": s.complete, "champion": c.map(|c| c.franchise_key.clone()), "champion_source": c.map(|c| c.source.clone()),
                 "bracket_supported": s.season >= SeasonYear::FIRST_MODERN,
-                "removable": s.game_count == 0 || s.computed_game_count == s.game_count,
+                "removable": s.archive_game_count == 0,
             })
         })
         .collect();

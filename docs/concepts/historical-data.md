@@ -56,4 +56,4 @@ Elo ratings flow through every game. The pre-playoff rating is the rating after 
 * Each game has a unique key (date, home team, away team, sequence). Repeated imports update changed rows and skip unchanged rows.
 * The application stores the file checksum, source, row counts and timestamps for each import.
 * Rows with unknown team codes or bad values are counted and reported, never silently dropped.
-* Each game records its Elo source: `imported` from an archive file, or `computed` by the application. An archive import replaces computed games. A computed game never replaces an imported game.
+* Each game records its result source: `archive`, `results` (a results source or upload) or `projection`. A results-source or projection row never replaces an archive row. The archive's ratings are stored as reference values (`ref_` columns); the application's own ratings, computed from the first season (see [Elo continuation](elo-continuation.md)), are the ratings every page uses.

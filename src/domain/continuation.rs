@@ -1,16 +1,41 @@
-//! Elo continuation: compute ratings for games the dataset does not cover.
+//! Elo continuation: the application's own ratings for every game.
 //!
-//! Starting from each team's last known rating, apply FiveThirtyEight's between-season
-//! reversion and then its game update, game by game in date order. Games without a result
-//! (a schedule) carry the current rating forward unchanged. The output is marked
-//! `EloSource::Computed` so it is never confused with imported ratings.
+//! Starting from each team's rating at the end of the previous season, apply
+//! FiveThirtyEight's between-season reversion and then its game update, game by game in
+//! date order. Games without a result (a schedule) carry the current rating forward
+//! unchanged. A franchise that has no previous season starts at 1300, as in the archive.
 
 use std::collections::HashMap;
 
 use chrono::NaiveDate;
 
 use crate::domain::elo;
-use crate::domain::ids::TeamId;
+use crate::domain::ids::{FranchiseId, TeamId};
+
+/// The rating of a franchise in its first season (the archive's rule for expansion teams and
+/// for the ABA's first season).
+pub const NEW_FRANCHISE_ELO: f64 = 1300.0;
+
+/// Start ratings of a season. Each team takes the reverted end rating of its franchise from
+/// the previous season (so a relocated or renamed team continues its lineage). A franchise
+/// without one takes `seed` when the caller has a reference rating for the team (an archive
+/// season imported without its predecessor), else [`NEW_FRANCHISE_ELO`].
+pub fn season_start(
+    teams: &[(TeamId, FranchiseId)],
+    previous_end: &HashMap<FranchiseId, f64>,
+    seed: &HashMap<TeamId, f64>,
+) -> HashMap<TeamId, f64> {
+    teams
+        .iter()
+        .map(|&(team, franchise)| {
+            let start = match previous_end.get(&franchise) {
+                Some(&end) => elo::season_reversion(end),
+                None => seed.get(&team).copied().unwrap_or(NEW_FRANCHISE_ELO),
+            };
+            (team, start)
+        })
+        .collect()
+}
 
 /// A game result (or scheduled game) to rate.
 #[derive(Debug, Clone, PartialEq)]
@@ -98,6 +123,23 @@ pub fn rate_games(
 mod tests {
     use super::*;
     use approx::assert_abs_diff_eq;
+
+    #[test]
+    fn season_start_follows_the_franchise_then_the_seed_then_1300() {
+        let (t1, t2, t3) = (TeamId::new(1), TeamId::new(2), TeamId::new(3));
+        let (f1, f2, f3) = (
+            FranchiseId::new(10),
+            FranchiseId::new(20),
+            FranchiseId::new(30),
+        );
+        // t1 relocated: a new team id, the same franchise as last season's end rating.
+        let previous_end = HashMap::from([(f1, 1705.0)]);
+        let seed = HashMap::from([(t2, 1432.5)]);
+        let start = season_start(&[(t1, f1), (t2, f2), (t3, f3)], &previous_end, &seed);
+        assert_abs_diff_eq!(start[&t1], 0.75 * 1705.0 + 0.25 * 1505.0, epsilon = 1e-9);
+        assert_abs_diff_eq!(start[&t2], 1432.5, epsilon = 1e-9);
+        assert_abs_diff_eq!(start[&t3], NEW_FRANCHISE_ELO, epsilon = 1e-9);
+    }
 
     fn d(day: u32) -> NaiveDate {
         NaiveDate::from_ymd_opt(2025, 10, day).unwrap()

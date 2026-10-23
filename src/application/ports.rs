@@ -16,7 +16,8 @@ use uuid::Uuid;
 use crate::domain::ids::{FranchiseId, SeasonYear, TeamId};
 use crate::domain::models::{
     ChampionshipView, DataImport, EloSource, Franchise, Game, GameType, JobEvent, JobKind,
-    JobStatus, PlayoffResult, Season, SimulationJob, Team, TeamSeason, TeamSeasonView,
+    JobStatus, PlayoffResult, ResultSource, Season, SimulationJob, Team, TeamSeason,
+    TeamSeasonView,
 };
 use crate::domain::records::{ChampionRoad, GameSwing, Matchup, MatchupOrder, TeamSeasonStat};
 
@@ -104,6 +105,20 @@ pub struct NewGame {
     pub away_elo_post: f64,
     pub home_win_prob: Option<f64>,
     pub elo_source: EloSource,
+    pub result_source: ResultSource,
+    /// The archive's ratings (pre home, pre away, post home, post away) for an archive row.
+    pub reference: Option<[f64; 4]>,
+}
+
+/// The application's ratings for one stored game, written back after a recompute.
+#[derive(Debug, Clone, PartialEq)]
+pub struct GameRating {
+    pub id: i64,
+    pub home_elo_pre: f64,
+    pub away_elo_pre: f64,
+    pub home_elo_post: f64,
+    pub away_elo_post: f64,
+    pub home_win_prob: Option<f64>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -122,6 +137,7 @@ pub struct SeasonSummary {
     pub play_in_game_count: i32,
     pub cup_final_game_count: i32,
     pub computed_game_count: i32,
+    pub archive_game_count: i32,
     pub scheduled_game_count: i32,
     pub regular_season_end: Option<NaiveDate>,
     pub playoffs_start: Option<NaiveDate>,
@@ -163,10 +179,25 @@ pub trait GameStore: GameLog {
     async fn sync_alignments(&self) -> StoreResult<()>;
     async fn ensure_season(&self, season: SeasonYear) -> StoreResult<()>;
     /// Upsert all rows in one transaction. Unchanged rows are neither inserted nor updated.
-    /// A computed row never overwrites an imported row for the same game.
+    /// A row from a results source or a projection never changes the result, type or
+    /// reference ratings of an archive row; the application's ratings always update.
     async fn upsert_games(&self, import_id: i64, rows: &[NewGame]) -> StoreResult<UpsertCounts>;
-    /// Delete the games of a season that carry computed ratings (before recomputing them).
-    async fn delete_computed_games(&self, season: SeasonYear) -> StoreResult<u64>;
+    /// Write the application's ratings for stored games (by id) and mark them `computed`.
+    async fn update_ratings(&self, ratings: &[GameRating]) -> StoreResult<u64>;
+    /// Replace the games of a season that did not come from the archive with `rows` and
+    /// write `ratings` for the season's archive games (by id), in one transaction, so a
+    /// failure leaves the season as it was. Archive rows are never deleted; one counts as
+    /// updated when its ratings changed, else as unchanged.
+    async fn replace_season_games(
+        &self,
+        season: SeasonYear,
+        import_id: i64,
+        rows: &[NewGame],
+        ratings: &[GameRating],
+    ) -> StoreResult<UpsertCounts>;
+    /// Whether any game still carries ratings copied from the archive (`imported`), which
+    /// the application replaces with its own at start.
+    async fn has_imported_ratings(&self) -> StoreResult<bool>;
     /// Delete a whole season: its games, team seasons, championship, forecasts and the
     /// season row, in one transaction. The caller must have checked that no imported game
     /// remains. Returns the number of games deleted.

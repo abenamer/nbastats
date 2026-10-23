@@ -61,9 +61,17 @@ text_enum! {
 }
 
 text_enum! {
-    /// Where a game's Elo ratings come from: the source dataset, or the application's own
-    /// calculation with the FiveThirtyEight formulas from game results.
+    /// Where a game's Elo ratings come from. The application rates every game itself
+    /// (`computed`); `imported` marks rows an older version stored with the archive's ratings,
+    /// which the application recomputes at start.
     EloSource { Imported => "imported", Computed => "computed" }
+}
+
+text_enum! {
+    /// Where a game's result (and schedule entry) came from: the FiveThirtyEight archive, a
+    /// results source or upload, or a preseason projection. Archive rows are never replaced
+    /// or removed by the other two.
+    ResultSource { Archive => "archive", Results => "results", Projection => "projection" }
 }
 
 impl Conference {
@@ -278,6 +286,8 @@ pub struct Season {
     pub cup_final_game_count: i32,
     /// Games whose Elo the application computed itself (seasons beyond the dataset).
     pub computed_game_count: i32,
+    /// Games whose result came from the archive.
+    pub archive_game_count: i32,
     /// Games without a result (future schedule or projection).
     pub scheduled_game_count: i32,
     pub regular_season_end: Option<NaiveDate>,
@@ -304,6 +314,13 @@ pub struct Game {
     pub away_elo_post: f64,
     pub home_win_prob: Option<f64>,
     pub elo_source: EloSource,
+    pub result_source: ResultSource,
+    /// The archive's ratings for this game, when it came from the archive: kept beside the
+    /// application's own ratings for validation.
+    pub ref_home_elo_pre: Option<f64>,
+    pub ref_away_elo_pre: Option<f64>,
+    pub ref_home_elo_post: Option<f64>,
+    pub ref_away_elo_post: Option<f64>,
 }
 
 /// Outcome of a played game from the home team's perspective.
@@ -515,6 +532,11 @@ mod tests {
             away_elo_post: 1759.0,
             home_win_prob: Some(0.66),
             elo_source: EloSource::Imported,
+            result_source: ResultSource::Archive,
+            ref_home_elo_pre: None,
+            ref_away_elo_pre: None,
+            ref_home_elo_post: None,
+            ref_away_elo_post: None,
         };
         assert_eq!(g.outcome(), Some(Outcome::AwayWin { margin: 4 }));
         assert_eq!(g.elo_of(TeamId::new(2)), (1749.8, 1759.0));

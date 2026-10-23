@@ -16,7 +16,7 @@ use nba_elo_simulator::application::jobs;
 use nba_elo_simulator::application::ports::{GameLog, GameStore, ImportLog, JobStore};
 use nba_elo_simulator::application::scheduler::{self, SyncSchedule};
 use nba_elo_simulator::application::state::App;
-use nba_elo_simulator::application::{continuation, imports};
+use nba_elo_simulator::application::{continuation, imports, recompute};
 use nba_elo_simulator::config::{Config, APP_VERSION};
 use nba_elo_simulator::domain::ids::SeasonYear;
 
@@ -45,6 +45,8 @@ enum Command {
         #[arg(long)]
         force: bool,
     },
+    /// Rate every stored game again from the first season (compute first)
+    Recompute,
     /// Fetch a season's results from BALLDONTLIE and compute its Elo (needs BALLDONTLIE_API_KEY)
     SyncResults {
         /// Season end year, for example 2026 for 2025-26
@@ -98,6 +100,14 @@ async fn main() -> anyhow::Result<()> {
     store.sync_reference().await?;
     imports::derived::backfill_curated_championships(&store).await?;
     store.sync_alignments().await?;
+    if store.has_imported_ratings().await? {
+        info!("games still carry the archive's ratings; computing the application's own ratings for every season");
+        // The store is unchanged when this fails (one transaction); the archive's ratings
+        // serve until the next start or `recompute` succeeds.
+        if let Err(e) = recompute::recompute_all(&store).await {
+            error!(error = %e, "recompute failed; the archive's ratings stay in use until the next start or `recompute` succeeds");
+        }
+    }
     info!("migrations applied and reference data synced");
     let source = HttpDatasetSource::new()?;
     // Composition root: the adapter is built here from plain configuration values.
@@ -126,6 +136,11 @@ async fn main() -> anyhow::Result<()> {
                 force,
             )
             .await?;
+            println!("{}", serde_json::to_string_pretty(&outcome)?);
+            Ok(())
+        }
+        Command::Recompute => {
+            let outcome = recompute::recompute_all(&store).await?;
             println!("{}", serde_json::to_string_pretty(&outcome)?);
             Ok(())
         }
