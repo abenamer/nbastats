@@ -17,7 +17,7 @@ This project follows the [REAS engineering standard](https://github.com/abenamer
 
 * [Application overview](concepts/application.md) - What the application does and how its parts fit together.
 * [Elo rating model](concepts/elo-model.md) - The game and series probability formulas and their parameters.
-* [Alpha lottery engine](concepts/alpha-engine.md) - Engine A: the alpha-weighted championship lottery and its exact check.
+* [Alpha lottery engine](concepts/alpha-engine.md) - Engine A: what the alpha lottery answers, what its inputs mean, how to read its results, and its exact check.
 * [Playoff simulator](concepts/playoff-engine.md) - Engine B: bracket reconstruction, exact probabilities and Monte Carlo.
 * [Season forecast engine](concepts/season-engine.md) - Engine C: full-season simulation with play-in and playoffs.
 * [Backtesting method](concepts/backtesting.md) - How forecasts are scored and how parameters are tuned without leakage.
@@ -33,6 +33,7 @@ This project follows the [REAS engineering standard](https://github.com/abenamer
 # Runbooks
 
 * [Start the application](runbooks/start.md) - First start with Docker Compose.
+* [Run an alpha scenario](runbooks/alpha-scenario.md) - Ask the Alpha Simulator how often a title run happens by chance, save and compare scenarios.
 * [Upgrade the application](runbooks/upgrade.md) - Rebuild the image and keep all data.
 * [Back up and restore](runbooks/backup-restore.md) - Create, list, restore and verify database backups.
 * [Verify persistence](runbooks/verify-persistence.md) - Run the automated persistence test.

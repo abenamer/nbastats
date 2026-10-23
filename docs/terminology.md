@@ -38,8 +38,10 @@ These are project-specific technical terms. They are not a reproduction of the A
 | Facet | One label along a dimension, written `dimension:label`, that keeps the seasons carrying it. Within one dimension facets add up, across dimensions they intersect. |
 | Fetch window | The dates a results sync asks the source for: the whole season on the first sync, then the days from the last played game to today. |
 | Franchise | The organisation, followed through relocations and renamings. Identified by `FranchiseId` and a key such as `GSW`. |
+| Franchise of interest | On the Alpha Simulator, the franchise whose own probability of K or more titles is reported; `target_index` in the parameters. |
 | Game log | The stored list of games with the application's Elo before and after each game, and the archive's reference ratings for archive games. |
 | Game report | The wire-service recap of a played game (the Associated Press recap that ESPN hosts), linked from the game's score when the lookup finds one; stored by date and team codes. |
+| Half-life | In the Alpha Simulator's season-dependent mode, the number of seasons for an alpha to move half of the way to 1. |
 | Information cutoff | The last date whose games a forecast may use. |
 | Job | A stored simulation request with parameters, seed, versions, progress and result. |
 | Language model | A chat model with tool calling behind the `LanguageModel` port; the `OpenRouterModel` adapter calls it through OpenRouter's OpenAI-compatible API. |
@@ -59,9 +61,11 @@ These are project-specific technical terms. They are not a reproduction of the A
 | Rule period | A group of eras that starts with a rule change: for the NBA the BAA's founding (pre shot clock), the 24-second shot clock (1954-55), the 3-point line (1979-80), zone defense (2001-02) and the hand-check ban (2004-05); the ABA is one period. |
 | Scenario | A named, completed job that you can reopen and compare. |
 | Season | An NBA season named by its end year. `SeasonYear(2004)` is 2003-04. |
+| Season-dependent alphas | An alpha table with one row per season (`schedule` in the parameters), so a franchise's strength changes over the simulated seasons; the page builds it from a half-life. |
 | Seed | Playoff position 1 to 8 inside a conference. |
 | Series | A best-of-five or best-of-seven playoff matchup. A `SeriesState` is either in progress or decided. |
 | Store | The `PostgresStore` adapter, which implements every store port. |
+| Threshold (K) | The title count that counts as a dynasty in the Alpha Simulator: the results report how often a franchise wins K or more titles. |
 | Team | A team code and era, such as SEA or OKC. Identified by `TeamId`. |
 | Themed era | A curated span of NBA/BAA seasons named for how the game was played or followed (the Reddit NBA era, the three-point dominance era); a season belongs to every theme active in it. |
 | Title HHI | The Herfindahl-Hirschman index of a group's titles: the sum of each champion's squared share. 1.0 when one franchise won every title; lower when the titles spread out. |

@@ -60,7 +60,7 @@ sources:
 
 | Method and path | Function |
 |-----------------|----------|
-| `POST /api/jobs/alpha` | Queue an Engine A run. Body: `AlphaParams` plus optional `name`. |
+| `POST /api/jobs/alpha` | Queue an Engine A run. Body: `AlphaParams` (`franchises`, `alphas`, `seasons`, `iterations`, `threshold`, `seed`, `target_index` defaulting to 0 for the franchise of interest, and an optional `schedule`, a seasons × franchises alpha table that replaces `alphas` season by season) plus optional `name`. |
 | `POST /api/jobs/playoff` | Queue an Engine B run. Body: `PlayoffJob` plus optional `name`. |
 | `POST /api/jobs/season` | Queue an Engine C run. Body: `SeasonParams` plus optional `name`. |
 | `POST /api/jobs/backtest` | Queue a backtest. Body: `BacktestParams` plus optional `name`. |
@@ -77,7 +77,7 @@ sources:
 
     curl -s -X POST http://localhost:3000/api/jobs/alpha \
       -H 'Content-Type: application/json' \
-      -d '{"name":"equal","franchises":["A","B","C"],"alphas":[1,1,1],"seasons":10,"iterations":100000,"threshold":3,"seed":1}'
+      -d '{"name":"equal","franchises":["A","B","C"],"alphas":[1,1,1],"seasons":10,"iterations":100000,"threshold":3,"seed":1,"target_index":0}'
 
 Poll `GET /api/jobs/{id}` until `status` is `completed`.
 
