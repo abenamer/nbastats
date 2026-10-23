@@ -4,6 +4,8 @@
   const league = l => l === 'aba' ? 'ABA' : 'NBA';
   const team = e => `${e.code} · ${e.name}`;
   const rec = e => `${e.wins}-${e.losses}`;
+  // The winner of a game and its margin, e.g. "NYK by 10"; a tie (none in the log) reads "tie".
+  const winner = (home, hs, away, as_) => hs === as_ ? 'tie' : hs > as_ ? `${home} by ${hs - as_}` : `${away} by ${as_ - hs}`;
   // `endLabel` adds the rating after the team's last game (for a champion, the clinching game).
   const entryCols = (valueLabel, withDate = true, endLabel = null) => [
     { label: 'Season', value: e => labelOf(e.season), left: true }, { label: 'Team', value: team, left: true }, { label: 'Lg', value: e => league(e.league), left: true },
@@ -55,14 +57,16 @@
       { label: 'Home', value: m => m.home_code, left: true }, { label: 'Elo', value: m => num(m.home_elo_pre, 0) },
       { label: 'Away', value: m => m.away_code, left: true }, { label: 'Elo', value: m => num(m.away_elo_pre, 0) },
       { label: 'Combined', value: m => num(m.home_elo_pre + m.away_elo_pre, 0) },
-      { label: 'Score', value: m => `${m.home_score}-${m.away_score}${m.playoff ? ' (playoffs)' : ''}`, left: true }], rows); };
+      { label: 'Score', value: m => `${m.home_score}-${m.away_score}${m.playoff ? ' (playoffs)' : ''}`, left: true },
+      { label: 'Winner', value: m => winner(m.home_code, m.home_score, m.away_code, m.away_score), left: true, cls: () => 'good' }], rows); };
     matchups('greatest', r.greatest_matchups);
     const clankers = (id, rows) => { document.getElementById(id).innerHTML = table([
       { label: 'Era', value: e => e.first_season === e.last_season ? labelOf(e.first_season) : `${labelOf(e.first_season)} to ${labelOf(e.last_season)}`, left: true }, { label: 'Teams', value: 'teams' },
       { label: 'Date', value: e => e.game.game_date, left: true }, { label: 'Home', value: e => e.game.home_code, left: true }, { label: 'Elo', value: e => num(e.game.home_elo_pre, 0) },
       { label: 'Away', value: e => e.game.away_code, left: true }, { label: 'Elo', value: e => num(e.game.away_elo_pre, 0) },
       { label: 'Combined', value: e => num(e.game.home_elo_pre + e.game.away_elo_pre, 0) },
-      { label: 'Score', value: e => `${e.game.home_score}-${e.game.away_score}${e.game.playoff ? ' (playoffs)' : ''}`, left: true }], rows); };
+      { label: 'Score', value: e => `${e.game.home_score}-${e.game.away_score}${e.game.playoff ? ' (playoffs)' : ''}`, left: true },
+      { label: 'Winner', value: e => winner(e.game.home_code, e.game.home_score, e.game.away_code, e.game.away_score), left: true, cls: () => 'good' }], rows); };
     clankers('clankersNba', r.clankers_by_era.filter(e => e.league === 'nba')); clankers('clankersAba', r.clankers_by_era.filter(e => e.league === 'aba'));
     const champ = c => `${labelOf(c.season)} <span title="${esc(c.name)} · regular-season opponents ${num(c.regular_opponent_elo, 0)}, playoff opponents ${num(c.playoff_opponent_elo, 0)}, toughest ${esc(c.toughest_opponent_code)} (${num(c.toughest_opponent_elo, 0)})">${esc(c.code)}</span>`;
     document.getElementById('roadsByEra').innerHTML = table([
