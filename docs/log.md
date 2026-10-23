@@ -1,6 +1,7 @@
 # Bundle update log
 
 ## 2026-10-23
+* **Update**: Eras are grouped into named rule periods; the term Rule period is defined and Era is restated.
 * **Update**: Champion lists on the Records page show the rating at the clinch next to the peak, the East-against-West table names the title's conference, the game tables name each winner, and the panels widen so the tables stop scrolling sideways; noted in the [Application overview](/concepts/application.md).
 * **Update**: Roads to the title are shown by era. [Elo continuation](/concepts/elo-continuation.md) gains a Validation section: the application's Elo code re-rates the archive to its own numbers, checked by an integration test.
 * **Update**: CI actions moved to Node 24 releases; the audit job runs `cargo audit` directly. Noted in the changelog.

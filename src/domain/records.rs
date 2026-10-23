@@ -15,8 +15,78 @@ use crate::domain::reference;
 /// Share of a season's median game count a team must reach before its season counts as
 /// full. Schedules ran from 48 to 82 games, so the floor follows the season, not a fixed number.
 pub const FULL_SEASON_SHARE: f64 = 0.8;
-/// The NBA adopted the 3-point line in 1979-80. The ABA had it from its first season.
-pub const THREE_POINT_SEASON: SeasonYear = SeasonYear::of(1980);
+/// A rule period groups the eras of the records page. A period starts with a rule change;
+/// an era also starts there.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct RulePeriod {
+    pub league: League,
+    pub first_season: SeasonYear,
+    pub name: &'static str,
+    pub rule: &'static str,
+}
+
+/// The rule periods, in season order within each league. The NBA's 3-point line came in
+/// 1979-80; the ABA had it, and a 30-second clock, from its first season.
+pub const RULE_PERIODS: &[RulePeriod] = &[
+    RulePeriod {
+        league: League::Nba,
+        first_season: SeasonYear::of(1947),
+        name: "Pre shot clock",
+        rule: "The BAA's founding; no shot clock",
+    },
+    RulePeriod {
+        league: League::Nba,
+        first_season: SeasonYear::of(1955),
+        name: "Shot clock",
+        rule: "The 24-second shot clock",
+    },
+    RulePeriod {
+        league: League::Nba,
+        first_season: SeasonYear::of(1980),
+        name: "Three-point line",
+        rule: "The 3-point line",
+    },
+    RulePeriod {
+        league: League::Nba,
+        first_season: SeasonYear::of(2002),
+        name: "Zone defense",
+        rule: "Illegal-defense rules abolished; zone defense allowed",
+    },
+    RulePeriod {
+        league: League::Nba,
+        first_season: SeasonYear::of(2005),
+        name: "Hand-check ban",
+        rule: "Perimeter hand-checking enforced",
+    },
+    RulePeriod {
+        league: League::Aba,
+        first_season: SeasonYear::of(1968),
+        name: "ABA",
+        rule: "The 3-point line and a 30-second clock from the first season",
+    },
+];
+
+/// The rule period a season of a league belongs to: the latest period that starts on or
+/// before it, or the league's first period for a season before any of them.
+pub fn period_of(league: League, season: SeasonYear) -> &'static RulePeriod {
+    let mine = RULE_PERIODS.iter().filter(|p| p.league == league);
+    mine.clone()
+        .rev()
+        .find(|p| p.first_season <= season)
+        .or_else(|| mine.clone().next())
+        .expect("every league has a rule period")
+}
+
+/// A rule period with the seasons it covers in the data.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct PeriodSummary {
+    pub league: League,
+    pub name: &'static str,
+    pub rule: &'static str,
+    pub first_season: SeasonYear,
+    pub last_season: SeasonYear,
+    pub eras: usize,
+}
 pub const LIST_LEN: usize = 10;
 /// Rows in the greatest and weakest matchup tables.
 pub const MATCHUP_LEN: usize = 20;
@@ -139,7 +209,8 @@ pub struct EraClanker {
     pub first_season: SeasonYear,
     pub last_season: SeasonYear,
     pub teams: usize,
-    pub three_point: bool,
+    /// The rule period the era belongs to.
+    pub period: &'static str,
     pub game: Matchup,
 }
 
@@ -151,7 +222,8 @@ pub struct EraRoads {
     pub first_season: SeasonYear,
     pub last_season: SeasonYear,
     pub teams: usize,
-    pub three_point: bool,
+    /// The rule period the era belongs to.
+    pub period: &'static str,
     pub champions: usize,
     pub hardest: ChampionRoad,
     pub easiest: ChampionRoad,
@@ -227,8 +299,7 @@ pub struct SizeRecord {
     pub extremes: Extremes,
 }
 
-/// A run of seasons of one league with the same number of teams; the NBA's run is also cut
-/// at the 3-point line.
+/// A run of seasons of one league with the same number of teams inside one rule period.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct EraRecord {
     pub league: League,
@@ -236,7 +307,8 @@ pub struct EraRecord {
     pub last_season: SeasonYear,
     pub seasons: usize,
     pub teams: usize,
-    pub three_point: bool,
+    /// The rule period the era belongs to.
+    pub period: &'static str,
     pub extremes: Extremes,
 }
 
@@ -306,6 +378,8 @@ pub struct Records {
     pub swings: Vec<GameSwing>,
     /// Played games with the highest combined pre-game rating, strongest first.
     pub greatest_matchups: Vec<Matchup>,
+    /// The rule periods present in the data, with the seasons and eras they cover.
+    pub periods: Vec<PeriodSummary>,
     /// The weakest game of each era, in era order (NBA/BAA first, then the ABA).
     pub clankers_by_era: Vec<EraClanker>,
     /// The hardest and easiest road to the title of each era, in era order.
@@ -364,8 +438,9 @@ fn extremes(stats: &[&TeamSeasonStat]) -> Option<Extremes> {
     })
 }
 
-/// Eras of one league: consecutive seasons with the same number of teams, and for the NBA a
-/// new era at the 3-point line. `sizes` maps each season of the league to its team count.
+/// Eras of one league: consecutive seasons with the same number of teams inside one rule
+/// period; a period start also starts an era. `sizes` maps each season of the league to its
+/// team count.
 pub fn eras(
     league: League,
     stats: &[&TeamSeasonStat],
@@ -387,7 +462,7 @@ pub fn eras(
                     last_season: last,
                     seasons: (last.end_year() - first.end_year() + 1) as usize,
                     teams,
-                    three_point: league == League::Aba || first >= THREE_POINT_SEASON,
+                    period: period_of(league, first).name,
                     extremes,
                 });
             }
@@ -399,7 +474,9 @@ pub fn eras(
             Some((_, last, n)) => {
                 n != teams
                     || last.next() != Some(season)
-                    || (league == League::Nba && season == THREE_POINT_SEASON)
+                    || RULE_PERIODS
+                        .iter()
+                        .any(|p| p.league == league && p.first_season == season)
             }
         };
         if starts_new {
@@ -680,6 +757,7 @@ pub fn compute(
             .collect();
         by_era.extend(eras(league, &members, &league_sizes));
     }
+    let periods = period_summaries(&by_era);
     let clankers_by_era = era_clankers(&by_era, &weakest_per_season);
     let roads_by_era = era_roads(&by_era, &champion_roads);
 
@@ -723,9 +801,31 @@ pub fn compute(
         }),
         swings,
         greatest_matchups,
+        periods,
         clankers_by_era,
         roads_by_era,
     }
+}
+
+/// The rule periods that have eras, each with the seasons its eras span.
+fn period_summaries(eras: &[EraRecord]) -> Vec<PeriodSummary> {
+    RULE_PERIODS
+        .iter()
+        .filter_map(|p| {
+            let mine: Vec<&EraRecord> = eras
+                .iter()
+                .filter(|e| e.league == p.league && e.period == p.name)
+                .collect();
+            Some(PeriodSummary {
+                league: p.league,
+                name: p.name,
+                rule: p.rule,
+                first_season: mine.iter().map(|e| e.first_season).min()?,
+                last_season: mine.iter().map(|e| e.last_season).max()?,
+                eras: mine.len(),
+            })
+        })
+        .collect()
 }
 
 /// The weakest game of each era: the lowest combined rating among the season minima that
@@ -746,7 +846,7 @@ fn era_clankers(eras: &[EraRecord], weakest_per_season: &[Matchup]) -> Vec<EraCl
                 first_season: e.first_season,
                 last_season: e.last_season,
                 teams: e.teams,
-                three_point: e.three_point,
+                period: e.period,
                 game: game.clone(),
             })
         })
@@ -784,7 +884,7 @@ fn era_roads(eras: &[EraRecord], roads: &[ChampionRoad]) -> Vec<EraRoads> {
                 first_season: e.first_season,
                 last_season: e.last_season,
                 teams: e.teams,
-                three_point: e.three_point,
+                period: e.period,
                 champions: members.len(),
                 hardest: (*hardest).clone(),
                 easiest: (*easiest).clone(),
@@ -842,7 +942,7 @@ mod tests {
     }
 
     #[test]
-    fn eras_split_on_league_size_and_the_three_point_line() {
+    fn eras_split_on_league_size_and_rule_periods() {
         // 1978 and 1979: 22 teams; 1980: 22 teams but the 3-point line starts a new era;
         // 1981: 23 teams (expansion) starts another; 1982 continues it.
         let stats: Vec<TeamSeasonStat> =
@@ -872,18 +972,23 @@ mod tests {
                 nba[0].first_season,
                 nba[0].last_season,
                 nba[0].teams,
-                nba[0].three_point
+                nba[0].period
             ),
-            (SeasonYear::of(1978), SeasonYear::of(1979), 22, false)
+            (SeasonYear::of(1978), SeasonYear::of(1979), 22, "Shot clock")
         );
         assert_eq!(
             (
                 nba[1].first_season,
                 nba[1].last_season,
                 nba[1].teams,
-                nba[1].three_point
+                nba[1].period
             ),
-            (SeasonYear::of(1980), SeasonYear::of(1980), 22, true)
+            (
+                SeasonYear::of(1980),
+                SeasonYear::of(1980),
+                22,
+                "Three-point line"
+            )
         );
         assert_eq!(
             (
@@ -896,6 +1001,57 @@ mod tests {
         );
         assert_eq!(nba[2].extremes.best.value, 1522.0);
         assert_eq!(nba[2].extremes.worst.value, 1400.0 - 22.0);
+        let names: Vec<&str> = r.periods.iter().map(|p| p.name).collect();
+        assert_eq!(names, vec!["Shot clock", "Three-point line"]);
+        assert_eq!(
+            (r.periods[1].first_season, r.periods[1].eras),
+            (SeasonYear::of(1980), 2)
+        );
+    }
+
+    #[test]
+    fn zone_defense_splits_the_29_team_era_and_periods_resolve_by_season() {
+        let stats: Vec<TeamSeasonStat> = (2000..=2003)
+            .flat_map(|season| {
+                (0..29).map(move |i| {
+                    stat(
+                        season,
+                        &format!("T{i:02}"),
+                        1500.0 + i as f64,
+                        1400.0,
+                        PlayoffResult::Missed,
+                    )
+                })
+            })
+            .collect();
+        let r = compute(&stats, GameRecords::default(), &[]);
+        let spans: Vec<(i32, i32, &str)> = r
+            .by_era
+            .iter()
+            .map(|e| {
+                (
+                    e.first_season.end_year(),
+                    e.last_season.end_year(),
+                    e.period,
+                )
+            })
+            .collect();
+        assert_eq!(
+            spans,
+            vec![
+                (2000, 2001, "Three-point line"),
+                (2002, 2003, "Zone defense")
+            ]
+        );
+        assert_eq!(
+            period_of(League::Nba, SeasonYear::of(1947)).name,
+            "Pre shot clock"
+        );
+        assert_eq!(
+            period_of(League::Nba, SeasonYear::of(2026)).name,
+            "Hand-check ban"
+        );
+        assert_eq!(period_of(League::Aba, SeasonYear::of(1972)).name, "ABA");
     }
 
     #[test]
@@ -1007,7 +1163,7 @@ mod tests {
             last_season: SeasonYear::of(last),
             seasons: (last - first + 1) as usize,
             teams: 10,
-            three_point: false,
+            period: "Shot clock",
             extremes: Extremes {
                 best: entry(
                     &stat(first, "X", 1500.0, 1400.0, PlayoffResult::Missed),
@@ -1084,7 +1240,7 @@ mod tests {
             last_season: SeasonYear::of(last),
             seasons: (last - first + 1) as usize,
             teams: 30,
-            three_point: true,
+            period: "Hand-check ban",
             extremes: Extremes {
                 best: entry(
                     &stat(first, "X", 1500.0, 1400.0, PlayoffResult::Missed),
