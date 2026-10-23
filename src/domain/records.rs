@@ -195,6 +195,9 @@ pub struct Entry {
     pub league: League,
     pub value: f64,
     pub date: Option<NaiveDate>,
+    /// The rating after the team's last game of the season: for a champion, the game that
+    /// clinched the title.
+    pub elo_end: Option<f64>,
     pub wins: i32,
     pub losses: i32,
     pub playoff_result: PlayoffResult,
@@ -271,6 +274,9 @@ pub struct ConferenceSeason {
     pub gap: f64,
     pub east_best_code: String,
     pub west_best_code: String,
+    /// The season's champion and its conference, when the archive names one.
+    pub champion_code: Option<String>,
+    pub champion_conference: Option<Conference>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -315,6 +321,7 @@ fn entry(s: &TeamSeasonStat, value: f64, date: Option<NaiveDate>) -> Entry {
         league: League::of_code(&s.code),
         value,
         date,
+        elo_end: s.elo_end,
         wins: s.wins,
         losses: s.losses,
         playoff_result: s.playoff_result,
@@ -502,6 +509,11 @@ fn conference_seasons(
     stats: &[TeamSeasonStat],
     floors: &BTreeMap<SeasonYear, i64>,
 ) -> Vec<ConferenceSeason> {
+    let champions: BTreeMap<SeasonYear, &TeamSeasonStat> = stats
+        .iter()
+        .filter(|s| s.playoff_result == PlayoffResult::Champion)
+        .map(|s| (s.season, s))
+        .collect();
     let mut by_season: BTreeMap<SeasonYear, (Vec<&TeamSeasonStat>, Vec<&TeamSeasonStat>)> =
         BTreeMap::new();
     for s in stats {
@@ -544,6 +556,8 @@ fn conference_seasons(
                 gap: west_mean - east_mean,
                 east_best_code: best(&e),
                 west_best_code: best(&w),
+                champion_code: champions.get(&season).map(|c| c.code.clone()),
+                champion_conference: champions.get(&season).and_then(|c| c.conference),
             }
         })
         .collect()
@@ -1169,6 +1183,8 @@ mod tests {
             (c.east_best_code.as_str(), c.west_best_code.as_str()),
             ("ECL", "WGS")
         );
+        assert_eq!(c.champion_code.as_deref(), Some("WGS"));
+        assert_eq!(c.champion_conference, Some(Conference::West));
         // Divisions keep the best/worst lists: the Pacific (West) outrates the Atlantic here.
         assert_eq!(r.divisions.best[0].division.as_deref(), Some("Pacific"));
         assert_eq!(r.divisions.worst[0].division.as_deref(), Some("Atlantic"));

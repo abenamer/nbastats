@@ -4,11 +4,13 @@
   const league = l => l === 'aba' ? 'ABA' : 'NBA';
   const team = e => `${e.code} · ${e.name}`;
   const rec = e => `${e.wins}-${e.losses}`;
-  const entryCols = (valueLabel, withDate = true) => [
+  // `endLabel` adds the rating after the team's last game (for a champion, the clinching game).
+  const entryCols = (valueLabel, withDate = true, endLabel = null) => [
     { label: 'Season', value: e => labelOf(e.season), left: true }, { label: 'Team', value: team, left: true }, { label: 'Lg', value: e => league(e.league), left: true },
     { label: valueLabel, value: e => num(e.value, 0) }, ...(withDate ? [{ label: 'Date', value: e => e.date || '', left: true }] : []),
+    ...(endLabel ? [{ label: endLabel, value: e => num(e.elo_end, 0) }] : []),
     { label: 'W-L', value: rec, left: true }, { label: 'Result', value: e => RESULT[e.playoff_result] || e.playoff_result, left: true, cls: e => e.playoff_result === 'champion' ? 'good' : '' }];
-  const list = (id, rows, valueLabel, withDate) => { document.getElementById(id).innerHTML = rows.length ? table(entryCols(valueLabel, withDate), rows) : '<p class="muted">No data.</p>'; };
+  const list = (id, rows, valueLabel, withDate, endLabel) => { document.getElementById(id).innerHTML = rows.length ? table(entryCols(valueLabel, withDate, endLabel), rows) : '<p class="muted">No data.</p>'; };
   const pair = (x, which) => `${x.extremes[which].code} ${num(x.extremes[which].value, 0)} (${labelOf(x.extremes[which].season)})`;
   const groupCols = [
     { label: 'Season', value: g => labelOf(g.season), left: true }, { label: 'Conference', value: g => g.conference === 'west' ? 'West' : 'East', left: true },
@@ -38,9 +40,10 @@
       { label: 'Season', value: c => labelOf(c.season), left: true },
       { label: 'East mean', value: c => num(c.east_mean, 0), cls: c => c.gap < 0 ? 'good' : '' }, { label: 'West mean', value: c => num(c.west_mean, 0), cls: c => c.gap > 0 ? 'good' : '' },
       { label: 'Gap (W − E)', value: c => `${c.gap >= 0 ? '+' : ''}${num(c.gap, 0)}` }, { label: 'Stronger', value: c => Math.abs(c.gap) < 5 ? 'even' : (c.gap > 0 ? 'West' : 'East'), left: true },
-      { label: 'East best', value: 'east_best_code', left: true }, { label: 'West best', value: 'west_best_code', left: true }], r.conference_seasons);
+      { label: 'East best', value: 'east_best_code', left: true }, { label: 'West best', value: 'west_best_code', left: true },
+      { label: 'Title', value: c => c.champion_code ? `${c.champion_conference === 'west' ? 'West' : c.champion_conference === 'east' ? 'East' : '?'} · ${c.champion_code}` : '', left: true, cls: c => c.champion_conference && Math.abs(c.gap) >= 5 ? (c.champion_conference === 'west') === (c.gap > 0) ? 'good' : 'bad' : '' }], r.conference_seasons);
     group('divBest', r.divisions.best); group('divWorst', r.divisions.worst);
-    list('bestChampion', r.best_champion, 'Peak Elo'); list('worstChampion', r.worst_champion, 'Peak Elo'); list('bestUncrowned', r.best_uncrowned, 'Peak Elo');
+    list('bestChampion', r.best_champion, 'Peak Elo', true, 'At the clinch'); list('worstChampion', r.worst_champion, 'Peak Elo', true, 'At the clinch'); list('bestUncrowned', r.best_uncrowned, 'Peak Elo', true, 'Season end');
     list('bestEnd', r.best_end, 'End Elo', false); list('worstEnd', r.worst_end, 'End Elo', false);
     list('rise', r.biggest_rise, 'Change', false); list('fall', r.biggest_fall, 'Change', false);
     document.getElementById('swings').innerHTML = table([
