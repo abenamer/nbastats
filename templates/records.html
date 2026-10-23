@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% block content %}
+<div class="records">
 <p class="muted">The highest and lowest Elo ratings in the game log, 1946-47 to today. A team's rating after each game is the measure; "peak" and "low" are the best and worst single-game ratings of a season. Conference and division records use the mean pre-playoff rating of the teams. Before 1970-71 the league's two divisions (Eastern and Western) stand in for conferences. ABA teams are not aligned. <span id="status"></span></p>
 <section class="grid2">
   <div class="panel"><h2>Highest ratings ever</h2><div id="allTimeHigh" class="table-wrap"></div></div>
@@ -28,5 +29,6 @@
   <div class="panel"><h2>Greatest matchups</h2><p class="muted small">The 20 played games with the highest combined rating of the two teams before tip-off.</p><div id="greatest" class="table-wrap"></div></div>
   <div class="panel"><h2>Clankers by era</h2><p class="muted small">The played game with the lowest combined rating before tip-off in each era (an era changes with the league's team count and, for the NBA, at the 3-point line). A league-wide list would only find the newest franchises, which start at 1300.</p><h3>NBA/BAA</h3><div id="clankersNba" class="table-wrap"></div><h3 style="margin-top:.8rem">ABA</h3><div id="clankersAba" class="table-wrap"></div></div>
 </section>
+</div>
 {% endblock %}
 {% block scripts %}<script src="/static/js/records.js?v={{ layout.assets }}" defer></script>{% endblock %}

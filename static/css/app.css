@@ -49,6 +49,9 @@ table { border-collapse:collapse; width:100%; font-size:.88rem; }
 th, td { padding:.35rem .5rem; border-bottom:1px solid var(--line); text-align:right; white-space:nowrap; }
 th:first-child, td:first-child, td.l, th.l { text-align:left; }
 th { background:#f8fafc; position:sticky; top:0; font-weight:600; color:#374151; }
+/* Records: every panel takes the full width (the tables are too wide for two columns inside the 1400px main), with tighter cells. */
+.records .grid2 { grid-template-columns:1fr; }
+.records th, .records td { padding:.3rem .45rem; }
 table.sortable th { cursor:pointer; user-select:none; }
 .team-pick { cursor:pointer; color:#2563eb; font-weight:600; }
 .team-pick:hover { text-decoration:underline; }
