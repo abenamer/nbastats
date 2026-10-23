@@ -18,7 +18,7 @@ use crate::domain::models::{
     ChampionshipView, DataImport, EloSource, Franchise, Game, GameType, JobEvent, JobKind,
     JobStatus, PlayoffResult, Season, SimulationJob, Team, TeamSeason, TeamSeasonView,
 };
-use crate::domain::records::{GameSwing, Matchup, MatchupOrder, TeamSeasonStat};
+use crate::domain::records::{ChampionRoad, GameSwing, Matchup, MatchupOrder, TeamSeasonStat};
 
 /// Error from any store port. Adapters convert their own errors into these variants.
 #[derive(Debug, thiserror::Error)]
@@ -336,6 +336,9 @@ pub trait AnalysisStore: Send + Sync {
     /// Played games ranked by the two teams' combined pre-game rating: the `limit` strongest
     /// or weakest, in that order.
     async fn matchups(&self, order: MatchupOrder, limit: i64) -> StoreResult<Vec<Matchup>>;
+    /// Every champion (from the championships table, curated ones included) with the mean
+    /// rating of its opponents before each regular-season and playoff game.
+    async fn champion_roads(&self) -> StoreResult<Vec<ChampionRoad>>;
     /// Every (season, team code) with at least one game, played or scheduled: the league's
     /// membership for the season, which the played games alone understate early in a season.
     async fn season_rosters(&self) -> StoreResult<Vec<(SeasonYear, String)>>;

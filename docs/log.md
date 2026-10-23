@@ -1,6 +1,7 @@
 # Bundle update log
 
 ## 2026-10-23
+* **Update**: Records page gains the hardest and easiest roads to the title; the term Road to the title is defined.
 * **Update**: Records page gains the greatest matchups and the clankers; the term Matchup is defined and the [Application overview](/concepts/application.md) lists the tables.
 * **Update**: Elo Explorer: a click on a team code highlights the team; noted in the [Application overview](/concepts/application.md).
 * **Update**: Tables sort on a header click; static files are versioned by content hash. Noted in the [Application overview](/concepts/application.md).

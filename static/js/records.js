@@ -54,6 +54,12 @@
       { label: 'Combined', value: m => num(m.home_elo_pre + m.away_elo_pre, 0) },
       { label: 'Score', value: m => `${m.home_score}-${m.away_score}${m.playoff ? ' (playoffs)' : ''}`, left: true }], rows); };
     matchups('greatest', r.greatest_matchups); matchups('weakest', r.weakest_matchups);
+    const roads = (id, rows) => { document.getElementById(id).innerHTML = table([
+      { label: 'Season', value: c => labelOf(c.season), left: true }, { label: 'Champion', value: c => `<span title="${esc(c.name)}">${esc(c.code)}</span>`, raw: true, left: true },
+      { label: 'Reg. opp. Elo', value: c => num(c.regular_opponent_elo, 0) }, { label: 'Playoff opp. Elo', value: c => num(c.playoff_opponent_elo, 0) },
+      { label: 'Road', value: c => num((c.regular_opponent_elo + c.playoff_opponent_elo) / 2, 0) },
+      { label: 'Toughest opponent', value: c => `${c.toughest_opponent_code} (${num(c.toughest_opponent_elo, 0)})`, left: true }], rows); };
+    roads('hardestRoad', r.hardest_roads); roads('easiestRoad', r.easiest_roads);
     setStatus(status, '');
   } catch (e) { setStatus(status, e.message, true); }
 })();

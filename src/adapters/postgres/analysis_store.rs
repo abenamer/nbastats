@@ -7,7 +7,7 @@ use chrono::NaiveDate;
 use crate::application::ports::{AnalysisStore, NewForecast, StoreHealth, StoreResult};
 use crate::domain::ids::{FranchiseId, SeasonYear};
 use crate::domain::models::{ChampionshipView, TeamSeasonView};
-use crate::domain::records::{GameSwing, Matchup, MatchupOrder, TeamSeasonStat};
+use crate::domain::records::{ChampionRoad, GameSwing, Matchup, MatchupOrder, TeamSeasonStat};
 
 use super::PostgresStore;
 
@@ -122,14 +122,80 @@ impl AnalysisStore for PostgresStore {
                  FROM p GROUP BY season, team_id
              )
              SELECT a.season, t.code, t.name, f.key AS franchise_key, a.games, a.peak, a.peak_date, a.low, a.low_date,
-                    ts.wins, ts.losses, ts.elo_start, ts.elo_pre_playoffs, ts.elo_end, ts.playoff_result,
+                    ts.wins, ts.losses, ts.elo_start, ts.elo_pre_playoffs, ts.elo_end,
+                    CASE WHEN c.champion_team_id = a.team_id THEN 'champion'
+                         WHEN c.season IS NOT NULL AND ts.playoff_result = 'champion' THEN 'finals'
+                         ELSE ts.playoff_result END AS playoff_result,
                     ts.conference, ts.division
              FROM a JOIN teams t ON t.id = a.team_id JOIN franchises f ON f.id = t.franchise_id
              LEFT JOIN team_seasons ts ON ts.season = a.season AND ts.team_id = a.team_id
+             LEFT JOIN championships c ON c.season = a.season
              ORDER BY a.season, t.code",
         )
         .fetch_all(&self.pool)
         .await?)
+    }
+
+    async fn champion_roads(&self) -> StoreResult<Vec<ChampionRoad>> {
+        type Row = (
+            SeasonYear,
+            String,
+            String,
+            Option<f64>,
+            i64,
+            Option<f64>,
+            i64,
+            Option<String>,
+            Option<f64>,
+        );
+        let rows: Vec<Row> = sqlx::query_as(
+            "WITH o AS (
+                 SELECT g.season, c.champion_team_id AS team_id, g.game_type,
+                        CASE WHEN g.home_team_id = c.champion_team_id THEN g.away_elo_pre ELSE g.home_elo_pre END AS opp_elo,
+                        CASE WHEN g.home_team_id = c.champion_team_id THEN g.away_team_id ELSE g.home_team_id END AS opp_id
+                 FROM championships c
+                 JOIN games g ON g.season = c.season AND c.champion_team_id IN (g.home_team_id, g.away_team_id)
+                 WHERE g.home_score IS NOT NULL AND g.game_type <> 'cup_final'
+             )
+             SELECT o.season, t.code, t.name,
+                    avg(o.opp_elo) FILTER (WHERE o.game_type = 'regular'),
+                    count(*) FILTER (WHERE o.game_type = 'regular'),
+                    avg(o.opp_elo) FILTER (WHERE o.game_type <> 'regular'),
+                    count(*) FILTER (WHERE o.game_type <> 'regular'),
+                    (array_agg(p.code ORDER BY o.opp_elo DESC) FILTER (WHERE o.game_type <> 'regular'))[1],
+                    max(o.opp_elo) FILTER (WHERE o.game_type <> 'regular')
+             FROM o JOIN teams t ON t.id = o.team_id JOIN teams p ON p.id = o.opp_id
+             GROUP BY o.season, t.code, t.name
+             ORDER BY o.season",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .into_iter()
+            .map(
+                |(
+                    season,
+                    code,
+                    name,
+                    regular,
+                    regular_games,
+                    playoff,
+                    playoff_games,
+                    toughest_code,
+                    toughest_elo,
+                )| ChampionRoad {
+                    season,
+                    code,
+                    name,
+                    regular_opponent_elo: regular.unwrap_or(0.0),
+                    regular_games,
+                    playoff_opponent_elo: playoff.unwrap_or(0.0),
+                    playoff_games,
+                    toughest_opponent_code: toughest_code.unwrap_or_default(),
+                    toughest_opponent_elo: toughest_elo.unwrap_or(0.0),
+                },
+            )
+            .collect())
     }
 
     async fn matchups(&self, order: MatchupOrder, limit: i64) -> StoreResult<Vec<Matchup>> {

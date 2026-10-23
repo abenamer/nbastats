@@ -98,12 +98,37 @@ pub enum MatchupOrder {
     Weakest,
 }
 
+/// A champion's road to the title: the mean rating of its opponents before each game,
+/// over the regular season and over the playoffs (play-in included).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct ChampionRoad {
+    pub season: SeasonYear,
+    pub code: String,
+    pub name: String,
+    pub regular_opponent_elo: f64,
+    pub regular_games: i64,
+    pub playoff_opponent_elo: f64,
+    pub playoff_games: i64,
+    /// The strongest playoff opponent, by rating before the game.
+    pub toughest_opponent_code: String,
+    pub toughest_opponent_elo: f64,
+}
+
+impl ChampionRoad {
+    /// The road rating: the regular-season and playoff opponent means, weighted equally.
+    pub fn road(&self) -> f64 {
+        (self.regular_opponent_elo + self.playoff_opponent_elo) / 2.0
+    }
+}
+
 /// The game-level record inputs the store ranks for `compute`.
 #[derive(Debug, Clone, Default)]
 pub struct GameRecords {
     pub swings: Vec<GameSwing>,
     pub greatest_matchups: Vec<Matchup>,
     pub weakest_matchups: Vec<Matchup>,
+    /// Every champion's road; `compute` ranks it both ways.
+    pub champion_roads: Vec<ChampionRoad>,
 }
 
 /// The largest rating change in one game, from the winner's side.
@@ -240,6 +265,10 @@ pub struct Records {
     pub greatest_matchups: Vec<Matchup>,
     /// Played games with the lowest combined pre-game rating, weakest first.
     pub weakest_matchups: Vec<Matchup>,
+    /// Champions by road rating, hardest first.
+    pub hardest_roads: Vec<ChampionRoad>,
+    /// Champions by road rating, easiest first.
+    pub easiest_roads: Vec<ChampionRoad>,
 }
 
 fn entry(s: &TeamSeasonStat, value: f64, date: Option<NaiveDate>) -> Entry {
@@ -498,9 +527,11 @@ pub fn compute(
         swings,
         mut greatest_matchups,
         mut weakest_matchups,
+        champion_roads,
     } = games;
     greatest_matchups.sort_by(|a, b| b.combined_elo().total_cmp(&a.combined_elo()));
     weakest_matchups.sort_by(|a, b| a.combined_elo().total_cmp(&b.combined_elo()));
+    let (hardest_roads, easiest_roads) = rank_roads(champion_roads);
     let all = || stats.iter();
     let floors = season_floors(stats);
 
@@ -643,7 +674,21 @@ pub fn compute(
         swings,
         greatest_matchups,
         weakest_matchups,
+        hardest_roads,
+        easiest_roads,
     }
+}
+
+/// The `LIST_LEN` hardest and easiest roads among champions with games in both phases.
+fn rank_roads(roads: Vec<ChampionRoad>) -> (Vec<ChampionRoad>, Vec<ChampionRoad>) {
+    let mut roads: Vec<ChampionRoad> = roads
+        .into_iter()
+        .filter(|r| r.regular_games > 0 && r.playoff_games > 0)
+        .collect();
+    roads.sort_by(|a, b| b.road().total_cmp(&a.road()));
+    let hardest = roads.iter().take(LIST_LEN).cloned().collect();
+    let easiest = roads.iter().rev().take(LIST_LEN).cloned().collect();
+    (hardest, easiest)
 }
 
 #[cfg(test)]
@@ -837,6 +882,42 @@ mod tests {
         assert_eq!(r.biggest_rise[0].value, 1855.0 - 1500.0);
         // Conferences: no season here has two rated teams on both sides, so no comparison row.
         assert!(r.conference_seasons.is_empty());
+    }
+
+    #[test]
+    fn roads_rank_champions_by_the_mean_of_both_phases() {
+        let road =
+            |year: i32, code: &str, regular: f64, playoff: f64, playoff_games: i64| ChampionRoad {
+                season: SeasonYear::of(year),
+                code: code.to_string(),
+                name: code.to_string(),
+                regular_opponent_elo: regular,
+                regular_games: 82,
+                playoff_opponent_elo: playoff,
+                playoff_games,
+                toughest_opponent_code: "OPP".to_string(),
+                toughest_opponent_elo: playoff + 50.0,
+            };
+        let roads = vec![
+            road(2016, "CLE", 1500.0, 1700.0, 21), // road 1600
+            road(2017, "GSW", 1510.0, 1650.0, 17), // road 1580
+            road(1999, "SAS", 1490.0, 1600.0, 17), // road 1545
+            road(2025, "UNF", 1600.0, 0.0, 0),     // no playoffs yet: left out
+        ];
+        let (hardest, easiest) = rank_roads(roads);
+        let codes = |v: &[ChampionRoad]| v.iter().map(|r| r.code.clone()).collect::<Vec<_>>();
+        assert_eq!(codes(&hardest), vec!["CLE", "GSW", "SAS"]);
+        assert_eq!(codes(&easiest), vec!["SAS", "GSW", "CLE"]);
+        assert!((hardest[0].road() - 1600.0).abs() < 1e-9);
+        let r = compute(
+            &[],
+            GameRecords {
+                champion_roads: vec![road(2016, "CLE", 1500.0, 1700.0, 21)],
+                ..Default::default()
+            },
+            &[],
+        );
+        assert_eq!((r.hardest_roads.len(), r.easiest_roads.len()), (1, 1));
     }
 
     #[test]

@@ -357,16 +357,25 @@ async fn records_queries_summarise_the_game_log(pool: PgPool) {
     assert!(greatest[0].combined_elo() >= greatest[1].combined_elo());
     assert!(weakest[0].combined_elo() <= weakest[1].combined_elo());
     assert!(greatest[0].combined_elo() > weakest[0].combined_elo());
+    // The champion's road comes from the championships table, with both phases filled.
+    let roads = store.champion_roads().await.unwrap();
+    assert_eq!(roads.len(), 1);
+    assert_eq!((roads[0].code.as_str(), roads[0].season), ("CLE", S2016));
+    assert!(roads[0].regular_games > 0 && roads[0].playoff_games > 0);
+    assert!(roads[0].playoff_opponent_elo > roads[0].regular_opponent_elo);
+    assert!(roads[0].toughest_opponent_elo >= roads[0].playoff_opponent_elo);
     let r = records::compute(
         &stats,
         records::GameRecords {
             swings,
             greatest_matchups: greatest,
             weakest_matchups: weakest,
+            champion_roads: roads,
         },
         &rosters,
     );
     assert_eq!(r.greatest_matchups.len(), 3);
+    assert_eq!(r.hardest_roads.len(), 1);
     assert_eq!(r.all_time_high[0].code, "GSW");
     assert_eq!(r.best_champion[0].code, "CLE");
     assert_eq!(r.conference_seasons.len(), 1);

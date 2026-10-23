@@ -82,6 +82,7 @@ pub async fn records(State(app): State<AppState>) -> ApiResult<Value> {
             .store
             .matchups(MatchupOrder::Weakest, MATCHUP_LEN as i64)
             .await?,
+        champion_roads: app.store.champion_roads().await?,
     };
     let rosters = app.store.season_rosters().await?;
     Ok(Json(json!(crate::domain::records::compute(

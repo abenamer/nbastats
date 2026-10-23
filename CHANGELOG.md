@@ -5,6 +5,7 @@
 - Initial application: Engines A, B and C, backtesting, dynasty laboratory, nine pages, PostgreSQL 17 persistence, Docker Compose, backup and restore scripts.
 - Aligned with REAS 1.2.0-draft: domain, application and adapters layout; six ports and one `PostgresStore` adapter; `TeamId`, `FranchiseId` and `SeasonYear` newtypes; typed errors; conditional job transitions; documentation checker, terminology, self-audit and decisions.
 
+- Records page: hardest and easiest roads to the title, ten each: a champion's mean opponent rating before each game over the regular season and over the playoffs, and the mean of the two; the `AnalysisStore` port gains `champion_roads`. The best and worst champion lists now take champions from the championships table, so the curated seasons (1946-47 to 1959-60, 1967-68 to 1973-74) appear.
 - Records page: greatest matchups and clankers, the 20 played games with the highest and the lowest combined pre-game rating of the two teams; the `AnalysisStore` port gains `matchups`.
 - Elo Explorer: a click on a team code in the ratings table adds the team to the highlight field (a second click removes it) and reloads the chart; the table shows codes with the full name as a tooltip, so every column fits.
 - Every table sorts on a header click (numbers as numbers, text as text, blanks last); a second click reverses the order.
