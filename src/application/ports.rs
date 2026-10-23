@@ -9,7 +9,7 @@
 use std::collections::HashMap;
 
 use chrono::NaiveDate;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
 
@@ -508,4 +508,75 @@ pub trait ResultsSource: Send + Sync {
         window: FetchWindow,
         progress: &dyn FetchProgressSink,
     ) -> Result<ResultsFetch, SourceError>;
+}
+
+// ---------------------------------------------------------------------------------------
+// Language model (the question box)
+// ---------------------------------------------------------------------------------------
+
+/// A function the model may ask for. `parameters` is a JSON Schema object.
+#[derive(Debug, Clone, Serialize)]
+pub struct ToolSpec {
+    pub name: &'static str,
+    pub description: &'static str,
+    pub parameters: Value,
+}
+
+/// A call the model asks for: the tool's name and its JSON arguments.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ToolCall {
+    pub id: String,
+    pub name: String,
+    pub arguments: Value,
+}
+
+/// One turn of the conversation sent to the model.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ChatMessage {
+    System(String),
+    User(String),
+    Assistant {
+        content: Option<String>,
+        tool_calls: Vec<ToolCall>,
+    },
+    /// The result of a tool call, as text (JSON) for the model.
+    Tool {
+        call_id: String,
+        content: String,
+    },
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct ChatRequest<'a> {
+    pub messages: &'a [ChatMessage],
+    pub tools: &'a [ToolSpec],
+    pub max_tokens: u32,
+}
+
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ChatReply {
+    pub content: Option<String>,
+    pub tool_calls: Vec<ToolCall>,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum ModelError {
+    #[error("language model not configured: {0}")]
+    NotConfigured(String),
+    #[error("language model request failed: {0}")]
+    Transport(String),
+    #[error("language model answered with status {status}: {message}")]
+    Rejected { status: u16, message: String },
+    #[error("language model answer is invalid: {0}")]
+    InvalidResponse(String),
+}
+
+/// A chat model with tool calling. The concrete adapter is `adapters::openrouter::OpenRouterModel`.
+#[allow(async_fn_in_trait)]
+pub trait LanguageModel: Send + Sync {
+    /// The model identifier shown to the user.
+    fn model_name(&self) -> &str;
+    async fn chat(&self, request: ChatRequest<'_>) -> Result<ChatReply, ModelError>;
 }

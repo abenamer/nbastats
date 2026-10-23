@@ -14,8 +14,8 @@ REAS favours ports and adapters for human-maintained code and asks three questio
 
 ## Decision
 
-* The application defines seven ports in `src/application/ports.rs`: `GameLog`, `GameStore`, `ImportLog`, `JobStore`, `AnalysisStore`, `DatasetSource`, `ResultsSource`.
-* One adapter type, `PostgresStore`, implements the five store ports. `HttpDatasetSource` implements `DatasetSource`. `BalldontlieSource` implements `ResultsSource` (added 2026-10-21 when the archive no longer covered the current season).
+* The application defines eight ports in `src/application/ports.rs`: `GameLog`, `GameStore`, `ImportLog`, `JobStore`, `AnalysisStore`, `DatasetSource`, `ResultsSource`, `LanguageModel`.
+* One adapter type, `PostgresStore`, implements the five store ports. `HttpDatasetSource` implements `DatasetSource`. `BalldontlieSource` implements `ResultsSource` (added 2026-10-21 when the archive no longer covered the current season). `OpenRouterModel` implements `LanguageModel` (added 2026-10-23 for the question box, [ADR 0005](0005-question-box-via-openrouter.md)).
 * `App` holds the concrete adapters. Use cases that benefit from fakes (import, job runner, refresh) take the ports as generic parameters. HTTP handlers call the ports through `app.store`.
 * `main.rs` is the composition root.
 

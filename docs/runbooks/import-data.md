@@ -100,6 +100,8 @@ The application computes every rating at an archive import and, once, at the fir
 
 The ratings of every season are written in one transaction. When the computation fails, no rating changes: an archive import is then marked failed with the reason, although its games are stored, and the start continues with the ratings it has. Fix the cause (the log names it) and run the command above, or restart the application.
 
+An archive import (download or upload) does not run while a results sync runs, and a sync does not start during an import: the second one answers "already running" (status 409). Try again when the first has finished.
+
 # After an import
 
 * The Data page shows the import with row counts and rejected rows.

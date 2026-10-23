@@ -4,8 +4,10 @@
 //! * `csv` – inbound data format parsers for the Elo game logs.
 //! * `dataset` – outbound: HTTP download of the source dataset.
 //! * `balldontlie` – outbound: game results and schedule from the BALLDONTLIE API.
+//! * `openrouter` – outbound: a chat model with tool calling for the question box.
 pub mod balldontlie;
 pub mod csv;
 pub mod dataset;
 pub mod http;
+pub mod openrouter;
 pub mod postgres;

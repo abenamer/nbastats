@@ -6,7 +6,7 @@ tags: [api, http, json]
 generated: { by: "human:abenamer", at: "2026-10-21T17:30:00Z" }
 sources:
   - id: router
-    resource: /src/web/mod.rs
+    resource: /src/adapters/http/mod.rs
     title: Router
 ---
 
@@ -21,6 +21,13 @@ sources:
 | `GET /healthz` | 200 when the database answers, else 503. |
 | `GET /api/health` | Version, uptime, database health, table counts, job counts. |
 
+# Question box
+
+| Method and path | Function |
+|-----------------|----------|
+| `GET /api/ask/status` | `enabled`, the configured `model` and `max_question_chars`. |
+| `POST /api/ask` | JSON body `{"question": "..."}` (at most 500 characters, body limit 16 KB). Answers from the stored data through the language model's read-only tools: `answer`, `declined` (true when the question is outside the data; `answer` is then the fixed sentence), `steps` (each lookup with tool, arguments and a row count), `model`, `rounds`, `input_tokens`, `output_tokens`. Status 503 when `OPENROUTER_API_KEY` is not set, 429 when two questions are already running, 502 when the model service fails or does not answer in 75 seconds. See the [question box](/concepts/question-box.md). |
+
 # Data
 
 | Method and path | Function |
@@ -29,7 +36,7 @@ sources:
 | `GET /api/seasons/{season}/teams` | Team-season rows: record, Elo milestones, seed, result. |
 | `GET /api/seasons/{season}/elo-history?teams=GSW,CLE` | Elo after each game, and the `schedule` span (first and last game, last played game, games remaining). |
 | `GET /api/seasons/{season}/bracket?home_advantage=100&scale=1` | Reconstructed bracket with exact probabilities. |
-| `GET /api/records` | Every record table of the Records page, computed from the game log on each call. |
+| `GET /api/records` | Every record table of the Records page, computed from the game log on each call; `by_cba` holds the records of each collective bargaining period (seasons, best and weakest team-season, titles and champions, `title_hhi`, `elo_spread`, `changes`). |
 | `GET /api/franchises` | Franchise list with uniform colours (`colors.primary`, `colors.secondary`; defunct franchises get a neutral pair). |
 | `GET /api/franchises/{key}/elo?from=2003&to=2025` | Elo after every game of a franchise, its season rows, its championships (won and lost) and its colours. |
 | `GET /api/matchup?elo_a=1700&elo_b=1600&home=a` | Game and series probabilities. |
@@ -73,4 +80,4 @@ Poll `GET /api/jobs/{id}` until `status` is `completed`.
 
 # Errors
 
-Errors return JSON `{"error": "message"}` with status 400 (bad input), 404 (not found) or 500 (internal, details only in the log).
+Errors return JSON `{"error": "message"}` with status 400 (bad input), 403 (cross-site request), 404 (not found), 409 (conflict), 421 (host not allowed), 429 (too many questions at once), 502 (the language model service failed), 503 (database unavailable, or the question box not configured) or 500 (internal, details only in the log).

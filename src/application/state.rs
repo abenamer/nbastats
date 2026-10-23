@@ -12,6 +12,7 @@ use uuid::Uuid;
 
 use crate::adapters::balldontlie::BalldontlieSource;
 use crate::adapters::dataset::HttpDatasetSource;
+use crate::adapters::openrouter::OpenRouterModel;
 use crate::adapters::postgres::PostgresStore;
 use crate::application::results_sync::SyncPhase;
 use crate::application::scheduler::SyncSchedule;
@@ -21,6 +22,9 @@ use crate::domain::models::{Game, Team};
 use crate::domain::playoffs::reconstruct::{self, ReconstructError, Reconstruction};
 
 use super::ports::{GameLog, StoreError};
+
+/// Questions the question box answers at the same time.
+pub const ASK_SLOTS: usize = 2;
 
 /// Everything the engines need to know about one season, loaded once and shared.
 pub struct SeasonData {
@@ -54,6 +58,10 @@ pub struct App {
     pub results: Option<BalldontlieSource>,
     /// Daily sync schedule; `None` when disabled or when there is no results source.
     pub sync_schedule: Option<SyncSchedule>,
+    /// Language model for the question box; `None` until an OpenRouter key is configured.
+    pub model: Option<OpenRouterModel>,
+    /// Questions answered at the same time; the rest get status 429.
+    pub ask_slots: tokio::sync::Semaphore,
     /// Held while a results sync runs (manual or scheduled); at most one at a time.
     pub sync_lock: Arc<tokio::sync::Mutex<()>>,
     sync_phase: std::sync::Mutex<SyncPhase>,
@@ -75,6 +83,7 @@ impl App {
         source: HttpDatasetSource,
         results: Option<BalldontlieSource>,
         sync_schedule: Option<SyncSchedule>,
+        model: Option<OpenRouterModel>,
     ) -> Self {
         Self {
             config,
@@ -82,6 +91,8 @@ impl App {
             source,
             results,
             sync_schedule,
+            model,
+            ask_slots: tokio::sync::Semaphore::new(ASK_SLOTS),
             sync_lock: Arc::new(tokio::sync::Mutex::new(())),
             sync_phase: std::sync::Mutex::new(SyncPhase::Idle),
             started_at: chrono::Utc::now(),

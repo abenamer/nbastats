@@ -17,9 +17,7 @@ generated: { by: "human:abenamer", at: "2026-10-21T17:30:00Z" }
 
        cp .env.example .env
 
-2. Open `.env`. Set `POSTGRES_PASSWORD` to a new password. Set the same password in `DATABASE_URL`.
-
-   **WARNING:** The default password in `.env.example` is public. Do not keep it.
+2. Open `.env`. Set `POSTGRES_PASSWORD` to a new password; Compose builds the database connection string from it. The other values have working defaults. The file is grouped by purpose: database, network, data, simulation limits, results sync, question box, logging.
 
 3. Build the image and start the services:
 

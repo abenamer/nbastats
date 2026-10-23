@@ -7,11 +7,15 @@
   // The winner of a game and its margin, e.g. "NYK by 10"; a tie (none in the log) reads "tie".
   const winner = (home, hs, away, as_) => hs === as_ ? 'tie' : hs > as_ ? `${home} by ${hs - as_}` : `${away} by ${as_ - hs}`;
   // `endLabel` adds the rating after the team's last game (for a champion, the clinching game).
+  const po = e => (e.playoff_wins || e.playoff_losses) ? `${e.playoff_wins}-${e.playoff_losses}` : '–';
+  // With a date (a peak or low line), "Reached in" names the phase of the game that set the value.
+  const PHASE = { regular: 'Regular season', play_in: 'Play-in', cup_final: 'Cup final', playoff: 'Playoffs' };
   const entryCols = (valueLabel, withDate = true, endLabel = null) => [
     { label: 'Season', value: e => labelOf(e.season), left: true }, { label: 'Team', value: team, left: true }, { label: 'Lg', value: e => league(e.league), left: true },
-    { label: valueLabel, value: e => num(e.value, 0) }, ...(withDate ? [{ label: 'Date', value: e => e.date || '', left: true }] : []),
+    { label: valueLabel, value: e => num(e.value, 0) },
+    ...(withDate ? [{ label: 'Date', value: e => e.date || '', left: true }, { label: 'Reached in', value: e => PHASE[e.game_type] || '', left: true }] : []),
     ...(endLabel ? [{ label: endLabel, value: e => num(e.elo_end, 0) }] : []),
-    { label: 'W-L', value: rec, left: true }, { label: 'Result', value: e => RESULT[e.playoff_result] || e.playoff_result, left: true, cls: e => e.playoff_result === 'champion' ? 'good' : '' }];
+    { label: 'Reg. W-L', value: rec, left: true }, { label: 'Playoff W-L', value: po, left: true }, { label: 'Result', value: e => RESULT[e.playoff_result] || e.playoff_result, left: true, cls: e => e.playoff_result === 'champion' ? 'good' : '' }];
   const list = (id, rows, valueLabel, withDate, endLabel) => { document.getElementById(id).innerHTML = rows.length ? table(entryCols(valueLabel, withDate, endLabel), rows) : '<p class="muted">No data.</p>'; };
   const pair = (x, which) => `${x.extremes[which].code} ${num(x.extremes[which].value, 0)} (${labelOf(x.extremes[which].season)})`;
   const groupCols = [
@@ -48,6 +52,15 @@
       { label: 'Gap (W − E)', value: c => `${c.gap >= 0 ? '+' : ''}${num(c.gap, 0)}` }, { label: 'Stronger', value: c => Math.abs(c.gap) < 5 ? 'even' : (c.gap > 0 ? 'West' : 'East'), left: true },
       { label: 'East best', value: 'east_best_code', left: true }, { label: 'West best', value: 'west_best_code', left: true },
       { label: 'Title', value: c => c.champion_code ? `${c.champion_conference === 'west' ? 'West' : c.champion_conference === 'east' ? 'East' : '?'} · ${c.champion_code}` : '', left: true, cls: c => c.champion_conference && Math.abs(c.gap) >= 5 ? (c.champion_conference === 'west') === (c.gap > 0) ? 'good' : 'bad' : '' }], r.conference_seasons);
+    // The top four winners, the rest as a count; the full list is the cell's tooltip.
+    const titleList = c => { if (!c.champions.length) return 'none recorded'; const all = c.champions.map(t => `${t.code} ${t.titles}`); const shown = all.slice(0, 4).join(', '); return `<span title="${esc(all.join(', '))}">${esc(shown)}${all.length > 4 ? ` +${all.length - 4} more` : ''}</span>`; };
+    document.getElementById('byCba').innerHTML = table([
+      { label: 'Period', value: c => `<span title="${esc(c.summary)}">${esc(c.name)}</span>`, raw: true, left: true }, { label: 'Seasons', value: c => `${c.seasons} (${span(c)})`, left: true },
+      { label: 'Best team-season', value: c => `${c.best.code} ${num(c.best.value, 0)} (${labelOf(c.best.season)})`, left: true, cls: () => 'good' },
+      { label: 'Weakest', value: c => `${c.weakest.code} ${num(c.weakest.value, 0)} (${labelOf(c.weakest.season)})`, left: true, cls: () => 'bad' },
+      { label: 'Titles', value: 'titles' }, { label: 'Champions', value: titleList, raw: true, left: true }, { label: 'Distinct', value: 'distinct_champions' },
+      { label: 'Title HHI', value: c => c.title_hhi == null ? '–' : num(c.title_hhi, 2) }, { label: 'Elo spread', value: c => c.elo_spread == null ? '–' : num(c.elo_spread, 0) }], r.by_cba);
+    document.getElementById('cbaChanges').innerHTML = r.by_cba.map(c => `<details><summary><strong>${esc(c.name)}</strong> · ${esc(span(c))} <span class="muted small">${esc(c.summary)}</span></summary><ul class="small">${c.changes.map(ch => `<li><span class="muted">${labelOf(ch.season)}</span> ${esc(ch.text)}</li>`).join('')}</ul></details>`).join('');
     group('divBest', r.divisions.best); group('divWorst', r.divisions.worst);
     list('bestChampion', r.best_champion, 'Peak Elo', true, 'At the clinch'); list('worstChampion', r.worst_champion, 'Peak Elo', true, 'At the clinch'); list('bestUncrowned', r.best_uncrowned, 'Peak Elo', true, 'Season end');
     list('bestEnd', r.best_end, 'End Elo', false); list('worstEnd', r.worst_end, 'End Elo', false);

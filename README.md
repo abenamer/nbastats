@@ -18,7 +18,7 @@ The project follows the [REAS engineering standard](https://github.com/abenamer/
 1. Copy the example configuration and set a password:
 
        cp .env.example .env
-       # edit .env: set POSTGRES_PASSWORD and the same password in DATABASE_URL
+       # edit .env: set POSTGRES_PASSWORD (the other values have working defaults)
 
 2. Build and start:
 

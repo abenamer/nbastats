@@ -19,6 +19,12 @@ pub enum ApiError {
     Conflict(String),
     Unavailable(String),
     Internal(String),
+    /// A feature that needs configuration the operator has not set (503, message shown).
+    NotConfigured(String),
+    /// Too many requests of a kind at once (429).
+    Busy(String),
+    /// An external service did not answer as expected (502, message shown; details logged).
+    Upstream(String),
 }
 
 impl ApiError {
@@ -111,6 +117,9 @@ impl IntoResponse for ApiError {
                     "internal error".to_string(),
                 )
             }
+            ApiError::NotConfigured(m) => (StatusCode::SERVICE_UNAVAILABLE, m),
+            ApiError::Busy(m) => (StatusCode::TOO_MANY_REQUESTS, m),
+            ApiError::Upstream(m) => (StatusCode::BAD_GATEWAY, m),
         };
         (status, Json(json!({ "error": message }))).into_response()
     }
