@@ -5,7 +5,7 @@ pub mod error;
 pub mod guard;
 pub mod pages;
 
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use axum::extract::DefaultBodyLimit;
 use axum::http::{header, HeaderValue};
@@ -13,7 +13,7 @@ use axum::routing::{delete, get, post};
 use axum::{middleware, Router};
 use tower_http::compression::CompressionLayer;
 use tower_http::services::ServeDir;
-use tower_http::set_header::SetResponseHeaderLayer;
+use tower_http::set_header::{SetResponseHeader, SetResponseHeaderLayer};
 use tower_http::trace::TraceLayer;
 
 use crate::application::state::App;
@@ -72,7 +72,16 @@ pub fn router(app: State) -> Router {
         .route("/jobs", get(pages::jobs))
         .route("/healthz", get(api::healthz))
         .nest("/api", api)
-        .nest_service("/static", ServeDir::new("static"))
+        // Browsers revalidate static files on every load (Last-Modified from ServeDir),
+        // and the pages version their asset URLs, so a rebuild never pairs an old script with a new one.
+        .nest_service(
+            "/static",
+            SetResponseHeader::overriding(
+                ServeDir::new("static"),
+                header::CACHE_CONTROL,
+                HeaderValue::from_static("no-cache"),
+            ),
+        )
         .layer(DefaultBodyLimit::max(64 * 1024 * 1024))
         .layer(CompressionLayer::new())
         .layer(SetResponseHeaderLayer::if_not_present(
@@ -97,4 +106,32 @@ pub fn router(app: State) -> Router {
         .layer(middleware::from_fn_with_state(app.clone(), guard::browser_request_guard))
         .layer(TraceLayer::new_for_http())
         .with_state(app)
+}
+
+/// A short hash of the served scripts and stylesheet, computed once at first use. Pages append
+/// it to the static URLs (`?v=...`), so a changed file is a new URL for the browser.
+pub fn asset_version() -> &'static str {
+    static VERSION: OnceLock<String> = OnceLock::new();
+    VERSION.get_or_init(|| {
+        let mut paths: Vec<_> = std::fs::read_dir("static/js")
+            .map(|d| {
+                d.filter_map(|e| e.ok().map(|e| e.path()))
+                    .filter(|p| p.extension().is_some_and(|x| x == "js"))
+                    .collect()
+            })
+            .unwrap_or_default();
+        paths.push(std::path::PathBuf::from("static/css/app.css"));
+        paths.sort();
+        let mut bytes = Vec::new();
+        for p in paths {
+            if let Ok(b) = std::fs::read(&p) {
+                bytes.extend_from_slice(p.to_string_lossy().as_bytes());
+                bytes.extend_from_slice(&b);
+            }
+        }
+        if bytes.is_empty() {
+            return crate::config::APP_VERSION.to_string();
+        }
+        crate::application::imports::sha256_hex(&bytes)[..12].to_string()
+    })
 }

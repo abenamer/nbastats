@@ -31,20 +31,45 @@ window.NBA = (() => {
       await sleep(delay); delay = Math.min(delay * 1.5, 2000);
     }
   }
+  // Tables sort on a header click: numbers as numbers (commas, +, % and · suffixes stripped), the rest as text.
+  // The rows are sorted in place in the DOM, so every table built here is sortable without keeping its data.
   function table(columns, rows) {
-    const th = columns.map(c => `<th class="${c.left ? 'l' : ''}">${esc(c.label)}</th>`).join('');
+    const th = columns.map((c, i) => `<th class="${c.left ? 'l' : ''}" data-col="${i}" title="Sort">${esc(c.label)}</th>`).join('');
     const body = rows.map(r => '<tr>' + columns.map(c => {
       const v = typeof c.value === 'function' ? c.value(r) : r[c.value];
       const cls = (c.left ? 'l ' : '') + (typeof c.cls === 'function' ? c.cls(r) : '');
       return `<td class="${cls}">${c.raw ? v : esc(v)}</td>`;
     }).join('') + '</tr>').join('');
-    return `<table><thead><tr>${th}</tr></thead><tbody>${body}</tbody></table>`;
+    return `<table class="sortable"><thead><tr>${th}</tr></thead><tbody>${body}</tbody></table>`;
   }
+  const sortKey = text => { const t = text.trim().replace(/^[+]/, '').replace(/,/g, '').replace(/[%·].*$/, ''); const n = t === '' ? NaN : Number(t); return Number.isNaN(n) ? null : n; };
+  document.addEventListener('click', e => {
+    const th = e.target.closest('table.sortable th[data-col]'); if (!th) return;
+    const tbl = th.closest('table'), col = Number(th.dataset.col), tbody = tbl.tBodies[0]; if (!tbody) return;
+    const dir = th.classList.contains('asc') ? 'desc' : th.classList.contains('desc') ? 'asc' : (col === 0 ? 'asc' : 'desc');
+    tbl.querySelectorAll('th').forEach(h => h.classList.remove('asc', 'desc')); th.classList.add(dir);
+    const rows = Array.from(tbody.rows), cell = r => (r.cells[col] ? r.cells[col].textContent : '');
+    const numeric = rows.length && rows.every(r => sortKey(cell(r)) !== null || cell(r).trim() === '');
+    const sign = dir === 'asc' ? 1 : -1;
+    rows.sort((a, b) => {
+      if (numeric) { const x = sortKey(cell(a)), y = sortKey(cell(b)); if (x === null || y === null) return x === y ? 0 : x === null ? 1 : -1; return sign * (x - y); }
+      return sign * cell(a).localeCompare(cell(b), undefined, { numeric: true, sensitivity: 'base' });
+    });
+    rows.forEach(r => tbody.appendChild(r));
+  });
   function bar(p, max = 1) { const w = Math.max(0, Math.min(100, 100 * p / max)); return `<span class="bar" style="width:${w.toFixed(0)}px"></span>${pct(p)}`; }
   function cards(el, items) { el.innerHTML = items.map(i => `<div class="card"><div class="label">${esc(i.label)}</div><div class="value">${esc(i.value)}</div>${i.sub ? `<div class="sub">${esc(i.sub)}</div>` : ''}</div>`).join(''); }
   function setStatus(el, msg, isError) { el.textContent = msg || ''; el.style.color = isError ? '#b91c1c' : ''; }
   const charts = {};
-  function chart(id, config) { if (charts[id]) charts[id].destroy(); const ctx = document.getElementById(id); if (!ctx) return null; charts[id] = new Chart(ctx, config); return charts[id]; }
+  // One chart per canvas. Chart.js registers the canvas before it finishes building, so a chart that throws
+  // halfway would leave the canvas "in use"; any chart on the canvas is destroyed first, and a failure frees it.
+  function chart(id, config) {
+    const ctx = document.getElementById(id); if (!ctx) return null;
+    const release = c => { try { c.destroy(); } catch (e) { delete Chart.instances[c.id]; } };
+    const old = charts[id] || Chart.getChart(ctx); if (old) release(old); delete charts[id];
+    try { charts[id] = new Chart(ctx, config); return charts[id]; }
+    catch (e) { const stuck = Chart.getChart(ctx); if (stuck) release(stuck); throw e; }
+  }
   // Dates on a linear axis: x is days since the epoch; ticks read as months for one season, years for longer spans.
   const DAY = 86400000;
   const dayOf = d => Date.parse(d + 'T00:00:00Z') / DAY;

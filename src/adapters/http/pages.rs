@@ -18,6 +18,8 @@ pub struct Layout {
     pub title: &'static str,
     pub active: &'static str,
     pub version: &'static str,
+    /// Appended to the static URLs so a rebuilt script is fetched fresh.
+    pub assets: &'static str,
 }
 
 impl Layout {
@@ -26,6 +28,7 @@ impl Layout {
             title,
             active,
             version: APP_VERSION,
+            assets: super::asset_version(),
         }
     }
 }

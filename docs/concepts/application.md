@@ -36,6 +36,8 @@ See the [Elo rating model](/concepts/elo-model.md), the [alpha lottery engine](/
 
 # Pages
 
+Every table sorts on a header click: numbers as numbers, text as text, blanks last; a second click reverses the order. Static files (scripts, stylesheet) carry a content hash in their URL and are served with `Cache-Control: no-cache`, so a rebuilt application never runs an old script with a new one.
+
 | Page | Path | Content |
 |------|------|---------|
 | Dashboard | `/` | Title distribution, concentration and the equal-strength comparison. |

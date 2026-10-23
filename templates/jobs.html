@@ -3,4 +3,4 @@
 <section class="controls"><label>Kind <select id="kind"><option value="">All</option><option value="alpha">Alpha</option><option value="playoff">Playoff</option><option value="season">Season</option><option value="backtest">Backtest</option></select></label><button id="reload">Reload</button><span class="muted small">Jobs keep their configuration, seed, and software/model versions. Interrupted jobs (container restart) can be retried; completed results are never recomputed silently.</span></section>
 <section class="panel"><div id="jobs" class="table-wrap"></div></section>
 {% endblock %}
-{% block scripts %}<script src="/static/js/jobs.js" defer></script>{% endblock %}
+{% block scripts %}<script src="/static/js/jobs.js?v={{ layout.assets }}" defer></script>{% endblock %}
