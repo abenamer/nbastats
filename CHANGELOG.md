@@ -6,6 +6,7 @@
 - Aligned with REAS 1.2.0-draft: domain, application and adapters layout; six ports and one `PostgresStore` adapter; `TeamId`, `FranchiseId` and `SeasonYear` newtypes; typed errors; conditional job transitions; documentation checker, terminology, self-audit and decisions.
 
 - CI: actions moved to releases that run on Node 24 (`actions/checkout@v5`, `actions/setup-python@v6`); the audit job runs a prebuilt `cargo audit` (via `taiki-e/install-action`) instead of `rustsec/audit-check`, which has no Node 24 release, so the deprecation warnings stop.
+- Records page: eras are grouped into named rule periods (pre shot clock, shot clock, three-point line, zone defense, hand-check ban; the ABA is one period); a period start also starts an era, so the 29-team run splits at 2001-02. The era, clanker and road tables carry the period, and a legend lists the periods with their rule changes.
 - Records page: every panel takes the full width and the table cells are tighter, so the tables no longer scroll sideways at common widths.
 - Records page: the matchup and clanker tables name the winner and the margin of each game.
 - Records page: the East-against-West table names the champion and its conference each season, green when the stronger conference won.

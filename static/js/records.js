@@ -26,9 +26,13 @@
     document.getElementById('byDecade').innerHTML = table([
       { label: 'Decade', value: d => `${d.decade}s`, left: true }, { label: 'Team-seasons', value: 'teams' },
       { label: 'Highest', value: d => pair(d, 'best'), left: true, cls: () => 'good' }, { label: 'Lowest', value: d => pair(d, 'worst'), left: true, cls: () => 'bad' }], r.by_decade);
+    const span = e => e.first_season === e.last_season ? labelOf(e.first_season) : `${labelOf(e.first_season)} to ${labelOf(e.last_season)}`;
+    document.getElementById('periods').innerHTML = table([
+      { label: 'League', value: p => league(p.league), left: true }, { label: 'Period', value: 'name', left: true }, { label: 'Seasons', value: span, left: true },
+      { label: 'Eras', value: 'eras' }, { label: 'Rule change at the start', value: 'rule', left: true }], r.periods);
     const eraCols = [
-      { label: 'Era', value: e => e.first_season === e.last_season ? labelOf(e.first_season) : `${labelOf(e.first_season)} to ${labelOf(e.last_season)}`, left: true },
-      { label: 'Teams', value: 'teams' }, { label: 'Seasons', value: 'seasons' }, { label: '3-pt line', value: e => e.three_point ? 'yes' : 'no', left: true },
+      { label: 'Period', value: 'period', left: true }, { label: 'Era', value: span, left: true },
+      { label: 'Teams', value: 'teams' }, { label: 'Seasons', value: 'seasons' },
       { label: 'Highest', value: e => pair(e, 'best'), left: true, cls: () => 'good' }, { label: 'Lowest', value: e => pair(e, 'worst'), left: true, cls: () => 'bad' }];
     document.getElementById('byEraNba').innerHTML = table(eraCols, r.by_era.filter(e => e.league === 'nba'));
     document.getElementById('byEraAba').innerHTML = table(eraCols, r.by_era.filter(e => e.league === 'aba'));
@@ -61,7 +65,7 @@
       { label: 'Winner', value: m => winner(m.home_code, m.home_score, m.away_code, m.away_score), left: true, cls: () => 'good' }], rows); };
     matchups('greatest', r.greatest_matchups);
     const clankers = (id, rows) => { document.getElementById(id).innerHTML = table([
-      { label: 'Era', value: e => e.first_season === e.last_season ? labelOf(e.first_season) : `${labelOf(e.first_season)} to ${labelOf(e.last_season)}`, left: true }, { label: 'Teams', value: 'teams' },
+      { label: 'Period', value: 'period', left: true }, { label: 'Era', value: span, left: true }, { label: 'Teams', value: 'teams' },
       { label: 'Date', value: e => e.game.game_date, left: true }, { label: 'Home', value: e => e.game.home_code, left: true }, { label: 'Elo', value: e => num(e.game.home_elo_pre, 0) },
       { label: 'Away', value: e => e.game.away_code, left: true }, { label: 'Elo', value: e => num(e.game.away_elo_pre, 0) },
       { label: 'Combined', value: e => num(e.game.home_elo_pre + e.game.away_elo_pre, 0) },
@@ -70,7 +74,7 @@
     clankers('clankersNba', r.clankers_by_era.filter(e => e.league === 'nba')); clankers('clankersAba', r.clankers_by_era.filter(e => e.league === 'aba'));
     const champ = c => `${labelOf(c.season)} <span title="${esc(c.name)} · regular-season opponents ${num(c.regular_opponent_elo, 0)}, playoff opponents ${num(c.playoff_opponent_elo, 0)}, toughest ${esc(c.toughest_opponent_code)} (${num(c.toughest_opponent_elo, 0)})">${esc(c.code)}</span>`;
     document.getElementById('roadsByEra').innerHTML = table([
-      { label: 'Era', value: e => e.first_season === e.last_season ? labelOf(e.first_season) : `${labelOf(e.first_season)} to ${labelOf(e.last_season)}`, left: true }, { label: 'Teams', value: 'teams' }, { label: 'Titles', value: 'champions' },
+      { label: 'Period', value: 'period', left: true }, { label: 'Era', value: span, left: true }, { label: 'Teams', value: 'teams' }, { label: 'Titles', value: 'champions' },
       { label: 'Hardest road', value: e => champ(e.hardest), raw: true, left: true }, { label: 'Road', value: e => num(e.hardest.road, 0) }, { label: 'Toughest opp.', value: e => `${e.hardest.toughest_opponent_code} (${num(e.hardest.toughest_opponent_elo, 0)})`, left: true },
       { label: 'Easiest road', value: e => champ(e.easiest), raw: true, left: true }, { label: 'Road', value: e => num(e.easiest.road, 0) }], r.roads_by_era.filter(e => e.league === 'nba'));
     setStatus(status, '');
