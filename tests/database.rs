@@ -382,7 +382,8 @@ async fn records_queries_summarise_the_game_log(pool: PgPool) {
     assert_eq!(r.greatest_matchups.len(), 3);
     assert_eq!(r.clankers_by_era.len(), 1);
     assert_eq!(r.clankers_by_era[0].game.season, S2016);
-    assert_eq!(r.hardest_roads.len(), 1);
+    assert_eq!(r.roads_by_era.len(), 1);
+    assert_eq!(r.roads_by_era[0].hardest.code, "CLE");
     assert_eq!(r.all_time_high[0].code, "GSW");
     assert_eq!(r.best_champion[0].code, "CLE");
     assert_eq!(r.conference_seasons.len(), 1);
@@ -740,4 +741,73 @@ fn record(date: &str, home: &str, away: &str, score: Option<(i32, i32)>) -> Resu
         home_score: score.map(|s| s.0),
         away_score: score.map(|s| s.1),
     }
+}
+
+/// The application's Elo code re-rates an archive season to the archive's own numbers: the
+/// one-step update from each game's imported pre-game ratings reproduces its post-game
+/// ratings, and the chain from the first ratings reproduces the season-end ratings.
+#[sqlx::test(migrations = "./migrations")]
+async fn elo_replay_reproduces_the_archive_ratings(pool: PgPool) {
+    use nba_elo_simulator::domain::continuation::{rate_games, ResultGame};
+    use nba_elo_simulator::domain::elo;
+    let (store, _teams) = common::setup(pool).await;
+    imports::import_bytes(
+        &store,
+        common::FIXTURE.as_bytes(),
+        prov("mini_2016.csv"),
+        false,
+    )
+    .await
+    .unwrap();
+    let games = store.season_games(S2016).await.unwrap();
+    assert!(
+        games.len() > 100,
+        "fixture season has {} games",
+        games.len()
+    );
+    let mut one_step_max: f64 = 0.0;
+    for g in games.iter().filter(|g| g.is_played()) {
+        let (h, a) = (g.home_score.unwrap(), g.away_score.unwrap());
+        let (hp, ap) = elo::fivethirtyeight_update(g.home_elo_pre, g.away_elo_pre, h, a, g.neutral);
+        one_step_max = one_step_max
+            .max((hp - g.home_elo_post).abs())
+            .max((ap - g.away_elo_post).abs());
+    }
+    assert!(one_step_max < 0.1, "one-step max difference {one_step_max}");
+    let mut start = std::collections::HashMap::new();
+    for g in &games {
+        start.entry(g.home_team_id).or_insert(g.home_elo_pre);
+        start.entry(g.away_team_id).or_insert(g.away_elo_pre);
+    }
+    let input: Vec<ResultGame> = games
+        .iter()
+        .map(|g| ResultGame {
+            date: g.game_date,
+            home: g.home_team_id,
+            away: g.away_team_id,
+            neutral: g.neutral,
+            playoff: g.game_type == GameType::Playoff,
+            home_score: g.home_score,
+            away_score: g.away_score,
+        })
+        .collect();
+    let rated = rate_games(&start, &input).unwrap();
+    let mut ours = std::collections::HashMap::new();
+    for r in &rated {
+        ours.insert(r.game.home, r.home_elo_post);
+        ours.insert(r.game.away, r.away_elo_post);
+    }
+    let mut theirs = std::collections::HashMap::new();
+    for g in &games {
+        theirs.insert(g.home_team_id, g.home_elo_post);
+        theirs.insert(g.away_team_id, g.away_elo_post);
+    }
+    let chain_max = theirs
+        .iter()
+        .map(|(t, e)| (ours[t] - e).abs())
+        .fold(0.0_f64, f64::max);
+    assert!(
+        chain_max < 0.1,
+        "season-end chain max difference {chain_max}"
+    );
 }

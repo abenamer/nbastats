@@ -40,7 +40,7 @@ These are project-specific technical terms. They are not a reproduction of the A
 | Port | A trait in `application::ports` that the application requires from the outside world. |
 | Projection | A placeholder season: the previous season's matchups one year later, no scores, reverted ratings. |
 | Results source | The `ResultsSource` port: game results and schedule of a season without Elo data. The adapter is `BalldontlieSource`. |
-| Road to the title | A champion's mean opponent rating before each game, shown for the regular season and for the playoffs (play-in included), and combined as the mean over every game, so each phase weighs by its games. The ten highest are the hardest roads, the ten lowest the easiest. |
+| Road to the title | A champion's mean opponent rating before each game, shown for the regular season and for the playoffs (play-in included), and combined as the mean over every game, so each phase weighs by its games. Each era shows its champion with the highest road (hardest) and the one with the lowest (easiest). |
 | Scenario | A named, completed job that you can reopen and compare. |
 | Season | An NBA season named by its end year. `SeasonYear(2004)` is 2003-04. |
 | Seed | Playoff position 1 to 8 inside a conference. |
