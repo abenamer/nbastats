@@ -27,7 +27,7 @@
 </section>
 <section class="grid2">
   <div class="panel"><h2>Greatest matchups</h2><p class="muted small">The 20 played games with the highest combined rating of the two teams before tip-off.</p><div id="greatest" class="table-wrap"></div></div>
-  <div class="panel"><h2>Clankers</h2><p class="muted small">The 20 played games with the lowest combined rating before tip-off. A new league starts every team at 1300 and its weakest teams fall fast, so the first ABA and BAA seasons fill this table.</p><div id="weakest" class="table-wrap"></div></div>
+  <div class="panel"><h2>Clankers by era</h2><p class="muted small">The played game with the lowest combined rating before tip-off in each era (an era changes with the league's team count and, for the NBA, at the 3-point line). A league-wide list would only find the newest franchises, which start at 1300.</p><h3>NBA/BAA</h3><div id="clankersNba" class="table-wrap"></div><h3 style="margin-top:.8rem">ABA</h3><div id="clankersAba" class="table-wrap"></div></div>
 </section>
 {% endblock %}
 {% block scripts %}<script src="/static/js/records.js?v={{ layout.assets }}" defer></script>{% endblock %}

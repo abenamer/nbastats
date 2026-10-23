@@ -6,7 +6,7 @@
 - Aligned with REAS 1.2.0-draft: domain, application and adapters layout; six ports and one `PostgresStore` adapter; `TeamId`, `FranchiseId` and `SeasonYear` newtypes; typed errors; conditional job transitions; documentation checker, terminology, self-audit and decisions.
 
 - Records page: hardest and easiest roads to the title, ten each: a champion's mean opponent rating before each game over the regular season and over the playoffs, and the mean of the two; the `AnalysisStore` port gains `champion_roads`. The best and worst champion lists now take champions from the championships table, so the curated seasons (1946-47 to 1959-60, 1967-68 to 1973-74) appear.
-- Records page: greatest matchups and clankers, the 20 played games with the highest and the lowest combined pre-game rating of the two teams; the `AnalysisStore` port gains `matchups`.
+- Records page: greatest matchups, the 20 played games with the highest combined pre-game rating of the two teams, and clankers by era, the weakest game of each era with NBA/BAA and ABA apart (a league-wide list would only find the newest franchises, which start at 1300); the `AnalysisStore` port gains `matchups` and `weakest_matchup_per_season`.
 - Elo Explorer: a click on a team code in the ratings table adds the team to the highlight field (a second click removes it) and reloads the chart; the table shows codes with the full name as a tooltip, so every column fits.
 - Every table sorts on a header click (numbers as numbers, text as text, blanks last); a second click reverses the order.
 - Static files carry a content hash in their URL and are served with `Cache-Control: no-cache`, so a rebuilt page never runs an old script with a new one. A chart whose creation fails no longer locks its canvas.

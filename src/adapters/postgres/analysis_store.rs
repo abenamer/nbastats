@@ -8,6 +8,7 @@ use crate::application::ports::{AnalysisStore, NewForecast, StoreHealth, StoreRe
 use crate::domain::ids::{FranchiseId, SeasonYear};
 use crate::domain::models::{ChampionshipView, TeamSeasonView};
 use crate::domain::records::{ChampionRoad, GameSwing, Matchup, MatchupOrder, TeamSeasonStat};
+use crate::domain::reference;
 
 use super::PostgresStore;
 
@@ -30,7 +31,52 @@ macro_rules! matchups_sql {
     };
 }
 const MATCHUPS_DESC: &str = matchups_sql!("DESC");
+
 const MATCHUPS_ASC: &str = matchups_sql!("ASC");
+
+type MatchupRow = (
+    SeasonYear,
+    NaiveDate,
+    String,
+    String,
+    String,
+    String,
+    f64,
+    f64,
+    i32,
+    i32,
+    bool,
+);
+
+fn matchup_from_row(
+    (
+        season,
+        game_date,
+        home_code,
+        home_name,
+        away_code,
+        away_name,
+        home_elo_pre,
+        away_elo_pre,
+        home_score,
+        away_score,
+        playoff,
+    ): MatchupRow,
+) -> Matchup {
+    Matchup {
+        season,
+        game_date,
+        home_code,
+        home_name,
+        away_code,
+        away_name,
+        home_elo_pre,
+        away_elo_pre,
+        home_score,
+        away_score,
+        playoff,
+    }
+}
 
 impl AnalysisStore for PostgresStore {
     async fn team_seasons(&self, season: SeasonYear) -> StoreResult<Vec<TeamSeasonView>> {
@@ -199,57 +245,35 @@ impl AnalysisStore for PostgresStore {
     }
 
     async fn matchups(&self, order: MatchupOrder, limit: i64) -> StoreResult<Vec<Matchup>> {
-        type Row = (
-            SeasonYear,
-            NaiveDate,
-            String,
-            String,
-            String,
-            String,
-            f64,
-            f64,
-            i32,
-            i32,
-            bool,
-        );
         let sql = match order {
             MatchupOrder::Strongest => MATCHUPS_DESC,
             MatchupOrder::Weakest => MATCHUPS_ASC,
         };
-        let rows: Vec<Row> = sqlx::query_as(sql)
+        let rows: Vec<MatchupRow> = sqlx::query_as(sql)
             .bind(limit)
             .fetch_all(&self.pool)
             .await?;
-        Ok(rows
-            .into_iter()
-            .map(
-                |(
-                    season,
-                    game_date,
-                    home_code,
-                    home_name,
-                    away_code,
-                    away_name,
-                    home_elo_pre,
-                    away_elo_pre,
-                    home_score,
-                    away_score,
-                    playoff,
-                )| Matchup {
-                    season,
-                    game_date,
-                    home_code,
-                    home_name,
-                    away_code,
-                    away_name,
-                    home_elo_pre,
-                    away_elo_pre,
-                    home_score,
-                    away_score,
-                    playoff,
-                },
-            )
-            .collect())
+        Ok(rows.into_iter().map(matchup_from_row).collect())
+    }
+
+    async fn weakest_matchup_per_season(&self) -> StoreResult<Vec<Matchup>> {
+        // A game belongs to the league of its teams; the ABA codes are bound as an array.
+        let aba: Vec<String> = reference::ABA_TEAM_CODES
+            .iter()
+            .map(|c| c.to_string())
+            .collect();
+        let rows: Vec<MatchupRow> = sqlx::query_as(
+            "SELECT DISTINCT ON (g.season, h.code = ANY($1))
+                    g.season, g.game_date, h.code, h.name, a.code, a.name,
+                    g.home_elo_pre, g.away_elo_pre, g.home_score, g.away_score, g.game_type = 'playoff' AS playoff
+             FROM games g JOIN teams h ON h.id = g.home_team_id JOIN teams a ON a.id = g.away_team_id
+             WHERE g.home_score IS NOT NULL AND (h.code = ANY($1)) = (a.code = ANY($1))
+             ORDER BY g.season, h.code = ANY($1), g.home_elo_pre + g.away_elo_pre ASC, g.game_date",
+        )
+        .bind(&aba)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows.into_iter().map(matchup_from_row).collect())
     }
 
     async fn biggest_swings(&self, limit: i64) -> StoreResult<Vec<GameSwing>> {

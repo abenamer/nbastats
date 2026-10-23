@@ -121,12 +121,25 @@ impl ChampionRoad {
     }
 }
 
+/// The weakest game of an era: the clanker. A league-wide list would only find the newest
+/// franchises (every team starts at 1300), so the clankers are taken era by era.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct EraClanker {
+    pub league: League,
+    pub first_season: SeasonYear,
+    pub last_season: SeasonYear,
+    pub teams: usize,
+    pub three_point: bool,
+    pub game: Matchup,
+}
+
 /// The game-level record inputs the store ranks for `compute`.
 #[derive(Debug, Clone, Default)]
 pub struct GameRecords {
     pub swings: Vec<GameSwing>,
     pub greatest_matchups: Vec<Matchup>,
-    pub weakest_matchups: Vec<Matchup>,
+    /// The weakest game of every season and league, from which `compute` picks each era's.
+    pub weakest_per_season: Vec<Matchup>,
     /// Every champion's road; `compute` ranks it both ways.
     pub champion_roads: Vec<ChampionRoad>,
 }
@@ -263,8 +276,8 @@ pub struct Records {
     pub swings: Vec<GameSwing>,
     /// Played games with the highest combined pre-game rating, strongest first.
     pub greatest_matchups: Vec<Matchup>,
-    /// Played games with the lowest combined pre-game rating, weakest first.
-    pub weakest_matchups: Vec<Matchup>,
+    /// The weakest game of each era, in era order (NBA/BAA first, then the ABA).
+    pub clankers_by_era: Vec<EraClanker>,
     /// Champions by road rating, hardest first.
     pub hardest_roads: Vec<ChampionRoad>,
     /// Champions by road rating, easiest first.
@@ -526,11 +539,10 @@ pub fn compute(
     let GameRecords {
         swings,
         mut greatest_matchups,
-        mut weakest_matchups,
+        weakest_per_season,
         champion_roads,
     } = games;
     greatest_matchups.sort_by(|a, b| b.combined_elo().total_cmp(&a.combined_elo()));
-    weakest_matchups.sort_by(|a, b| a.combined_elo().total_cmp(&b.combined_elo()));
     let (hardest_roads, easiest_roads) = rank_roads(champion_roads);
     let all = || stats.iter();
     let floors = season_floors(stats);
@@ -632,6 +644,7 @@ pub fn compute(
             .collect();
         by_era.extend(eras(league, &members, &league_sizes));
     }
+    let clankers_by_era = era_clankers(&by_era, &weakest_per_season);
 
     let champions = || {
         stats
@@ -673,10 +686,35 @@ pub fn compute(
         }),
         swings,
         greatest_matchups,
-        weakest_matchups,
+        clankers_by_era,
         hardest_roads,
         easiest_roads,
     }
+}
+
+/// The weakest game of each era: the lowest combined rating among the season minima that
+/// fall in the era and belong to its league (the league of the home team).
+fn era_clankers(eras: &[EraRecord], weakest_per_season: &[Matchup]) -> Vec<EraClanker> {
+    eras.iter()
+        .filter_map(|e| {
+            let game = weakest_per_season
+                .iter()
+                .filter(|m| {
+                    League::of_code(&m.home_code) == e.league
+                        && e.first_season <= m.season
+                        && m.season <= e.last_season
+                })
+                .min_by(|a, b| a.combined_elo().total_cmp(&b.combined_elo()))?;
+            Some(EraClanker {
+                league: e.league,
+                first_season: e.first_season,
+                last_season: e.last_season,
+                teams: e.teams,
+                three_point: e.three_point,
+                game: game.clone(),
+            })
+        })
+        .collect()
 }
 
 /// The `LIST_LEN` hardest and easiest roads among champions with games in both phases.
@@ -882,6 +920,74 @@ mod tests {
         assert_eq!(r.biggest_rise[0].value, 1855.0 - 1500.0);
         // Conferences: no season here has two rated teams on both sides, so no comparison row.
         assert!(r.conference_seasons.is_empty());
+    }
+
+    #[test]
+    fn clankers_take_the_weakest_game_of_each_era_within_its_league() {
+        let game = |year: i32, home: &str, away: &str, h: f64, a: f64| Matchup {
+            season: SeasonYear::of(year),
+            game_date: d(&format!("{year}-01-15")),
+            home_code: home.to_string(),
+            home_name: home.to_string(),
+            away_code: away.to_string(),
+            away_name: away.to_string(),
+            home_elo_pre: h,
+            away_elo_pre: a,
+            home_score: 100,
+            away_score: 90,
+            playoff: false,
+        };
+        let era = |league, first: i32, last: i32| EraRecord {
+            league,
+            first_season: SeasonYear::of(first),
+            last_season: SeasonYear::of(last),
+            seasons: (last - first + 1) as usize,
+            teams: 10,
+            three_point: false,
+            extremes: Extremes {
+                best: entry(
+                    &stat(first, "X", 1500.0, 1400.0, PlayoffResult::Missed),
+                    1500.0,
+                    None,
+                ),
+                worst: entry(
+                    &stat(first, "Y", 1500.0, 1400.0, PlayoffResult::Missed),
+                    1400.0,
+                    None,
+                ),
+            },
+        };
+        let eras = vec![
+            era(League::Nba, 1970, 1971),
+            era(League::Nba, 1972, 1973),
+            era(League::Aba, 1970, 1973),
+        ];
+        let per_season = vec![
+            game(1970, "BOS", "NYK", 1400.0, 1450.0), // NBA 1970: 2850
+            game(1971, "BUF", "CLE", 1200.0, 1150.0), // NBA 1971: 2350 -> era 1 clanker
+            game(1972, "POR", "CLE", 1300.0, 1250.0), // NBA 1972: 2550 -> era 2 clanker
+            game(1970, "KEN", "INA", 1100.0, 1150.0), // ABA 1970: 2250 -> ABA clanker
+            game(1973, "SDA", "MMT", 1200.0, 1300.0), // ABA 1973: 2500
+        ];
+        let c = era_clankers(&eras, &per_season);
+        let picks: Vec<(League, i32, &str)> = c
+            .iter()
+            .map(|e| {
+                (
+                    e.league,
+                    e.game.season.end_year(),
+                    e.game.home_code.as_str(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            picks,
+            vec![
+                (League::Nba, 1971, "BUF"),
+                (League::Nba, 1972, "POR"),
+                (League::Aba, 1970, "KEN")
+            ]
+        );
     }
 
     #[test]

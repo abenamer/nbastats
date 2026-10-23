@@ -357,6 +357,11 @@ async fn records_queries_summarise_the_game_log(pool: PgPool) {
     assert!(greatest[0].combined_elo() >= greatest[1].combined_elo());
     assert!(weakest[0].combined_elo() <= weakest[1].combined_elo());
     assert!(greatest[0].combined_elo() > weakest[0].combined_elo());
+    // One weakest game per season and league: the fixture has one NBA season, no ABA games.
+    let per_season = store.weakest_matchup_per_season().await.unwrap();
+    assert_eq!(per_season.len(), 1);
+    assert_eq!(per_season[0].season, S2016);
+    assert!((per_season[0].combined_elo() - weakest[0].combined_elo()).abs() < 1e-9);
     // The champion's road comes from the championships table, with both phases filled.
     let roads = store.champion_roads().await.unwrap();
     assert_eq!(roads.len(), 1);
@@ -369,12 +374,14 @@ async fn records_queries_summarise_the_game_log(pool: PgPool) {
         records::GameRecords {
             swings,
             greatest_matchups: greatest,
-            weakest_matchups: weakest,
+            weakest_per_season: per_season,
             champion_roads: roads,
         },
         &rosters,
     );
     assert_eq!(r.greatest_matchups.len(), 3);
+    assert_eq!(r.clankers_by_era.len(), 1);
+    assert_eq!(r.clankers_by_era[0].game.season, S2016);
     assert_eq!(r.hardest_roads.len(), 1);
     assert_eq!(r.all_time_high[0].code, "GSW");
     assert_eq!(r.best_champion[0].code, "CLE");

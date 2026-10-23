@@ -78,10 +78,7 @@ pub async fn records(State(app): State<AppState>) -> ApiResult<Value> {
             .store
             .matchups(MatchupOrder::Strongest, MATCHUP_LEN as i64)
             .await?,
-        weakest_matchups: app
-            .store
-            .matchups(MatchupOrder::Weakest, MATCHUP_LEN as i64)
-            .await?,
+        weakest_per_season: app.store.weakest_matchup_per_season().await?,
         champion_roads: app.store.champion_roads().await?,
     };
     let rosters = app.store.season_rosters().await?;

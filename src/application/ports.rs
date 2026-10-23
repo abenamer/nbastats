@@ -336,6 +336,9 @@ pub trait AnalysisStore: Send + Sync {
     /// Played games ranked by the two teams' combined pre-game rating: the `limit` strongest
     /// or weakest, in that order.
     async fn matchups(&self, order: MatchupOrder, limit: i64) -> StoreResult<Vec<Matchup>>;
+    /// The weakest played game of every season, once for NBA/BAA games and once for ABA
+    /// games (a game belongs to the league of its teams); in season order.
+    async fn weakest_matchup_per_season(&self) -> StoreResult<Vec<Matchup>>;
     /// Every champion (from the championships table, curated ones included) with the mean
     /// rating of its opponents before each regular-season and playoff game.
     async fn champion_roads(&self) -> StoreResult<Vec<ChampionRoad>>;
