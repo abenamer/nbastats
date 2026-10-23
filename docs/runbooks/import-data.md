@@ -47,7 +47,7 @@ The application inserts the previous season's regular-season matchups one year l
 3. Restart the application: `docker compose up -d`.
 4. On the Data page, enter the season end year and click **Sync results from BALLDONTLIE**.
 
-The sync runs in the background. The line under the button shows its progress: requests made, games received, and the seconds until the next request when the application waits for the API quota. On the free tier a full season takes about three minutes. When the sync ends, the page shows the outcome and refreshes the coverage table. Only one sync runs at a time; the daily sync shows the same line while it runs.
+The sync runs in the background. The line under the button shows its progress: requests made, games received, and the seconds until the next request when the application waits for the API quota. The first sync of a season fetches the whole schedule, because the season forecast simulates the games that are not played yet; on the free tier it takes about three minutes. Later syncs ask only for the days from the last played game to today (one or two requests), so a postponed game keeps its old date until the season is removed and synced again. When the sync ends, the page shows the outcome and refreshes the coverage table. Only one sync runs at a time; the daily sync shows the same line while it runs.
 
 ## Daily automatic sync
 

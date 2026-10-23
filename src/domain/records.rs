@@ -7,11 +7,14 @@ use chrono::NaiveDate;
 use serde::Serialize;
 
 use crate::domain::ids::SeasonYear;
+use std::collections::BTreeMap;
+
 use crate::domain::models::{Conference, PlayoffResult};
 use crate::domain::reference;
 
-/// Games a team must have played in a season before its conference or division counts.
-pub const MIN_GAMES_FOR_GROUPS: i64 = 60;
+/// Share of a season's median game count a team must reach before its season counts as
+/// full. Schedules ran from 48 to 82 games, so the floor follows the season, not a fixed number.
+pub const FULL_SEASON_SHARE: f64 = 0.8;
 /// The NBA adopted the 3-point line in 1979-80. The ABA had it from its first season.
 pub const THREE_POINT_SEASON: SeasonYear = SeasonYear::of(1980);
 pub const LIST_LEN: usize = 10;
@@ -300,16 +303,45 @@ pub fn decade_of(season: SeasonYear) -> i32 {
     ((season.end_year() - 1) / 10) * 10
 }
 
+/// The games floor of every season: [`FULL_SEASON_SHARE`] of the median games played by the
+/// teams of that season, rounded up. A team that folded mid-season or an archive row that
+/// stops early stays below it; a lockout or a 48-game BAA schedule does not.
+fn season_floors(stats: &[TeamSeasonStat]) -> BTreeMap<SeasonYear, i64> {
+    let mut games: BTreeMap<SeasonYear, Vec<i64>> = BTreeMap::new();
+    for s in stats {
+        games.entry(s.season).or_default().push(s.games);
+    }
+    games
+        .into_iter()
+        .map(|(season, mut g)| {
+            g.sort_unstable();
+            let n = g.len();
+            let median = if n % 2 == 1 {
+                g[n / 2] as f64
+            } else {
+                (g[n / 2 - 1] + g[n / 2]) as f64 / 2.0
+            };
+            (season, (median * FULL_SEASON_SHARE).ceil() as i64)
+        })
+        .collect()
+}
+
+/// A finished season for the team: the playoffs were reached (so the regular season is over)
+/// and the team played at least the season's games floor.
+fn is_full(s: &TeamSeasonStat, floors: &BTreeMap<SeasonYear, i64>) -> bool {
+    s.elo_pre_playoffs.is_some() && floors.get(&s.season).is_some_and(|f| s.games >= *f)
+}
+
 fn group_records(
     stats: &[TeamSeasonStat],
+    floors: &BTreeMap<SeasonYear, i64>,
     key: impl Fn(&TeamSeasonStat) -> Option<(Conference, Option<String>)>,
 ) -> GroupRecords {
-    use std::collections::BTreeMap;
     // Keyed by the conference name because the enum has no ordering of its own.
     type GroupKey = (SeasonYear, &'static str, Option<String>);
     let mut groups: BTreeMap<GroupKey, (Conference, Vec<&TeamSeasonStat>)> = BTreeMap::new();
     for s in stats {
-        if s.games < MIN_GAMES_FOR_GROUPS || s.elo_pre_playoffs.is_none() {
+        if !is_full(s, floors) {
             continue;
         }
         if let Some((c, d)) = key(s) {
@@ -358,12 +390,14 @@ fn group_records(
 
 /// East against West for every season where both conferences have at least two rated teams
 /// with full seasons.
-fn conference_seasons(stats: &[TeamSeasonStat]) -> Vec<ConferenceSeason> {
-    use std::collections::BTreeMap;
+fn conference_seasons(
+    stats: &[TeamSeasonStat],
+    floors: &BTreeMap<SeasonYear, i64>,
+) -> Vec<ConferenceSeason> {
     let mut by_season: BTreeMap<SeasonYear, (Vec<&TeamSeasonStat>, Vec<&TeamSeasonStat>)> =
         BTreeMap::new();
     for s in stats {
-        if s.games < MIN_GAMES_FOR_GROUPS || s.elo_pre_playoffs.is_none() {
+        if !is_full(s, floors) {
             continue;
         }
         match s.conference {
@@ -416,8 +450,8 @@ pub fn compute(
     swings: Vec<GameSwing>,
     rosters: &[(SeasonYear, String)],
 ) -> Records {
-    use std::collections::BTreeMap;
     let all = || stats.iter();
+    let floors = season_floors(stats);
 
     // Decades
     let mut by_decade_map: BTreeMap<i32, Vec<&TeamSeasonStat>> = BTreeMap::new();
@@ -527,7 +561,7 @@ pub fn compute(
             .iter()
             .filter(|s| s.playoff_result != PlayoffResult::Champion)
     };
-    let full = |s: &TeamSeasonStat| s.games >= MIN_GAMES_FOR_GROUPS;
+    let full = |s: &TeamSeasonStat| is_full(s, &floors);
     let rise = |s: &TeamSeasonStat| {
         let delta = s.elo_end? - s.elo_start?;
         full(s).then(|| entry(s, delta, None))
@@ -551,8 +585,10 @@ pub fn compute(
         best_champion: top(champions(), |s| Some(peak(s)), true, LIST_LEN),
         worst_champion: top(champions(), |s| Some(peak(s)), false, LIST_LEN),
         best_uncrowned: top(others(), |s| Some(peak(s)), true, LIST_LEN),
-        conference_seasons: conference_seasons(stats),
-        divisions: group_records(stats, |s| Some((s.conference?, Some(s.division.clone()?)))),
+        conference_seasons: conference_seasons(stats, &floors),
+        divisions: group_records(stats, &floors, |s| {
+            Some((s.conference?, Some(s.division.clone()?)))
+        }),
         swings,
     }
 }
@@ -748,6 +784,51 @@ mod tests {
         assert_eq!(r.biggest_rise[0].value, 1855.0 - 1500.0);
         // Conferences: no season here has two rated teams on both sides, so no comparison row.
         assert!(r.conference_seasons.is_empty());
+    }
+
+    #[test]
+    fn the_games_floor_follows_each_season_not_a_fixed_count() {
+        // A 50-game lockout season is full; a team that folded after 14 games of a 72-game
+        // season is not; a season that has not reached its playoffs never counts.
+        let mut stats = vec![
+            stat(1999, "WSA", 1700.0, 1600.0, PlayoffResult::Champion),
+            stat(1999, "WUT", 1690.0, 1600.0, PlayoffResult::SecondRound),
+            stat(1999, "ENY", 1600.0, 1500.0, PlayoffResult::Finals),
+            stat(1999, "EMI", 1620.0, 1500.0, PlayoffResult::FirstRound),
+            stat(1955, "EBA", 1400.0, 1300.0, PlayoffResult::Missed),
+            stat(1955, "ESY", 1600.0, 1500.0, PlayoffResult::Champion),
+            stat(1955, "EBO", 1550.0, 1450.0, PlayoffResult::FirstRound),
+            stat(1955, "WFW", 1580.0, 1450.0, PlayoffResult::Finals),
+            stat(1955, "WMN", 1500.0, 1400.0, PlayoffResult::FirstRound),
+            stat(2027, "WLA", 1550.0, 1500.0, PlayoffResult::Missed),
+            stat(2027, "EBO", 1550.0, 1500.0, PlayoffResult::Missed),
+        ];
+        for s in stats.iter_mut().take(4) {
+            s.games = if s.code == "WSA" { 67 } else { 50 };
+        }
+        stats[4].games = 14; // Baltimore folded
+        for s in stats.iter_mut().skip(5).take(4) {
+            s.games = 75;
+        }
+        for s in stats.iter_mut().skip(9) {
+            s.games = 5;
+            s.elo_pre_playoffs = None;
+        }
+        let floors = season_floors(&stats);
+        assert_eq!(floors[&SeasonYear::of(1999)], 40); // median 50 -> 0.8 * 50
+        assert_eq!(floors[&SeasonYear::of(1955)], 60); // median 75
+        assert_eq!(floors[&SeasonYear::of(2027)], 4);
+        let r = compute(&stats, vec![], &[]);
+        let seasons: Vec<i32> = r
+            .conference_seasons
+            .iter()
+            .map(|c| c.season.end_year())
+            .collect();
+        assert_eq!(seasons, vec![1955, 1999]);
+        let c1955 = &r.conference_seasons[0];
+        assert_eq!((c1955.east_teams, c1955.west_teams), (2, 2));
+        assert!(r.best_end.iter().all(|e| e.season.end_year() != 2027));
+        assert!(r.best_end.iter().any(|e| e.season.end_year() == 1999));
     }
 
     #[test]

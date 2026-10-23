@@ -133,7 +133,18 @@ impl App {
         Ok(data)
     }
 
-    /// Drop cached data after an import.
+    /// Today's date in the configured sync time zone (`RESULTS_SYNC_TIMEZONE`, whether or
+    /// not the daily sync is on): the last day a results sync asks the source for.
+    pub fn today(&self) -> chrono::NaiveDate {
+        let zone: chrono_tz::Tz = self
+            .config
+            .results_sync_timezone
+            .trim()
+            .parse()
+            .unwrap_or(chrono_tz::America::New_York);
+        chrono::Utc::now().with_timezone(&zone).date_naive()
+    }
+
     pub fn sync_phase(&self) -> SyncPhase {
         self.sync_phase
             .lock()
@@ -145,6 +156,7 @@ impl App {
         *self.sync_phase.lock().unwrap_or_else(|e| e.into_inner()) = phase;
     }
 
+    /// Drop cached data after an import.
     pub fn invalidate_cache(&self) {
         self.seasons
             .write()

@@ -250,7 +250,7 @@ pub struct Reconstruction {
 
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum ReconstructError {
-    #[error("no conference alignment data for season {0} (supported from 2002-03 onward)")]
+    #[error("the bracket model covers 2002-03 onward; season {0} has no 16-team bracket data")]
     NoAlignment(SeasonYear),
     #[error(
         "season {season} has {found} first-round series in the data; a 16-team bracket needs 8"
@@ -274,6 +274,9 @@ pub fn reconstruct(
     games: &[Game],
     teams: &HashMap<TeamId, Team>,
 ) -> Result<Reconstruction, ReconstructError> {
+    if season < SeasonYear::FIRST_MODERN {
+        return Err(ReconstructError::NoAlignment(season));
+    }
     let alignment = alignment_map(season, teams, games);
     if alignment.is_empty() {
         return Err(ReconstructError::NoAlignment(season));

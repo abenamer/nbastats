@@ -1,6 +1,11 @@
 # Bundle update log
 
+## 2026-10-23
+* **Update**: The results sync fetches only the days since the last played game after the first sync of a season; [Elo continuation](/concepts/elo-continuation.md) and the import runbook describe the window. The term Fetch window is defined.
+* **Update**: The Elo Explorer season chart shows one-game teams as a dot and the games not played yet as a shaded strip; noted in the [Application overview](/concepts/application.md).
+
 ## 2026-10-22
+* **Update**: Historical division alignment back to 1946-47 described in [Historical data](/concepts/historical-data.md).
 * **Update**: Records page gains eras by league size and the 3-point line; the term Era is defined.
 * **Update**: Added the Records page to the [Application overview](/concepts/application.md), the `/api/records` route, and the terms Decade and League size.
 * **Update**: Elo Explorer charts repaired (date axis, per-game tooltip). Franchise charts use the franchise's uniform colours; the API reference lists the `colors` field.

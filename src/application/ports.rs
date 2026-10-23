@@ -376,6 +376,40 @@ pub struct ResultRecord {
     pub away_score: Option<i32>,
 }
 
+/// The dates a fetch asks the source for. `all` is the whole season, schedule included;
+/// a bounded window is the daily refresh: from the last played game to today.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct FetchWindow {
+    /// First date, inclusive. `None` is the start of the season.
+    pub from: Option<NaiveDate>,
+    /// Last date, inclusive. `None` is the end of the season.
+    pub to: Option<NaiveDate>,
+}
+
+impl FetchWindow {
+    pub const fn all() -> Self {
+        Self {
+            from: None,
+            to: None,
+        }
+    }
+
+    pub const fn between(from: NaiveDate, to: NaiveDate) -> Self {
+        Self {
+            from: Some(from),
+            to: Some(to),
+        }
+    }
+
+    pub fn is_all(&self) -> bool {
+        self.from.is_none() && self.to.is_none()
+    }
+
+    pub fn contains(&self, date: NaiveDate) -> bool {
+        self.from.is_none_or(|f| f <= date) && self.to.is_none_or(|t| date <= t)
+    }
+}
+
 /// Everything a results source returns for one season, with provenance for the import log.
 #[derive(Debug, Clone, Default)]
 pub struct ResultsFetch {
@@ -426,11 +460,12 @@ impl<F: Fn(FetchProgress) + Sync> FetchProgressSink for F {
 pub trait ResultsSource: Send + Sync {
     /// Human-readable source name for the import log (for example `balldontlie`).
     fn name(&self) -> &'static str;
-    /// Every game of `season` the source knows: played games with scores, scheduled games
-    /// without. Progress is reported to `progress` as pages arrive.
+    /// Every game of `season` inside `window` the source knows: played games with scores,
+    /// scheduled games without. Progress is reported to `progress` as pages arrive.
     async fn season_results(
         &self,
         season: SeasonYear,
+        window: FetchWindow,
         progress: &dyn FetchProgressSink,
     ) -> Result<ResultsFetch, SourceError>;
 }

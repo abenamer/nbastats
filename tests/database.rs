@@ -7,8 +7,8 @@ mod common;
 use chrono::NaiveDate;
 use nba_elo_simulator::application::imports::{self, Provenance};
 use nba_elo_simulator::application::ports::{
-    AnalysisStore, FetchProgress, FetchProgressSink, GameLog, GameStore, ImportLog, JobOutcome,
-    JobStore, NewJob, ResultRecord, ResultsFetch, ResultsSource, SourceError,
+    AnalysisStore, FetchProgress, FetchProgressSink, FetchWindow, GameLog, GameStore, ImportLog,
+    JobOutcome, JobStore, NewJob, ResultRecord, ResultsFetch, ResultsSource, SourceError,
 };
 use nba_elo_simulator::domain::ids::{SeasonYear, TeamId};
 use nba_elo_simulator::domain::models::{
@@ -436,24 +436,28 @@ async fn computed_elo_continues_from_the_previous_season(pool: PgPool) {
         .unwrap();
     let gsw_after_archive = last_gsw.elo_of(teams["GSW"].id).1;
     let after = last_imported + chrono::Duration::days(3);
-    let completion = FakeResults {
-        records: vec![
-            // one game that is already in the archive, listed with home and away swapped
-            // (sources disagree at neutral sites): skipped, not changed
-            record(
-                &last_gsw.game_date.to_string(),
-                &store_code(&teams, last_gsw.away_team_id),
-                &store_code(&teams, last_gsw.home_team_id),
-                Some((1, 2)),
-            ),
-            record(&after.to_string(), "GSW", "CLE", Some((110, 100))),
-        ],
-    };
+    let completion = FakeResults::with(vec![
+        // one game that is already in the archive, listed with home and away swapped
+        // (sources disagree at neutral sites): skipped, not changed
+        record(
+            &last_gsw.game_date.to_string(),
+            &store_code(&teams, last_gsw.away_team_id),
+            &store_code(&teams, last_gsw.home_team_id),
+            Some((1, 2)),
+        ),
+        record(&after.to_string(), "GSW", "CLE", Some((110, 100))),
+    ]);
     let before = imported_2016.len();
-    let outcome = continuation::sync_results(&store, &completion, S2016, &|_| {})
+    let today = after + chrono::Duration::days(2);
+    let outcome = continuation::sync_results(&store, &completion, S2016, today, &|_| {})
         .await
         .unwrap();
     assert_eq!(outcome.games_inserted, 1);
+    // The archive already has played games, so only the days after its last game are asked for.
+    assert_eq!(
+        completion.windows.lock().unwrap().as_slice(),
+        [FetchWindow::between(last_imported, today)]
+    );
     let games = store.season_games(S2016).await.unwrap();
     assert_eq!(games.len(), before + 1);
     assert_eq!(
@@ -547,22 +551,26 @@ async fn computed_elo_continues_from_the_previous_season(pool: PgPool) {
     assert_eq!((gsw_ts.wins, gsw_ts.losses), (1, 1));
 
     // A results source (the BALLDONTLIE adapter in production) feeds the same path.
-    let source = FakeResults {
-        records: vec![
-            record("2016-10-25", "GSW", "SAS", Some((100, 129))),
-            record("2016-10-28", "GSW", "NOP", Some((122, 114))),
-            record("2016-10-30", "DAL", "GSW", Some((95, 100))),
-            record("2016-11-01", "GSW", "BRK", None),
-        ],
-    };
-    let outcome = continuation::sync_results(&store, &source, s2017, &|_| {})
+    let source = FakeResults::with(vec![
+        record("2016-10-25", "GSW", "SAS", Some((100, 129))),
+        record("2016-10-28", "GSW", "NOP", Some((122, 114))),
+        record("2016-10-30", "DAL", "GSW", Some((95, 100))),
+        record("2016-11-01", "GSW", "BRK", None),
+    ]);
+    let today = date("2016-11-02");
+    let outcome = continuation::sync_results(&store, &source, s2017, today, &|_| {})
         .await
         .unwrap();
     assert_eq!(outcome.games_inserted, 4);
     assert!(outcome
         .notes
         .iter()
-        .any(|n| n.contains("4 games fetched with 1 requests")));
+        .any(|n| n.contains("4 games fetched with 1 requests for 2016-10-28 to 2016-11-02")));
+    // The store had played games through 2016-10-28, so the window starts there.
+    assert_eq!(
+        source.windows.lock().unwrap().as_slice(),
+        [FetchWindow::between(date("2016-10-28"), today)]
+    );
     let games = store.season_games(s2017).await.unwrap();
     assert_eq!(games.len(), 4);
     assert!(games.iter().all(|g| g.elo_source == EloSource::Computed));
@@ -574,11 +582,27 @@ async fn computed_elo_continues_from_the_previous_season(pool: PgPool) {
     let last_import = store.imports(1).await.unwrap().remove(0);
     assert_eq!(last_import.source, "fake-results");
     assert_eq!(last_import.source_url.as_deref(), Some("fake://games"));
+    // The next day's sync fetches only the window; earlier games stay as stored.
+    let daily = FakeResults::with(vec![record("2016-11-01", "GSW", "BRK", Some((104, 95)))]);
+    let today = date("2016-11-02");
+    let outcome = continuation::sync_results(&store, &daily, s2017, today, &|_| {})
+        .await
+        .unwrap();
+    assert_eq!(outcome.rows_read, 4);
+    assert_eq!(
+        daily.windows.lock().unwrap().as_slice(),
+        [FetchWindow::between(date("2016-10-30"), today)]
+    );
+    let games = store.season_games(s2017).await.unwrap();
+    assert_eq!(games.len(), 4);
+    assert!(games.iter().all(|g| g.is_played()));
+    assert!((games[3].home_elo_pre - games[2].elo_of(gsw).1).abs() < 1e-9);
+    let ts = store.team_seasons(s2017).await.unwrap();
+    let gsw_ts = ts.iter().find(|t| t.code == "GSW").unwrap();
+    assert_eq!((gsw_ts.wins, gsw_ts.losses), (3, 1));
     // Unknown codes stop the sync before anything is written.
-    let bad = FakeResults {
-        records: vec![record("2016-10-25", "GSW", "XXX", None)],
-    };
-    let err = continuation::sync_results(&store, &bad, s2017, &|_| {}).await;
+    let bad = FakeResults::with(vec![record("2016-10-25", "GSW", "XXX", None)]);
+    let err = continuation::sync_results(&store, &bad, s2017, today, &|_| {}).await;
     assert!(matches!(
         err,
         Err(continuation::ContinuationUseCaseError::UnknownTeams(c)) if c == "XXX"
@@ -586,11 +610,16 @@ async fn computed_elo_continues_from_the_previous_season(pool: PgPool) {
     assert_eq!(store.season_games(s2017).await.unwrap().len(), 4);
     // An empty fetch (a season the source does not have yet) stores nothing, not even a row.
     let s2018 = SeasonYear::of(2018);
-    let empty = FakeResults { records: vec![] };
+    let empty = FakeResults::with(vec![]);
     assert!(matches!(
-        continuation::sync_results(&store, &empty, s2018, &|_| {}).await,
+        continuation::sync_results(&store, &empty, s2018, today, &|_| {}).await,
         Err(continuation::ContinuationUseCaseError::NoGames(s)) if s == s2018
     ));
+    // Nothing is stored for the season, so the whole season was asked for.
+    assert_eq!(
+        empty.windows.lock().unwrap().as_slice(),
+        [FetchWindow::all()]
+    );
     assert!(!store
         .seasons()
         .await
@@ -614,6 +643,17 @@ async fn computed_elo_continues_from_the_previous_season(pool: PgPool) {
 
 struct FakeResults {
     records: Vec<ResultRecord>,
+    /// The windows the use case asked for, in order.
+    windows: std::sync::Mutex<Vec<FetchWindow>>,
+}
+
+impl FakeResults {
+    fn with(records: Vec<ResultRecord>) -> Self {
+        Self {
+            records,
+            windows: std::sync::Mutex::new(vec![]),
+        }
+    }
 }
 
 impl ResultsSource for FakeResults {
@@ -623,8 +663,10 @@ impl ResultsSource for FakeResults {
     async fn season_results(
         &self,
         _season: SeasonYear,
+        window: FetchWindow,
         progress: &dyn FetchProgressSink,
     ) -> Result<ResultsFetch, SourceError> {
+        self.windows.lock().unwrap().push(window);
         progress.report(FetchProgress {
             requests: 1,
             games: self.records.len(),
@@ -644,6 +686,10 @@ fn store_code(teams: &std::collections::HashMap<String, Team>, id: TeamId) -> St
         .find(|t| t.id == id)
         .map(|t| t.code.clone())
         .unwrap()
+}
+
+fn date(s: &str) -> NaiveDate {
+    NaiveDate::parse_from_str(s, "%Y-%m-%d").unwrap()
 }
 
 fn record(date: &str, home: &str, away: &str, score: Option<(i32, i32)>) -> ResultRecord {
