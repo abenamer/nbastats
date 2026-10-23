@@ -64,7 +64,7 @@
     const roads = (id, rows) => { document.getElementById(id).innerHTML = table([
       { label: 'Season', value: c => labelOf(c.season), left: true }, { label: 'Champion', value: c => `<span title="${esc(c.name)}">${esc(c.code)}</span>`, raw: true, left: true },
       { label: 'Reg. opp. Elo', value: c => num(c.regular_opponent_elo, 0) }, { label: 'Playoff opp. Elo', value: c => num(c.playoff_opponent_elo, 0) },
-      { label: 'Road', value: c => num((c.regular_opponent_elo + c.playoff_opponent_elo) / 2, 0) },
+      { label: 'Road', value: c => num(c.road, 0) },
       { label: 'Toughest opponent', value: c => `${c.toughest_opponent_code} (${num(c.toughest_opponent_elo, 0)})`, left: true }], rows); };
     roads('hardestRoad', r.hardest_roads); roads('easiestRoad', r.easiest_roads);
     setStatus(status, '');

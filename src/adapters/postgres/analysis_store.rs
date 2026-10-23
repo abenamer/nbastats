@@ -239,6 +239,7 @@ impl AnalysisStore for PostgresStore {
                     playoff_games,
                     toughest_opponent_code: toughest_code.unwrap_or_default(),
                     toughest_opponent_elo: toughest_elo.unwrap_or(0.0),
+                    road: 0.0,
                 },
             )
             .collect())
