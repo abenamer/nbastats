@@ -56,7 +56,12 @@ pub fn router(app: State) -> Router {
         .route("/data/sync", post(api::sync_results))
         .route("/data/sync/status", get(api::sync_status))
         .route("/data/seasons/{season}", delete(api::remove_season))
-        .route("/data/coverage", get(api::coverage));
+        .route("/data/coverage", get(api::coverage))
+        .route("/ask/status", get(api::ask_status))
+        .route(
+            "/ask",
+            post(api::ask).layer(DefaultBodyLimit::max(16 * 1024)),
+        );
 
     Router::new()
         .route("/", get(pages::dashboard))

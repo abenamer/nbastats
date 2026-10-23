@@ -2,6 +2,8 @@
 
 ## 0.1.0 — 2026-10-21
 
+- Question box on the Dashboard: a plain-language question answered from the stored data through a language model (OpenRouter's OpenAI-compatible API, model and key by configuration) with seven read-only tools over the store ports; the answer lists its lookups. The box answers only questions about the stored data: the prompt forbids everything else and an answer without a lookup is replaced by a fixed refusal. Bounded per question (6 model calls, 10 tool calls, 75 seconds, 2 at a time). New port `LanguageModel`, adapter `OpenRouterModel`, routes `GET /api/ask/status` and `POST /api/ask`, variables `OPENROUTER_API_KEY`, `OPENROUTER_MODEL`, `OPENROUTER_BASE_URL`. Decided in ADR 0005.
+- Configuration: `.env.example` lists every variable grouped by purpose with its default and empty secrets; `DATABASE_URL` is built by Compose from the `POSTGRES_*` values. Compose now passes `SIM_THREADS`, `BALLDONTLIE_BASE_URL` and `OPENROUTER_BASE_URL` into the container.
 - Initial application: Engines A, B and C, backtesting, dynasty laboratory, nine pages, PostgreSQL 17 persistence, Docker Compose, backup and restore scripts.
 - Aligned with REAS 1.2.0-draft: domain, application and adapters layout; six ports and one `PostgresStore` adapter; `TeamId`, `FranchiseId` and `SeasonYear` newtypes; typed errors; conditional job transitions; documentation checker, terminology, self-audit and decisions.
 

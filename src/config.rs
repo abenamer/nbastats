@@ -30,6 +30,11 @@ pub struct Config {
     pub results_sync_enabled: bool,
     pub results_sync_time: String,
     pub results_sync_timezone: String,
+    /// OpenRouter API key for the question box; `None` disables it.
+    pub openrouter_api_key: Option<String>,
+    pub openrouter_base_url: String,
+    /// The OpenRouter model identifier the question box asks (must support tool calling).
+    pub openrouter_model: String,
 }
 
 impl Config {
@@ -94,6 +99,20 @@ impl Config {
             env::var("RESULTS_SYNC_TIME").unwrap_or_else(|_| "04:00".to_string());
         let results_sync_timezone =
             env::var("RESULTS_SYNC_TIMEZONE").unwrap_or_else(|_| "America/New_York".to_string());
+        let openrouter_api_key = env::var("OPENROUTER_API_KEY")
+            .ok()
+            .map(|k| k.trim().to_string())
+            .filter(|k| !k.is_empty());
+        let openrouter_base_url = env::var("OPENROUTER_BASE_URL")
+            .ok()
+            .map(|u| u.trim().to_string())
+            .filter(|u| !u.is_empty())
+            .unwrap_or_else(|| "https://openrouter.ai/api/v1".to_string());
+        let openrouter_model = env::var("OPENROUTER_MODEL")
+            .ok()
+            .map(|m| m.trim().to_string())
+            .filter(|m| !m.is_empty())
+            .unwrap_or_else(|| "openai/gpt-4o-mini".to_string());
         Ok(Self {
             database_url,
             bind_addr,
@@ -113,6 +132,9 @@ impl Config {
             results_sync_enabled,
             results_sync_time,
             results_sync_timezone,
+            openrouter_api_key,
+            openrouter_base_url,
+            openrouter_model,
         })
     }
 
@@ -176,6 +198,9 @@ mod tests {
             results_sync_enabled: false,
             results_sync_time: "04:00".to_string(),
             results_sync_timezone: "America/New_York".to_string(),
+            openrouter_api_key: None,
+            openrouter_base_url: String::new(),
+            openrouter_model: String::new(),
         }
     }
 

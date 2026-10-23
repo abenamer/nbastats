@@ -10,6 +10,8 @@ sources:
     title: Example configuration
 ---
 
+`.env.example` lists every variable below, grouped by purpose, with its default; secrets are empty. Under Compose, `compose.yaml` passes each application variable from `.env` into the container, and builds `DATABASE_URL` from the `POSTGRES_*` values when it is not set.
+
 # Application variables
 
 | Variable | Default | Function |
@@ -29,6 +31,9 @@ sources:
 | `RESULTS_SYNC_ENABLED` | `true` | Daily sync of the current season (needs the API key). |
 | `RESULTS_SYNC_TIME` | `04:00` | Wall-clock time of the daily sync, `HH:MM`. |
 | `RESULTS_SYNC_TIMEZONE` | `America/New_York` | IANA time zone of the daily sync. Daylight saving time is applied. |
+| `OPENROUTER_API_KEY` | none | API key for the [question box](/concepts/question-box.md). When unset, the box is off. |
+| `OPENROUTER_MODEL` | `openai/gpt-4o-mini` | The model the box asks through OpenRouter; it must support tool calling. |
+| `OPENROUTER_BASE_URL` | `https://openrouter.ai/api/v1` | Base URL of the OpenAI-compatible chat API. |
 | `DB_MAX_CONNECTIONS` | `8` | Connection pool size. |
 | `DB_CONNECT_TIMEOUT_SECS` | `120` | How long the start waits for PostgreSQL. |
 | `SIM_THREADS` | number of CPUs | Rayon thread count. |

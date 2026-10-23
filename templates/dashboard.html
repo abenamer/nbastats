@@ -1,5 +1,11 @@
 {% extends "base.html" %}
 {% block content %}
+<section class="panel" id="askPanel"><h2>Ask a question</h2>
+  <div class="row"><input id="askInput" type="text" class="ask" placeholder="Which champion had the highest peak rating?" autocomplete="off"><button id="askButton" class="primary">Ask</button><span id="askStatus" class="muted small"></span></div>
+  <p id="askAnswer" class="answer"></p>
+  <div id="askSteps" class="small"></div>
+  <p id="askHint" class="muted small"></p>
+</section>
 <section class="controls">
   <label>From <select id="from">{% for s in seasons %}<option value="{{ s.season }}" {% if s.season.end_year() == 2004 %}selected{% endif %}>{{ s.label }}</option>{% endfor %}</select></label>
   <label>To <select id="to">{% for s in seasons %}<option value="{{ s.season }}" {% if loop.first %}selected{% endif %}>{{ s.label }}</option>{% endfor %}</select></label>
@@ -14,4 +20,4 @@
 </section>
 <section class="panel"><h2>Champions</h2><div id="champions" class="table-wrap"></div></section>
 {% endblock %}
-{% block scripts %}<script src="/static/js/dashboard.js?v={{ layout.assets }}" defer></script>{% endblock %}
+{% block scripts %}<script src="/static/js/dashboard.js?v={{ layout.assets }}" defer></script><script src="/static/js/ask.js?v={{ layout.assets }}" defer></script>{% endblock %}

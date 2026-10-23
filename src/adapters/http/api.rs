@@ -10,11 +10,14 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use uuid::Uuid;
 
+use crate::application::ask::{self, AskError};
 use crate::application::continuation::{self, ContinuationUseCaseError};
 use crate::application::imports::{self, Provenance};
 use crate::application::jobs::specs::{AlphaJob, BacktestJob, PlayoffJob, SeasonJob};
 use crate::application::jobs::{self, Limits, Submit};
-use crate::application::ports::{AnalysisStore, GameLog, ImportLog, JobStore, ResultsSource};
+use crate::application::ports::{
+    AnalysisStore, GameLog, ImportLog, JobStore, LanguageModel, ModelError, ResultsSource,
+};
 use crate::application::{dashboard, dynasty};
 use crate::application::{results_sync, scheduler};
 use crate::config::APP_VERSION;
@@ -876,4 +879,61 @@ pub async fn coverage(State(app): State<AppState>) -> ApiResult<Value> {
             })
         }),
     })))
+}
+
+// ---------------------------------------------------------------------------------------
+// Question box
+// ---------------------------------------------------------------------------------------
+
+pub async fn ask_status(State(app): State<AppState>) -> ApiResult<Value> {
+    Ok(Json(json!({
+        "enabled": app.model.is_some(),
+        "model": app.model.as_ref().map(|m| m.model_name()),
+        "max_question_chars": ask::MAX_QUESTION_CHARS,
+    })))
+}
+
+#[derive(Deserialize)]
+pub struct AskBody {
+    #[serde(default)]
+    pub question: String,
+}
+
+/// Answer a question with the configured language model and the read-only tools. At most
+/// `ASK_SLOTS` questions run at once; the model is never given write access.
+pub async fn ask(State(app): State<AppState>, Json(body): Json<AskBody>) -> ApiResult<ask::Answer> {
+    let model = app.model.as_ref().ok_or_else(|| {
+        ApiError::NotConfigured(
+            "the question box needs OPENROUTER_API_KEY (see .env.example)".to_string(),
+        )
+    })?;
+    let _slot = app.ask_slots.try_acquire().map_err(|_| {
+        ApiError::Busy("another question is being answered; try again in a moment".to_string())
+    })?;
+    let answer = ask::answer(&app.store, model, &body.question, app.today())
+        .await
+        .map_err(ask_error)?;
+    Ok(Json(answer))
+}
+
+fn ask_error(e: AskError) -> ApiError {
+    match e {
+        AskError::Empty | AskError::TooLong => ApiError::BadRequest(e.to_string()),
+        AskError::Timeout => {
+            ApiError::Upstream("the language model did not answer in time".to_string())
+        }
+        AskError::NoAnswer => ApiError::Upstream("the language model gave no answer".to_string()),
+        AskError::Model(ModelError::NotConfigured(m)) => ApiError::NotConfigured(m),
+        AskError::Model(ModelError::Rejected { status, message }) => {
+            tracing::warn!(status, %message, "language model rejected the request");
+            ApiError::Upstream(format!(
+                "the language model service answered with status {status}; see the log"
+            ))
+        }
+        AskError::Model(ModelError::Transport(m) | ModelError::InvalidResponse(m)) => {
+            tracing::warn!(error = %m, "language model request failed");
+            ApiError::Upstream("the language model could not be reached; see the log".to_string())
+        }
+        AskError::Store(s) => s.into(),
+    }
 }

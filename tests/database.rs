@@ -820,3 +820,129 @@ async fn elo_replay_reproduces_the_archive_ratings(pool: PgPool) {
         "season-end chain max difference {chain_max}"
     );
 }
+
+/// The question box's tools read the store: every tool answers from the fixture season and
+/// unknown names or codes come back as errors the model can correct, not as failures.
+#[sqlx::test(migrations = "./migrations")]
+async fn question_box_tools_read_the_store(pool: PgPool) {
+    use nba_elo_simulator::application::ask::{self, Tools};
+    use nba_elo_simulator::application::ports::{
+        ChatReply, ChatRequest, LanguageModel, ModelError, ToolCall,
+    };
+    use serde_json::{json, Value};
+    use std::sync::Mutex;
+
+    let (store, _teams) = common::setup(pool).await;
+    imports::import_bytes(
+        &store,
+        common::FIXTURE.as_bytes(),
+        prov("mini_2016.csv"),
+        false,
+    )
+    .await
+    .unwrap();
+
+    let tools = Tools::new(&store);
+    let call = |name: &str, args: Value| ToolCall {
+        id: name.to_string(),
+        name: name.to_string(),
+        arguments: args,
+    };
+    let seasons = tools.call(call("list_seasons", json!({}))).await.unwrap();
+    assert_eq!(seasons["count"], 1);
+    assert_eq!(seasons["seasons"][0]["season"], 2016);
+    let standings = tools
+        .call(call("season_standings", json!({ "season": "2015-16" })))
+        .await
+        .unwrap();
+    let teams = standings["teams"].as_array().unwrap();
+    assert_eq!(teams.len(), 30);
+    assert_eq!(teams[0]["code"], "GSW", "best record first");
+    assert_eq!(teams[0]["wins"], 73);
+    let champions = tools
+        .call(call("champions", json!({ "from": 2016, "to": 2016 })))
+        .await
+        .unwrap();
+    assert_eq!(champions["champions"][0]["champion"], "CLE");
+    let history = tools
+        .call(call("franchise_history", json!({ "franchise": "gsw" })))
+        .await
+        .unwrap();
+    assert_eq!(history["count"], 1);
+    assert_eq!(history["seasons"][0]["playoff_result"], "finals");
+    let games = tools
+        .call(call(
+            "team_games",
+            json!({ "season": 2016, "team": "CLE", "playoffs_only": true }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(games["wins"], 16);
+    assert_eq!(games["rows"][0]["type"], "playoff");
+    assert_eq!(games["truncated"], false);
+    let all = tools
+        .call(call("team_games", json!({ "season": 2016, "team": "CLE" })))
+        .await
+        .unwrap();
+    assert!(all["games"].as_u64().unwrap() > 90);
+    let extremes = tools
+        .call(call(
+            "rating_extremes",
+            json!({ "metric": "peak", "order": "highest", "limit": 3 }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(extremes["team_seasons"].as_array().unwrap().len(), 3);
+    assert_eq!(extremes["team_seasons"][0]["code"], "GSW");
+    let p = tools
+        .call(call(
+            "win_probability",
+            json!({ "elo_a": 1800, "elo_b": 1600, "home": "neutral" }),
+        ))
+        .await
+        .unwrap();
+    assert!(p["p_game_a"].as_f64().unwrap() > 0.7);
+    // Mistakes come back as data for the model.
+    for (name, args) in [
+        ("season_standings", json!({ "season": 1900 })),
+        ("season_standings", json!({ "season": 2010 })),
+        ("team_games", json!({ "season": 2016, "team": "XXX" })),
+        ("franchise_history", json!({ "franchise": "nobody" })),
+        ("no_such_tool", json!({})),
+    ] {
+        let r = tools.call(call(name, args)).await.unwrap();
+        assert!(r["error"].is_string(), "{name}: {r}");
+    }
+
+    // The whole use case with a scripted model: one lookup, then an answer.
+    struct Script(Mutex<Vec<ChatReply>>);
+    impl LanguageModel for Script {
+        fn model_name(&self) -> &str {
+            "script"
+        }
+        async fn chat(&self, _request: ChatRequest<'_>) -> Result<ChatReply, ModelError> {
+            Ok(self.0.lock().unwrap().remove(0))
+        }
+    }
+    let model = Script(Mutex::new(vec![
+        ChatReply {
+            tool_calls: vec![call("champions", json!({ "from": 2016, "to": 2016 }))],
+            ..Default::default()
+        },
+        ChatReply {
+            content: Some("Cleveland (CLE) won the 2015-16 title.".to_string()),
+            ..Default::default()
+        },
+    ]));
+    let today = NaiveDate::from_ymd_opt(2026, 10, 23).unwrap();
+    let a = ask::answer(&store, &model, " who won in 2016? ", today)
+        .await
+        .unwrap();
+    assert!(!a.declined);
+    assert_eq!(a.steps[0].summary, "1 rows");
+    assert_eq!(a.question, "who won in 2016?");
+    assert!(matches!(
+        ask::answer(&store, &model, "   ", today).await,
+        Err(ask::AskError::Empty)
+    ));
+}

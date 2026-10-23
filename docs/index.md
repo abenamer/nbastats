@@ -26,6 +26,7 @@ This project follows the [REAS engineering standard](https://github.com/abenamer
 * [Elo continuation](concepts/elo-continuation.md) - How the application computes ratings for seasons after the archive ends, and projects a season that has not started.
 * [Persistence model](concepts/persistence.md) - Which state is durable, where it lives and which commands keep it.
 * [Security model](concepts/security.md) - Threat model of the local-only deployment and the controls in place.
+* [Question box](concepts/question-box.md) - How the dashboard answers a question from the stored data through a language model with read-only tools, and what it refuses.
 
 # Runbooks
 
@@ -45,10 +46,11 @@ This project follows the [REAS engineering standard](https://github.com/abenamer
 
 # Decisions
 
-* [ADR 0001 — Ports at three boundaries](decisions/0001-ports-at-three-boundaries.md) - Six ports, one store adapter, one composition root.
+* [ADR 0001 — Ports at three boundaries](decisions/0001-ports-at-three-boundaries.md) - Eight ports, one store adapter, one composition root.
 * [ADR 0002 — Runtime enums for persisted lifecycles](decisions/0002-runtime-enums-over-typestate.md) - Why no typestate.
 * [ADR 0003 — Bundle the dataset](decisions/0003-bundled-dataset.md) - Why the game log ships in the image.
 * [ADR 0004 — Compute first](decisions/0004-compute-first.md) - Why the application computes every rating itself and keeps the archive's ratings as reference values.
+* [ADR 0005 — Question box through OpenRouter](decisions/0005-question-box-via-openrouter.md) - Why the question box uses a hosted model through an OpenAI-compatible API with read-only tools.
 
 # History
 

@@ -11,8 +11,10 @@ use tracing_subscriber::EnvFilter;
 use nba_elo_simulator::adapters::balldontlie::{BalldontlieConfig, BalldontlieSource};
 use nba_elo_simulator::adapters::dataset::HttpDatasetSource;
 use nba_elo_simulator::adapters::http;
+use nba_elo_simulator::adapters::openrouter::{OpenRouterConfig, OpenRouterModel};
 use nba_elo_simulator::adapters::postgres::PostgresStore;
 use nba_elo_simulator::application::jobs;
+use nba_elo_simulator::application::ports::LanguageModel;
 use nba_elo_simulator::application::ports::{GameLog, GameStore, ImportLog, JobStore};
 use nba_elo_simulator::application::scheduler::{self, SyncSchedule};
 use nba_elo_simulator::application::state::App;
@@ -119,6 +121,14 @@ async fn main() -> anyhow::Result<()> {
         })?),
         None => None,
     };
+    let model = match &config.openrouter_api_key {
+        Some(key) => Some(OpenRouterModel::new(OpenRouterConfig {
+            api_key: key.clone(),
+            base_url: config.openrouter_base_url.clone(),
+            model: config.openrouter_model.clone(),
+        })?),
+        None => None,
+    };
 
     match cli.command.unwrap_or(Command::Serve) {
         Command::Migrate => Ok(()),
@@ -172,7 +182,7 @@ async fn main() -> anyhow::Result<()> {
             println!("{}", serde_json::to_string_pretty(&outcome)?);
             Ok(())
         }
-        Command::Serve => serve(config, store, source, results).await,
+        Command::Serve => serve(config, store, source, results, model).await,
         Command::Healthcheck => unreachable!("handled before connecting"),
     }
 }
@@ -182,6 +192,7 @@ async fn serve(
     store: PostgresStore,
     source: HttpDatasetSource,
     results: Option<BalldontlieSource>,
+    model: Option<OpenRouterModel>,
 ) -> anyhow::Result<()> {
     std::fs::create_dir_all(&config.data_dir)?;
     let interrupted = store.mark_running_jobs_interrupted().await?;
@@ -232,7 +243,22 @@ async fn serve(
         source,
         results,
         sync_schedule,
+        model,
     ));
+    if let Some(m) = &app.model {
+        info!(
+            model = m.model_name(),
+            base_url = m.base_url(),
+            "question box enabled"
+        );
+        let url = m.base_url();
+        if !url.starts_with("https://")
+            && !url.starts_with("http://127.0.0.1")
+            && !url.starts_with("http://localhost")
+        {
+            warn!("OPENROUTER_BASE_URL is not https: the API key and the questions travel unencrypted");
+        }
+    }
     let runner = tokio::spawn(jobs::runner(app.clone()));
     let sync = tokio::spawn(scheduler::run(app.clone()));
     let router = http::router(app.clone());
