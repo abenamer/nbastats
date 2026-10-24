@@ -2,6 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::domain::models::Round;
 use crate::domain::simulation::stats::wilson_interval;
 
 /// Multi-class Brier score: Σ (p_i − y_i)² over the candidate set.
@@ -57,6 +58,158 @@ pub fn summarise(seasons: &[super::SeasonScore]) -> Summary {
     }
 }
 
+/// Scores of the played series: one trial per series, so a season contributes fifteen trials
+/// instead of one champion.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SeriesSummary {
+    pub series: usize,
+    pub mean_brier: f64,
+    pub brier_se: f64,
+    pub mean_log_loss: f64,
+    pub log_loss_se: f64,
+    /// Share of the series with a favourite that the favourite won.
+    pub favourite_won: f64,
+    /// Series in which the model had a favourite (a probability other than one half).
+    pub with_favourite: usize,
+    /// The favourite's mean probability over the series with a favourite.
+    pub mean_p_favourite: f64,
+    /// 1 − Brier / Brier of the equal model, a coin flip (0.25); 0 without series.
+    pub brier_skill_vs_equal: f64,
+    pub by_round: Vec<RoundSummary>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RoundSummary {
+    pub round: Round,
+    pub series: usize,
+    pub mean_brier: f64,
+    pub mean_log_loss: f64,
+    pub favourite_won: f64,
+    pub with_favourite: usize,
+    /// The favourite's mean probability over the round's series with a favourite.
+    pub mean_p_favourite: f64,
+}
+
+/// A model's series scores against another model's on the same series: the mean of the
+/// differences (this model minus the other, so a negative value favours this model) with
+/// its standard error over the series. The pairing removes the variation the series share.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PairedDifference {
+    pub against: String,
+    pub series: usize,
+    pub log_loss: f64,
+    pub log_loss_se: f64,
+    pub brier: f64,
+    pub brier_se: f64,
+}
+
+/// The paired difference of `this` against `other` over the series both scored, matched by
+/// season, round and participants; `None` with fewer than two series in common.
+pub fn paired_difference(
+    against: &str,
+    this: &[super::SeriesScore],
+    other: &[super::SeriesScore],
+) -> Option<PairedDifference> {
+    let key = |s: &super::SeriesScore| (s.season, s.round, s.winner_id, s.loser_id);
+    let others: std::collections::HashMap<_, &super::SeriesScore> =
+        other.iter().map(|s| (key(s), s)).collect();
+    let pairs: Vec<(&super::SeriesScore, &super::SeriesScore)> = this
+        .iter()
+        .filter_map(|s| others.get(&key(s)).map(|o| (s, *o)))
+        .collect();
+    if pairs.len() < 2 {
+        return None;
+    }
+    let n = pairs.len() as f64;
+    let stat = |f: &dyn Fn(&super::SeriesScore) -> f64| {
+        let diffs: Vec<f64> = pairs.iter().map(|(a, b)| f(a) - f(b)).collect();
+        let mean = diffs.iter().sum::<f64>() / n;
+        let var = diffs.iter().map(|d| (d - mean).powi(2)).sum::<f64>() / (n - 1.0);
+        (mean, (var / n).sqrt())
+    };
+    let (log_loss, log_loss_se) = stat(&|s| s.log_loss);
+    let (brier, brier_se) = stat(&|s| s.brier);
+    Some(PairedDifference {
+        against: against.to_string(),
+        series: pairs.len(),
+        log_loss,
+        log_loss_se,
+        brier,
+        brier_se,
+    })
+}
+
+/// Brier score of a coin flip on a two-sided outcome.
+pub const COIN_FLIP_BRIER: f64 = 0.25;
+
+/// The favourite's share of wins, the count of series with a favourite and the favourite's
+/// mean probability over them.
+fn favourite_share(scores: &[&super::SeriesScore]) -> (f64, usize, f64) {
+    let with: Vec<&super::SeriesScore> =
+        scores.iter().copied().filter(|s| s.hit.is_some()).collect();
+    if with.is_empty() {
+        return (0.0, 0, 0.0);
+    }
+    let n = with.len() as f64;
+    let won = with.iter().filter(|s| s.hit == Some(true)).count() as f64;
+    let p = with
+        .iter()
+        .map(|s| s.p_winner.max(1.0 - s.p_winner))
+        .sum::<f64>()
+        / n;
+    (won / n, with.len(), p)
+}
+
+pub fn summarise_series(scores: &[super::SeriesScore]) -> SeriesSummary {
+    let n = scores.len().max(1) as f64;
+    let mean = |f: &dyn Fn(&super::SeriesScore) -> f64| scores.iter().map(f).sum::<f64>() / n;
+    let se = |f: &dyn Fn(&super::SeriesScore) -> f64| {
+        if scores.len() < 2 {
+            return 0.0;
+        }
+        let m = mean(f);
+        let var = scores.iter().map(|s| (f(s) - m).powi(2)).sum::<f64>() / (n - 1.0);
+        (var / n).sqrt()
+    };
+    let all: Vec<&super::SeriesScore> = scores.iter().collect();
+    let (favourite_won, with_favourite, mean_p_favourite) = favourite_share(&all);
+    let mean_brier = mean(&|s| s.brier);
+    let by_round = Round::ALL
+        .into_iter()
+        .map(|round| {
+            let of_round: Vec<&super::SeriesScore> =
+                scores.iter().filter(|s| s.round == round).collect();
+            let k = of_round.len().max(1) as f64;
+            let (favourite_won, with_favourite, mean_p_favourite) = favourite_share(&of_round);
+            RoundSummary {
+                round,
+                series: of_round.len(),
+                mean_brier: of_round.iter().map(|s| s.brier).sum::<f64>() / k,
+                mean_log_loss: of_round.iter().map(|s| s.log_loss).sum::<f64>() / k,
+                favourite_won,
+                with_favourite,
+                mean_p_favourite,
+            }
+        })
+        .collect();
+    SeriesSummary {
+        series: scores.len(),
+        mean_brier,
+        brier_se: se(&|s| s.brier),
+        mean_log_loss: mean(&|s| s.log_loss),
+        log_loss_se: se(&|s| s.log_loss),
+        favourite_won,
+        with_favourite,
+        mean_p_favourite,
+        brier_skill_vs_equal: if scores.is_empty() {
+            0.0
+        } else {
+            1.0 - mean_brier / COIN_FLIP_BRIER
+        },
+        by_round,
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CalibrationBin {
     pub lower: f64,
@@ -68,9 +221,15 @@ pub struct CalibrationBin {
 }
 
 const EDGES: [f64; 8] = [0.0, 0.05, 0.1, 0.2, 0.3, 0.5, 0.7, 1.0001];
+/// Bins for the favourite's series probability, which is at least one half.
+pub const SERIES_EDGES: [f64; 8] = [0.5, 0.55, 0.6, 0.65, 0.7, 0.8, 0.9, 1.0001];
 
 pub fn calibration(pairs: &[(f64, bool)]) -> Vec<CalibrationBin> {
-    EDGES
+    calibration_with(pairs, &EDGES)
+}
+
+pub fn calibration_with(pairs: &[(f64, bool)], edges: &[f64]) -> Vec<CalibrationBin> {
+    edges
         .windows(2)
         .map(|w| {
             let (lo, hi) = (w[0], w[1]);

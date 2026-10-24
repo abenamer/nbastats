@@ -564,6 +564,39 @@ fn default_p_better() -> f64 {
     0.75
 }
 
+/// Builds the concrete model of a `ModelSpec` and runs `$body` with it bound to `$m`, so
+/// each entry point dispatches once and runs monomorphized code.
+macro_rules! with_model {
+    ($spec:expr, |$m:ident| $body:expr) => {
+        match *$spec {
+            ModelSpec::Elo {
+                home_advantage,
+                scale,
+                k,
+            } => {
+                let $m = EloModel {
+                    home_advantage,
+                    scale,
+                    k,
+                };
+                $body
+            }
+            ModelSpec::Equal => {
+                let $m = EqualModel;
+                $body
+            }
+            ModelSpec::WinPct => {
+                let $m = WinPctModel;
+                $body
+            }
+            ModelSpec::Seed { p_better } => {
+                let $m = SeedModel { p_better };
+                $body
+            }
+        }
+    };
+}
+
 impl Default for ModelSpec {
     fn default() -> Self {
         ModelSpec::Elo {
@@ -617,27 +650,31 @@ impl ModelSpec {
         Ok(())
     }
 
-    /// Dispatch once, then run monomorphized code.
+    /// Whether the model keeps its ratings fixed, so its exact probabilities exist.
+    pub fn is_stateless(&self) -> bool {
+        !matches!(self, ModelSpec::Elo { k: Some(_), .. })
+    }
+
+    /// Dispatch once, then run monomorphized code; `None` for a model whose ratings move.
     pub fn exact(&self, bracket: &Bracket) -> Option<Vec<[f64; 4]>> {
-        match *self {
-            ModelSpec::Elo {
-                home_advantage,
-                scale,
-                k,
-            } => {
-                let m = EloModel {
-                    home_advantage,
-                    scale,
-                    k,
-                };
-                m.exact_available().then(|| bracket.exact_probabilities(&m))
-            }
-            ModelSpec::Equal => Some(bracket.exact_probabilities(&EqualModel)),
-            ModelSpec::WinPct => Some(bracket.exact_probabilities(&WinPctModel)),
-            ModelSpec::Seed { p_better } => {
-                Some(bracket.exact_probabilities(&SeedModel { p_better }))
-            }
-        }
+        with_model!(self, |m| m
+            .exact_available()
+            .then(|| bracket.exact_probabilities(&m)))
+    }
+
+    /// The probability that slot `a` beats slot `b` in a series of `round`, with the
+    /// bracket's home court for that pairing; `None` for a model whose ratings move.
+    pub fn series_probability(
+        &self,
+        bracket: &Bracket,
+        a: usize,
+        b: usize,
+        round: Round,
+    ) -> Option<f64> {
+        let elos: Vec<f64> = bracket.teams.iter().map(|t| t.elo).collect();
+        with_model!(self, |m| m
+            .exact_available()
+            .then(|| m.series_probability(bracket, a, b, round, &elos)))
     }
 
     pub fn simulate<P: Progress + ?Sized>(

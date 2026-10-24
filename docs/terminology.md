@@ -65,6 +65,7 @@ These are project-specific technical terms. They are not a reproduction of the A
 | Scenario | A named, completed job that you can reopen and compare. |
 | Season | An NBA season named by its end year. `SeasonYear(2004)` is 2003-04. |
 | Season-dependent alphas | An alpha table with one row per season (`schedule` in the parameters), so a franchise's strength changes over the simulated seasons; the page builds it from a half-life. |
+| Series score | The score of one played playoff series: the probability a model gave the actual winner against the actual loser with the actual home court, read as a two-sided Brier score, a log loss and whether the favourite won. Fifteen a season; defined in `domain::backtesting`. |
 | Seed | Playoff position 1 to 8 inside a conference. |
 | Series | A best-of-five or best-of-seven playoff matchup. A `SeriesState` is either in progress or decided. |
 | Store | The `PostgresStore` adapter, which implements every store port. |

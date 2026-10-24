@@ -42,7 +42,7 @@ window.NBA = (() => {
     }).join('') + '</tr>').join('');
     return `<table class="sortable"><thead><tr>${th}</tr></thead><tbody>${body}</tbody></table>`;
   }
-  const sortKey = text => { const t = text.trim().replace(/^[+]/, '').replace(/,/g, '').replace(/[%·].*$/, ''); const n = t === '' ? NaN : Number(t); return Number.isNaN(n) ? null : n; };
+  const sortKey = text => { const t = text.trim().replace(/^[+]/, '').replace(/,/g, '').replace(/[%·±].*$/, ''); const n = t === '' ? NaN : Number(t); return Number.isNaN(n) ? null : n; };
   document.addEventListener('click', e => {
     const th = e.target.closest('table.sortable th[data-col]'); if (!th) return;
     const tbl = th.closest('table'), col = Number(th.dataset.col), tbody = tbl.tBodies[0]; if (!tbody) return;

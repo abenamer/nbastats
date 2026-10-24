@@ -1,5 +1,8 @@
 # Bundle update log
 
+## 2026-10-24
+* **Update**: [Backtesting method](/concepts/backtesting.md) scores the played series one by one, by round and paired against the first model, with the series result for version 0.1.0; the API and jobs references follow; the term Series score is defined.
+
 ## 2026-10-23
 * **Update**: [Elo rating model](/concepts/elo-model.md) states the season-aware regular-season home-court bonus, the measurement behind it and the rule that the rating update and the playoffs keep 100; the [Season forecast engine](/concepts/season-engine.md), the [Question box](/concepts/question-box.md) and the API reference follow; the term Home-court bonus is defined.
 * **Update**: [Alpha lottery engine](/concepts/alpha-engine.md) gains the backward reading of a title record as an alpha (its range, even odds, luck alone) and as a strength in Elo terms against the real playoff fields; the runbook [Run an alpha scenario](/runbooks/alpha-scenario.md) gains Procedure D; the API reference lists the strength endpoint; the terms Implied alpha and Implied strength are defined.
