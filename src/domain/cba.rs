@@ -179,6 +179,10 @@ pub struct GroupStats {
     /// The standard deviation of season-end ratings across the league, averaged over the
     /// group's seasons: a measure of how unequal the league was.
     pub elo_spread: Option<f64>,
+    /// The champion's pre-playoff rating above the league mean in standard deviations,
+    /// averaged over the group's seasons with a champion (see `domain::parity`): how far
+    /// the winner stood above its league.
+    pub champion_z: Option<f64>,
 }
 
 /// A bargaining period with the records of its seasons in the data.
@@ -291,6 +295,8 @@ pub fn group_stats(members: &[&TeamSeasonStat]) -> Option<GroupStats> {
         champions,
         mean_elo: mean_elo(members),
         elo_spread: elo_spread(members),
+        champion_z: super::parity::summary(&super::parity::profile(members))
+            .and_then(|s| s.champion_z),
     })
 }
 
@@ -361,6 +367,57 @@ mod tests {
             conference: None,
             division: None,
         }
+    }
+
+    #[test]
+    fn group_statistics_carry_the_champion_z_of_the_parity_profile() {
+        // Eight teams rated 1400 to 1540 before the playoffs (mean 1470); the best wins.
+        let stats: Vec<TeamSeasonStat> = (0..8)
+            .map(|i| {
+                let mut s = TeamSeasonStat {
+                    season: SeasonYear::of(2015),
+                    code: format!("T{i}"),
+                    name: format!("T{i}"),
+                    franchise_key: format!("T{i}"),
+                    games: 82,
+                    peak: 1500.0,
+                    peak_date: chrono::NaiveDate::from_ymd_opt(2015, 4, 1).unwrap(),
+                    peak_game_type: crate::domain::models::GameType::Regular,
+                    low: 1400.0,
+                    low_date: chrono::NaiveDate::from_ymd_opt(2014, 11, 1).unwrap(),
+                    low_game_type: crate::domain::models::GameType::Regular,
+                    wins: 41,
+                    losses: 41,
+                    playoff_wins: 0,
+                    playoff_losses: 0,
+                    elo_start: Some(1500.0),
+                    elo_pre_playoffs: Some(1400.0 + 20.0 * i as f64),
+                    elo_end: Some(1400.0 + 20.0 * i as f64),
+                    playoff_result: PlayoffResult::Missed,
+                    conference: None,
+                    division: None,
+                };
+                if i >= 4 {
+                    s.playoff_result = PlayoffResult::FirstRound;
+                }
+                if i == 7 {
+                    s.playoff_result = PlayoffResult::Champion;
+                }
+                s
+            })
+            .collect();
+        let members: Vec<&TeamSeasonStat> = stats.iter().collect();
+        let st = group_stats(&members).unwrap();
+        let expected = super::super::parity::profile(&members)[0]
+            .champion
+            .as_ref()
+            .unwrap()
+            .z;
+        assert!((st.champion_z.unwrap() - expected).abs() < 1e-12);
+        assert!(expected > 1.0);
+        // A group without a champion has no champion z.
+        let no_champion: Vec<&TeamSeasonStat> = members[..7].to_vec();
+        assert_eq!(group_stats(&no_champion).unwrap().champion_z, None);
     }
 
     #[test]

@@ -474,6 +474,11 @@ pub struct Records {
     pub clankers_by_era: Vec<EraClanker>,
     /// The hardest and easiest road to the title of each era, in era order.
     pub roads_by_era: Vec<EraRoads>,
+    /// Season by season, the champion, the finalists, the final four and the playoff field
+    /// against the league, in Elo points and standard deviations (see `domain::parity`).
+    pub parity: Vec<super::parity::SeasonParity>,
+    /// The parity figures over the seasons of the profile.
+    pub parity_summary: Option<super::parity::ParitySummary>,
 }
 
 fn entry(s: &TeamSeasonStat, value: f64, date: Option<NaiveDate>) -> Entry {
@@ -627,21 +632,29 @@ fn season_floors(stats: &[TeamSeasonStat]) -> BTreeMap<SeasonYear, i64> {
     }
     games
         .into_iter()
-        .map(|(season, mut g)| {
-            g.sort_unstable();
-            let n = g.len();
-            let median = if n % 2 == 1 {
-                g[n / 2] as f64
-            } else {
-                (g[n / 2 - 1] + g[n / 2]) as f64 / 2.0
-            };
-            (season, (median * FULL_SEASON_SHARE).ceil() as i64)
-        })
+        .map(|(season, g)| (season, games_floor(&g)))
         .collect()
 }
 
-/// A finished season for the team: the playoffs were reached (so the regular season is over)
-/// and the team played at least the season's games floor.
+/// The games floor of a group of team-seasons: [`FULL_SEASON_SHARE`] of the median of their
+/// games (regular season, play-in, cup and playoffs together), rounded up; 0 for no teams.
+pub fn games_floor(games: &[i64]) -> i64 {
+    if games.is_empty() {
+        return 0;
+    }
+    let mut g = games.to_vec();
+    g.sort_unstable();
+    let n = g.len();
+    let median = if n % 2 == 1 {
+        g[n / 2] as f64
+    } else {
+        (g[n / 2 - 1] + g[n / 2]) as f64 / 2.0
+    };
+    (median * FULL_SEASON_SHARE).ceil() as i64
+}
+
+/// A full season for the team: it has a pre-playoff rating (its regular season was rated to
+/// the end) and it played at least the season's games floor.
 fn is_full(s: &TeamSeasonStat, floors: &BTreeMap<SeasonYear, i64>) -> bool {
     s.elo_pre_playoffs.is_some() && floors.get(&s.season).is_some_and(|f| s.games >= *f)
 }
@@ -781,6 +794,7 @@ pub fn compute(
     let champion_roads = roads_with_rating(champion_roads);
     let all = || stats.iter();
     let floors = season_floors(stats);
+    let parity = super::parity::profile(&stats.iter().collect::<Vec<_>>());
 
     // Decades
     let mut by_decade_map: BTreeMap<i32, Vec<&TeamSeasonStat>> = BTreeMap::new();
@@ -913,6 +927,8 @@ pub fn compute(
         greatest_matchups,
         periods,
         by_cba: super::cba::summaries(stats),
+        parity_summary: super::parity::summary(&parity),
+        parity,
         clankers_by_era,
         roads_by_era,
     }

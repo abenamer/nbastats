@@ -59,11 +59,12 @@ Two themed eras, curated in `domain::eras`, name how the game was played or foll
 
 # The records of a bargaining period
 
-For each period present in the data, the Records page shows: the seasons it covers, the best team-season (season peak) and the weakest (season low), the titles and the franchises that won them (a relocated champion keeps its count), the number of distinct champions, the title HHI, the mean Elo and the Elo spread.
+For each period present in the data, the Records page shows: the seasons it covers, the best team-season (season peak) and the weakest (season low), the titles and the franchises that won them (a relocated champion keeps its count), the number of distinct champions, the title HHI, the mean Elo, the Elo spread and the champion z.
 
 * **Title HHI** is the Herfindahl-Hirschman index of the titles: the sum of each champion's squared share of the period's titles. It is 1.0 when one franchise won every title and 1 divided by the number of champions when every champion won once; lower means the titles were spread out.
 * **Mean Elo** is the mean season-end rating across the league in each season, averaged over the period's seasons, so every season weighs the same whatever its team count. It answers whether the ratings drift: a game moves points from the loser to the winner and nothing else, so the league's mean changes only through the season-start regression towards the base rating and the teams that join or leave (expansion teams enter at a low rating, teams that fold take their rating with them, the merger teams carried their ABA rating into the NBA). In the archive the NBA/BAA mean by decade is about 1400 in the 1940s (every founding team started at 1300 and a quarter of the gap closes per season), about 1515 in the 1950s (the weakest teams folded in 1950), about 1480 to 1500 in the 1960s and 1970s (with expansion seasons as low as 1440) and within five points of 1505 from the 1980s on, while the highest peaks rise from the low 1700s to the 1860s: the level holds and the tails widen as the league grows.
 * **Elo spread** is the standard deviation of season-end ratings across the league in each season, averaged over the period's seasons. A wider spread means a more unequal league.
+* **Champion z** is the champion's pre-playoff rating above the league mean in standard deviations of that season's ratings, averaged over the period's seasons with a champion; see the [parity profile](parity.md). A high value means the titles went to teams far above their league.
 
 # Verification
 

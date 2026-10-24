@@ -1,6 +1,7 @@
 # Bundle update log
 
 ## 2026-10-24
+* **New**: [Parity profile](/concepts/parity.md) defines the season-by-season measure of the champion, the finalists, the final four and the playoff field against the league, with the result by decade. [Rule periods and bargaining periods](/concepts/periods.md), the [Era builder](/concepts/era-builder.md), the [Application overview](/concepts/application.md), the API reference and the index follow. The terms Parity profile and Champion z are defined.
 * **Update**: [Backtesting method](/concepts/backtesting.md) scores the played series one by one, by round and paired against the first model, with the series result for version 0.1.0; the API and jobs references follow; the term Series score is defined.
 
 ## 2026-10-23

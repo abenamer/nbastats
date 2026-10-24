@@ -15,7 +15,7 @@ sources:
 
 # Purpose
 
-The Records page is a faceted search over the seasons. The panel at its top lists every era the data offers along nine dimensions; a pick keeps the seasons of that era and every table on the page is computed again over them: the highest and lowest ratings, the records by era, league, size, decade and bargaining period, East against West, the divisions, the champions, the rises and falls, the single-game swings, the matchups, the clankers and the roads to the title. The "LeBron James" chip, for example, replays the whole page over the seasons he was active. A banner names the picks, the seasons they select, the records of the selection (mean season-end Elo, Elo spread, best and weakest team-season, the titles, the number of distinct champions and the title HHI) and what changed in those periods, and the page's address follows the picks, so a link opens the same view.
+The Records page is a faceted search over the seasons. The panel at its top lists every era the data offers along nine dimensions; a pick keeps the seasons of that era and every table on the page is computed again over them: the highest and lowest ratings, the records by era, league, size, decade and bargaining period, East against West, the divisions, the champions, the rises and falls, the single-game swings, the matchups, the clankers and the roads to the title. The "LeBron James" chip, for example, replays the whole page over the seasons he was active. A banner names the picks, the seasons they select, the records of the selection (mean season-end Elo, Elo spread, the champion's z of the [parity profile](parity.md), best and weakest team-season, the titles, the number of distinct champions and the title HHI) and what changed in those periods, and the page's address follows the picks, so a link opens the same view.
 
 Within one dimension the picks add up: a season matches when it carries any of them (Larry Bird and Magic Johnson together select the seasons either was active). Across dimensions they intersect: a season must match every dimension picked (LeBron James and the hand-check ban select his seasons from 2004-05). A combination no season matches shows an empty page under a banner that says so.
 
@@ -51,4 +51,4 @@ The player table holds every league MVP since the award began in 1955-56, every 
 
 * A scope or a group with few seasons says little; the page greys groups under a chosen number of seasons.
 * A difference between eras is an association. A period boundary coincides with expansion, other rule changes and the growth of three-point shooting, and the dimensions overlap by construction.
-* Title HHI, mean Elo and Elo spread are defined in [Rule periods and bargaining periods](periods.md).
+* Title HHI, mean Elo and Elo spread are defined in [Rule periods and bargaining periods](periods.md); the champion's z in the [parity profile](parity.md).

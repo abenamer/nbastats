@@ -60,7 +60,7 @@
     const withSeries = result.models.map((x, i) => [x, i]).filter(([x]) => series(x));
     const labels = withSeries.length ? series(withSeries[0][0]).by_round.map(r => ROUND[r.round] || r.round) : [];
     chart('roundChart', { type: 'bar', data: { labels, datasets: withSeries.map(([x, i]) => ({ label: x.name, data: series(x).by_round.map(r => r.with_favourite ? r.favourite_won : null), backgroundColor: color(i) })) },
-      options: { plugins: { title: { display: true, text: 'Share of series the favourite won' } }, scales: { y: { min: 0, max: 1, ticks: { callback: v => pct(v, 0) } } } } });
+      options: { maintainAspectRatio: false, plugins: { title: { display: true, text: 'Share of series the favourite won' } }, scales: { y: { min: 0, max: 1, ticks: { callback: v => pct(v, 0) } } } } });
   }
   document.getElementById('stage').addEventListener('change', drawCalibration); document.getElementById('calModel').addEventListener('change', drawCalibration); document.getElementById('seasonModel').addEventListener('change', drawSeasons); document.getElementById('roundModel').addEventListener('change', drawRounds);
   document.getElementById('run').addEventListener('click', async () => {

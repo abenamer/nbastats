@@ -28,6 +28,7 @@ This project follows the [REAS engineering standard](https://github.com/abenamer
 * [Security model](concepts/security.md) - Threat model of the local-only deployment and the controls in place.
 * [Rule periods and bargaining periods](concepts/periods.md) - The period tables that group seasons on the Records page, with what each period changed.
 * [Era builder](concepts/era-builder.md) - How the facets on the Records page replay every record table over the seasons of chosen eras, and how the group panel computes one row of records per combination of dimensions.
+* [Parity profile](concepts/parity.md) - How the Records page measures, season by season, how far the champion, the finalists, the final four and the playoff field stood above their league, in Elo points and in standard deviations.
 * [Question box](concepts/question-box.md) - How the dashboard answers a question from the stored data through a language model with read-only tools, and what it refuses.
 
 # Runbooks

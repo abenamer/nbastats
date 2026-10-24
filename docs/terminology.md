@@ -19,6 +19,7 @@ These are project-specific technical terms. They are not a reproduction of the A
 | Alpha | Strength weight of a franchise in Engine A. The title probability is alpha divided by the sum of all alphas. |
 | Bargaining period | A run of NBA/BAA seasons under one collective bargaining agreement, from the first season the agreement applied to. The table of periods and their changes is curated in `domain::cba`; see [Rule periods and bargaining periods](/concepts/periods.md). |
 | Bracket | The 16 playoff slots and their pairings. Slots 0 to 7 are the East, 8 to 15 the West. |
+| Champion z | The champion's pre-playoff rating above the league mean in standard deviations of that season's ratings; averaged over a group's seasons with a champion in the group records. Part of the parity profile. |
 | Competition format | A period of the postseason and in-season structure: early playoffs, the 16-team field, best-of-seven throughout, the play-in era, the NBA Cup era. Curated in `domain::eras`. |
 | Composition root | `src/main.rs`. The one place that creates the concrete adapters and wires them to the application. |
 | Cup final | The NBA Cup (in-season tournament) final. An extra game that does not count in the standings. |
@@ -52,6 +53,7 @@ These are project-specific technical terms. They are not a reproduction of the A
 | Lookup | One tool call the language model makes to read the store (tool, arguments, rows). The question box lists the lookups under each answer. |
 | Matchup (greatest, clanker) | A played game ranked by the combined Elo of the two teams before tip-off: the 20 highest are the greatest matchups; the lowest of each era, per league, is its clanker. |
 | Mean Elo | The mean season-end rating across a league in a season, averaged over a group's seasons. A check that the ratings hold their level between periods. |
+| Parity profile | Season by season, the champion, the two finalists, the four conference finalists and the playoff field against their league: the gap to the league mean of the pre-playoff ratings in Elo points and in standard deviations (z), with the champion's rank; the mean z over a group of seasons is its parity figure. Computed in `domain::parity`. |
 | Play-in | The games that decide seeds 7 and 8 (2020-21 and later), or the 8 seed (2019-20). |
 | Player era | The seasons a listed player was active, from the curated table in `domain::players`; a season belongs to every listed player active in it. |
 | Port | A trait in `application::ports` that the application requires from the outside world. |
