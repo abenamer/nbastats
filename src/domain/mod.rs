@@ -3,6 +3,7 @@
 pub mod backtesting;
 pub mod cba;
 pub mod continuation;
+pub mod cup;
 pub mod elo;
 pub mod eras;
 pub mod ids;

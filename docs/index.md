@@ -20,6 +20,7 @@ This project follows the [REAS engineering standard](https://github.com/abenamer
 * [Alpha lottery engine](concepts/alpha-engine.md) - Engine A: what the alpha lottery answers, what its inputs mean, how to read its results, and its exact check.
 * [Playoff simulator](concepts/playoff-engine.md) - Engine B: bracket reconstruction, exact probabilities and Monte Carlo.
 * [Season forecast engine](concepts/season-engine.md) - Engine C: full-season simulation with play-in and playoffs.
+* [NBA Cup forecast](concepts/nba-cup.md) - How the season forecast simulates the NBA Cup from the schedule, with the groups derived from the group nights and a projected knockout bracket.
 * [Backtesting method](concepts/backtesting.md) - How forecasts are scored and how parameters are tuned without leakage.
 * [Dynasty analysis](concepts/dynasty-analysis.md) - How the application judges a title run against season-specific strength.
 * [Historical data](concepts/historical-data.md) - Data sources, coverage, franchise identity and game classification.

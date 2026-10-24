@@ -8,4 +8,4 @@ pub mod seeding;
 pub mod standings;
 
 pub const MODEL_VERSION: &str = "elo-playoff-1.0";
-pub const SEASON_MODEL_VERSION: &str = "elo-season-1.1";
+pub const SEASON_MODEL_VERSION: &str = "elo-season-1.2";

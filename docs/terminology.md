@@ -53,6 +53,7 @@ These are project-specific technical terms. They are not a reproduction of the A
 | Lookup | One tool call the language model makes to read the store (tool, arguments, rows). The question box lists the lookups under each answer. |
 | Matchup (greatest, clanker) | A played game ranked by the combined Elo of the two teams before tip-off: the 20 highest are the greatest matchups; the lowest of each era, per league, is its clanker. |
 | Mean Elo | The mean season-end rating across a league in a season, averaged over a group's seasons. A check that the ratings hold their level between periods. |
+| NBA Cup | The in-season tournament, from 2023-24: six groups of five, a knockout of eight, a final on a neutral floor. The application keeps the dates of each Cup and derives the groups from the games on the group nights; see the [NBA Cup forecast](/concepts/nba-cup.md). |
 | Parity profile | Season by season, the champion, the two finalists, the four conference finalists and the playoff field against their league: the gap to the league mean of the pre-playoff ratings in Elo points and in standard deviations (z), with the champion's rank; the mean z over a group of seasons is its parity figure. Computed in `domain::parity`. |
 | Play-in | The games that decide seeds 7 and 8 (2020-21 and later), or the 8 seed (2019-20). |
 | Player era | The seasons a listed player was active, from the curated table in `domain::players`; a season belongs to every listed player active in it. |

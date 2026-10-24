@@ -34,6 +34,7 @@ The Season Forecast page shows, for every team, the probability to:
    * Before 2019-20: the top eight qualify.
    A play-in game that was played on or before the cutoff keeps its real result.
 6. Build the bracket and play it with the playoff model and the playoff home-court bonus (default 100). Playoff ratings are fixed unless you set a playoff K-factor.
+7. For a season with an NBA Cup, build the group tables from the group games, seed the knockout and play it; see the [NBA Cup forecast](nba-cup.md).
 
 # Projected bracket
 
