@@ -185,7 +185,7 @@ pub fn tool_specs() -> Vec<ToolSpec> {
         },
         ToolSpec {
             name: "win_probability",
-            description: "The Elo model's probability that team A beats team B in one game and in a best-of-seven series, from the two ratings and the venue.",
+            description: "The Elo model's probability that team A beats team B in one regular-season game (with the current season's fitted home-court bonus) and in a best-of-seven playoff series (with the playoff bonus of 100), from the two ratings and the venue.",
             parameters: json!({ "type": "object", "required": ["elo_a", "elo_b"], "properties": {
                 "elo_a": { "type": "number", "minimum": 500, "maximum": 2500 },
                 "elo_b": { "type": "number", "minimum": 500, "maximum": 2500 },
@@ -270,11 +270,17 @@ fn date_arg(args: &Value, key: &str) -> Result<Option<NaiveDate>, String> {
 /// arguments come back as an `error` object the model can correct; store failures are errors.
 pub struct Tools<'a, S> {
     store: &'a S,
+    /// The home-court bonus of a regular-season game today (the current season's fitted
+    /// value); a series keeps the playoff default.
+    regular_home_advantage: f64,
 }
 
 impl<'a, S: GameLog + AnalysisStore> Tools<'a, S> {
-    pub fn new(store: &'a S) -> Self {
-        Self { store }
+    pub fn new(store: &'a S, regular_home_advantage: f64) -> Self {
+        Self {
+            store,
+            regular_home_advantage,
+        }
     }
 
     pub async fn call(&self, call: ToolCall) -> Result<Value, StoreError> {
@@ -336,7 +342,7 @@ impl<'a, S: GameLog + AnalysisStore> Tools<'a, S> {
                     (Err(e), _) | (_, Err(e)) => Ok(error(e)),
                 }
             }
-            "win_probability" => Ok(win_probability(a)),
+            "win_probability" => Ok(win_probability(a, self.regular_home_advantage)),
             other => Ok(error(format!("unknown tool {other}"))),
         }
     }
@@ -593,7 +599,7 @@ fn game_row(g: &Game, team: &Team, teams: &HashMap<crate::domain::ids::TeamId, T
     })
 }
 
-fn win_probability(a: &Value) -> Value {
+fn win_probability(a: &Value, regular_home_advantage: f64) -> Value {
     let (Some(elo_a), Some(elo_b)) = (
         a.get("elo_a").and_then(Value::as_f64),
         a.get("elo_b").and_then(Value::as_f64),
@@ -606,14 +612,7 @@ fn win_probability(a: &Value) -> Value {
     let home = a.get("home").and_then(Value::as_str).unwrap_or("neutral");
     let neutral = home == "neutral";
     let a_home = home == "a";
-    let game = elo::game_probability(
-        elo_a,
-        elo_b,
-        a_home,
-        neutral,
-        elo::DEFAULT_HOME_ADVANTAGE,
-        1.0,
-    );
+    let game = elo::game_probability(elo_a, elo_b, a_home, neutral, regular_home_advantage, 1.0);
     let series = elo::series_probability(&elo::series_game_probs(
         elo_a,
         elo_b,
@@ -627,6 +626,7 @@ fn win_probability(a: &Value) -> Value {
         "p_game_a": (game * 1000.0).round() / 1000.0,
         "p_series_best_of_7_a": (series * 1000.0).round() / 1000.0,
         "home": home, "elo_diff": r1(elo_a - elo_b),
+        "home_advantage_game": r1(regular_home_advantage), "home_advantage_series": elo::DEFAULT_HOME_ADVANTAGE,
     })
 }
 
@@ -684,10 +684,11 @@ pub async fn answer<S: GameLog + AnalysisStore, M: LanguageModel>(
     model: &M,
     question: &str,
     today: NaiveDate,
+    regular_home_advantage: f64,
 ) -> Result<Answer, AskError> {
     let question = validate_question(question)?;
     let latest = store.latest_season().await?;
-    let tools = Tools::new(store);
+    let tools = Tools::new(store, regular_home_advantage);
     let started = std::time::Instant::now();
     let outcome = tokio::time::timeout(
         ANSWER_TIMEOUT,
@@ -1083,10 +1084,12 @@ mod tests {
 
     #[test]
     fn win_probability_checks_its_arguments() {
-        let p = win_probability(&json!({ "elo_a": 1700, "elo_b": 1500, "home": "a" }));
+        let p = win_probability(&json!({ "elo_a": 1700, "elo_b": 1500, "home": "a" }), 100.0);
         assert!(p["p_game_a"].as_f64().unwrap() > 0.8);
         assert!(p["p_series_best_of_7_a"].as_f64().unwrap() > p["p_game_a"].as_f64().unwrap());
-        assert!(win_probability(&json!({ "elo_a": 1700 }))["error"].is_string());
-        assert!(win_probability(&json!({ "elo_a": 100, "elo_b": 1500 }))["error"].is_string());
+        assert!(win_probability(&json!({ "elo_a": 1700 }), 100.0)["error"].is_string());
+        assert!(
+            win_probability(&json!({ "elo_a": 100, "elo_b": 1500 }), 100.0)["error"].is_string()
+        );
     }
 }

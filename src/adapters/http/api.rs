@@ -552,6 +552,51 @@ pub async fn exact_alpha(Query(q): Query<ExactQuery>) -> ApiResult<Value> {
     })))
 }
 
+/// The strength a title record implies, for the backward view of the Alpha Simulator. Every
+/// field is text so a bad value answers with a JSON message.
+#[derive(Deserialize)]
+pub struct StrengthQuery {
+    pub franchise: Option<String>,
+    pub from: Option<String>,
+    pub to: Option<String>,
+    pub titles: Option<String>,
+}
+
+pub async fn strength(
+    State(app): State<AppState>,
+    Query(q): Query<StrengthQuery>,
+) -> ApiResult<Value> {
+    use crate::application::strength::{read_record, Record, StrengthError};
+    let from = season_param(q.from.as_deref(), "from")?
+        .ok_or_else(|| ApiError::bad_request("from is required"))?;
+    let to = season_param(q.to.as_deref(), "to")?
+        .ok_or_else(|| ApiError::bad_request("to is required"))?;
+    let titles = whole_number(q.titles.as_deref(), "titles")?
+        .ok_or_else(|| ApiError::bad_request("titles is required"))?;
+    let titles = usize::try_from(titles)
+        .map_err(|_| ApiError::bad_request("titles must be a whole number of titles"))?;
+    let franchise = match q.franchise.map(|k| k.trim().to_ascii_uppercase()) {
+        None => None,
+        Some(k) if k.is_empty() => None,
+        Some(k) if k.len() <= 8 && k.chars().all(|c| c.is_ascii_alphanumeric()) => Some(k),
+        Some(_) => return Err(ApiError::bad_request("franchise must be a franchise key")),
+    };
+    let record = Record {
+        franchise,
+        from,
+        to,
+        titles,
+    };
+    match read_record(&app.store, &app.strength_slot, record).await {
+        Ok(answer) => Ok(Json(json!(answer))),
+        Err(StrengthError::Invalid(msg)) => Err(ApiError::bad_request(msg)),
+        Err(StrengthError::Busy) => Err(ApiError::Busy(
+            "another record is being read; try again in a moment".to_string(),
+        )),
+        Err(StrengthError::Store(e)) => Err(e.into()),
+    }
+}
+
 // ---------------------------------------------------------------------------------------
 // Dashboard, bracket, dynasty
 // ---------------------------------------------------------------------------------------
@@ -795,7 +840,21 @@ pub async fn submit_season(
     State(app): State<AppState>,
     Json(body): Json<Named<SeasonParams>>,
 ) -> ApiResult<Value> {
-    queue(&app, SeasonJob(body.params), body.name).await
+    // A request without a regular-season bonus takes the season's fitted value, so the
+    // stored parameters say which bonus the forecast used.
+    let mut params = body.params;
+    if params.regular_home_advantage.is_none() {
+        params.regular_home_advantage = Some(app.home_advantage(params.season).await?.regular);
+    }
+    queue(&app, SeasonJob(params), body.name).await
+}
+
+/// The home-court bonus the forecasts of a season use.
+pub async fn season_home_advantage(
+    State(app): State<AppState>,
+    Path(season): Path<SeasonYear>,
+) -> ApiResult<Value> {
+    Ok(Json(json!(app.home_advantage(season).await?)))
 }
 
 pub async fn submit_backtest(
@@ -1204,9 +1263,21 @@ pub async fn ask(State(app): State<AppState>, Json(body): Json<AskBody>) -> ApiR
     let _slot = app.ask_slots.try_acquire().map_err(|_| {
         ApiError::Busy("another question is being answered; try again in a moment".to_string())
     })?;
-    let answer = ask::answer(&app.store, model, &body.question, app.today())
-        .await
-        .map_err(ask_error)?;
+    // Reject an empty or over-long question before any work on its behalf.
+    ask::validate_question(&body.question).map_err(ask_error)?;
+    let regular_home_advantage = app
+        .home_advantage(scheduler::current_season(app.today()))
+        .await?
+        .regular;
+    let answer = ask::answer(
+        &app.store,
+        model,
+        &body.question,
+        app.today(),
+        regular_home_advantage,
+    )
+    .await
+    .map_err(ask_error)?;
     Ok(Json(answer))
 }
 

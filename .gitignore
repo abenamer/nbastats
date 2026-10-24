@@ -3,3 +3,6 @@
 /backups
 .env
 *.log
+
+# research papers are linked, not stored
+research/papers/*.pdf

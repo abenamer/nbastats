@@ -48,6 +48,12 @@
   <div class="panel"><h2>East against West</h2><p class="muted small">Mean pre-playoff Elo of each conference, season by season. A positive gap means the West was stronger. The Title column names the champion and its conference, green when the stronger conference won the title. With only two conferences, this comparison says more than a "best conference" list, which the West would fill on its own.</p><div id="confSeasons" class="table-wrap"></div></div>
   <div class="panel"><h2>Best divisions</h2><div id="divBest" class="table-wrap"></div><h2 style="margin-top:1rem">Worst divisions</h2><div id="divWorst" class="table-wrap"></div></div>
 </section>
+<section>
+  <div class="panel"><h2>Parity by season</h2><p class="muted small">How far the champion, the two finalists, the final four and the playoff field stood above their league, from the pre-playoff ratings: the gap to the league mean in Elo points and the same gap in standard deviations of that season's ratings (z), which reads the same way in a tight league and a spread-out one. A champion near z = 2.5 towered over its league; one near 1 won from the pack. Rank is the champion's place among the league's ratings. The gap to the rest is the tier's mean minus the mean of every other team. Seasons need eight rated teams; a tier needs all of its teams rated.</p>
+  <p class="small" id="paritySummary"></p>
+  <div class="grid2"><div style="height:300px;position:relative"><canvas id="parityChart"></canvas></div><div style="height:300px;position:relative"><canvas id="paritySdChart"></canvas></div></div>
+  <div id="parity" class="table-wrap" style="margin-top:1rem"></div></div>
+</section>
 <section class="grid2">
   <div class="panel"><h2>Best champions</h2><p class="muted small">Champions by their season peak, with the date of the peak and the rating after the game that clinched the title.</p><div id="bestChampion" class="table-wrap"></div><h2 style="margin-top:1rem">Weakest champions</h2><div id="worstChampion" class="table-wrap"></div></div>
   <div class="panel"><h2>Best teams that did not win the title</h2><div id="bestUncrowned" class="table-wrap"></div><h2 style="margin-top:1rem">Highest and lowest season-end ratings</h2><div id="bestEnd" class="table-wrap"></div><div id="worstEnd" class="table-wrap" style="margin-top:.5rem"></div></div>

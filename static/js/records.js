@@ -1,5 +1,9 @@
 (async () => {
-  const { num, esc, getJSON, table, setStatus, labelOf, RESULT, scoreCell, attachReports } = NBA;
+  const { num, esc, getJSON, table, setStatus, labelOf, RESULT, scoreCell, attachReports, chart, color } = NBA;
+  const signed = (v, d) => (v >= 0 ? '+' : '') + num(v, d);
+  // Gap first, so the table sorts the column by the gap; z after the separator.
+  const zCell = t => t ? `${signed(t.gap, 0)} · z ${signed(t.z, 2)}` : '–';
+  const zClass = t => !t ? '' : t.z >= 2 ? 'good' : t.z < 1 ? 'bad' : '';
   const status = document.getElementById('status');
   const league = l => l === 'aba' ? 'ABA' : 'NBA';
   const team = e => `${e.code} · ${e.name}`;
@@ -62,6 +66,7 @@
       { label: 'Title HHI', value: c => c.title_hhi == null ? '–' : num(c.title_hhi, 2) }, { label: 'Mean Elo', value: c => c.mean_elo == null ? '–' : num(c.mean_elo, 0) }, { label: 'Elo spread', value: c => c.elo_spread == null ? '–' : num(c.elo_spread, 0) }], r.by_cba);
     document.getElementById('cbaChanges').innerHTML = r.by_cba.map(c => `<details><summary><strong>${esc(c.name)}</strong> · ${esc(span(c))} <span class="muted small">${esc(c.summary)}</span></summary><ul class="small">${c.changes.map(ch => `<li><span class="muted">${labelOf(ch.season)}</span> ${esc(ch.text)}</li>`).join('')}</ul></details>`).join('');
     group('divBest', r.divisions.best); group('divWorst', r.divisions.worst);
+    renderParity(r.parity || [], r.parity_summary);
     list('bestChampion', r.best_champion, 'Peak Elo', true, 'At the clinch'); list('worstChampion', r.worst_champion, 'Peak Elo', true, 'At the clinch'); list('bestUncrowned', r.best_uncrowned, 'Peak Elo', true, 'Season end');
     list('bestEnd', r.best_end, 'End Elo', false); list('worstEnd', r.worst_end, 'End Elo', false);
     list('rise', r.biggest_rise, 'Change', false); list('fall', r.biggest_fall, 'Change', false);
@@ -114,6 +119,27 @@
   };
   const facetParams = () => { const p = new URLSearchParams(); for (const [dim, set] of picked) for (const label of set) p.append('facet', `${dim}:${label}`); return p; };
   const spanOf = v => v.first_season === v.last_season ? labelOf(v.first_season) : `${labelOf(v.first_season)} to ${labelOf(v.last_season)}`;
+  function renderParity(rows, summary) {
+    const z = v => v == null ? '–' : signed(v, 2);
+    $('paritySummary').innerHTML = summary ? `Over these <strong>${summary.seasons}</strong> season${summary.seasons === 1 ? '' : 's'}: champion z <strong>${z(summary.champion_z)}</strong> (${summary.champion_gap == null ? '–' : signed(summary.champion_gap, 0)} Elo above the league mean), finalists z ${z(summary.finalists_z)}, final four z ${z(summary.final_four_z)}, playoff field z ${z(summary.playoff_field_z)}; league spread ${num(summary.mean_league_sd, 0)} Elo; the champion had the best rating in ${summary.champion_was_best} of ${summary.seasons_with_champion} season${summary.seasons_with_champion === 1 ? '' : 's'} with a champion (mean rank ${summary.mean_champion_rank == null ? '–' : num(summary.mean_champion_rank, 1)}).${rows.some(p => p.league === 'nba') ? '' : ' The charts show NBA/BAA seasons only; this selection has none.'}` : 'No season in this selection has eight rated teams and a postseason.';
+    $('parity').innerHTML = table([
+      { label: 'Season', value: p => labelOf(p.season), left: true }, { label: 'League', value: p => league(p.league), left: true }, { label: 'Teams', value: 'teams' },
+      { label: 'League mean', value: p => num(p.league_mean, 0) }, { label: 'Spread (SD)', value: p => num(p.league_sd, 0) },
+      { label: 'Champion', value: p => p.champion_code ? `${p.champion_code}${p.champion ? ` ${num(p.champion.mean, 0)}` : ''}` : '–', left: true },
+      { label: 'Rank', value: p => p.champion_rank == null ? '–' : p.champion_rank, cls: p => p.champion_rank === 1 ? 'good' : p.champion_rank > 4 ? 'bad' : '' },
+      { label: 'Champion gap', value: p => zCell(p.champion), cls: p => zClass(p.champion) },
+      { label: 'Finalists gap', value: p => zCell(p.finalists) },
+      { label: 'Final four gap', value: p => zCell(p.final_four) },
+      { label: 'Playoff field gap', value: p => p.playoff_field ? `${zCell(p.playoff_field)} · ${p.playoff_field.teams} teams` : '–' },
+      { label: 'Champion vs rest', value: p => p.champion ? signed(p.champion.gap_to_rest, 0) : '–' }], rows);
+    const nba = rows.filter(p => p.league === 'nba');
+    const labels = nba.map(p => labelOf(p.season));
+    const series = (name, pick, i) => ({ label: name, data: nba.map(p => pick(p) ? pick(p).z : null), borderColor: color(i), backgroundColor: color(i), pointRadius: 2, tension: 0.2, spanGaps: true });
+    chart('parityChart', { type: 'line', data: { labels, datasets: [series('Champion', p => p.champion, 0), series('Finalists', p => p.finalists, 1), series('Final four', p => p.final_four, 2), series('Playoff field', p => p.playoff_field, 3)] },
+      options: { maintainAspectRatio: false, plugins: { title: { display: true, text: 'Standard deviations above the league mean (NBA/BAA)' } }, scales: { y: { ticks: { callback: v => num(v, 1) } } } } });
+    chart('paritySdChart', { type: 'bar', data: { labels, datasets: [{ label: 'League spread (SD of pre-playoff Elo)', data: nba.map(p => p.league_sd), backgroundColor: color(4) }] },
+      options: { maintainAspectRatio: false, plugins: { title: { display: true, text: 'How spread out the league was (NBA/BAA)' } }, scales: { y: { beginAtZero: true } } } });
+  }
   function renderFacetRows() {
     if (!dims) return;
     $('facetRows').innerHTML = dims.filter(d => d.values.length).map(d => {
@@ -136,7 +162,7 @@
     const leagues = scope.leagues.map(l => l === 'aba' ? 'ABA' : 'NBA/BAA').join(' and ');
     const head = scope.seasons ? `<strong>Showing ${scope.seasons} season${scope.seasons === 1 ? '' : 's'}</strong>, ${scope.first_season === scope.last_season ? labelOf(scope.first_season) : `${labelOf(scope.first_season)} to ${labelOf(scope.last_season)}`} (${esc(leagues)}), for` : '<strong>No season matches all of these picks</strong>:';
     const st = scope.stats;
-    const summary = st ? `<p class="small" style="margin:.4rem 0 0">Mean season-end Elo ${st.mean_elo == null ? '–' : num(st.mean_elo, 0)} · Elo spread ${st.elo_spread == null ? '–' : num(st.elo_spread, 0)} · best team-season ${esc(st.best.code)} ${num(st.best.value, 0)} (${labelOf(st.best.season)}) · weakest ${esc(st.weakest.code)} ${num(st.weakest.value, 0)} (${labelOf(st.weakest.season)}) · ${st.titles} title${st.titles === 1 ? '' : 's'}, ${st.distinct_champions} champion${st.distinct_champions === 1 ? '' : 's'}${st.title_hhi == null ? '' : `, title HHI ${num(st.title_hhi, 2)}`}</p>` : '';
+    const summary = st ? `<p class="small" style="margin:.4rem 0 0">Mean season-end Elo ${st.mean_elo == null ? '–' : num(st.mean_elo, 0)} · Elo spread ${st.elo_spread == null ? '–' : num(st.elo_spread, 0)} · champion z ${st.champion_z == null ? '–' : signed(st.champion_z, 2)} · best team-season ${esc(st.best.code)} ${num(st.best.value, 0)} (${labelOf(st.best.season)}) · weakest ${esc(st.weakest.code)} ${num(st.weakest.value, 0)} (${labelOf(st.weakest.season)}) · ${st.titles} title${st.titles === 1 ? '' : 's'}, ${st.distinct_champions} champion${st.distinct_champions === 1 ? '' : 's'}${st.title_hhi == null ? '' : `, title HHI ${num(st.title_hhi, 2)}`}</p>` : '';
     const notes = scope.notes.length ? `<details class="notes" style="margin-top:.4rem"><summary class="small">What changed in these periods</summary>${scope.notes.map(n => `<p class="small" style="margin:.4rem 0 .1rem"><strong>${esc(n.name)}</strong> <span class="muted">${esc(n.summary)}</span></p><ul class="small">${n.changes.map(c => `<li><span class="muted">${labelOf(c.season)}</span> ${esc(c.text)}</li>`).join('')}</ul>`).join('')}</details>` : '';
     el.innerHTML = `<div class="banner${scope.seasons ? '' : ' empty'}"><div class="chips"><span>${head}</span> ${chips}</div>${summary}${notes}</div>`;
   }

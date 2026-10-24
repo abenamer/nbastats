@@ -196,6 +196,9 @@ impl AnalysisStore for PostgresStore {
     }
 
     async fn team_season_stats(&self) -> StoreResult<Vec<TeamSeasonStat>> {
+        // The curated champion of a season names one league's champion; the other league's
+        // rows keep the label the reconstruction gave them.
+        let (_, aba_codes, _) = scope_binds(None);
         Ok(sqlx::query_as::<_, TeamSeasonStat>(
             "WITH p AS (
                  SELECT g.season, t.id AS team_id, g.game_date, g.game_type,
@@ -223,9 +226,11 @@ impl AnalysisStore for PostgresStore {
                     ts.conference, ts.division
              FROM a JOIN teams t ON t.id = a.team_id JOIN franchises f ON f.id = t.franchise_id
              LEFT JOIN team_seasons ts ON ts.season = a.season AND ts.team_id = a.team_id
-             LEFT JOIN championships c ON c.season = a.season
+             LEFT JOIN (championships ch JOIN teams ct ON ct.id = ch.champion_team_id) c
+                 ON c.season = a.season AND (c.code = ANY($1)) = (t.code = ANY($1))
              ORDER BY a.season, t.code",
         )
+        .bind(aba_codes)
         .fetch_all(&self.pool)
         .await?)
     }

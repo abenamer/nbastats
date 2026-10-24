@@ -3,7 +3,7 @@
 //! (`main.rs`), which is the one place that names the concrete adapters.
 
 use std::collections::HashMap;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 
 use tokio::sync::Notify;
@@ -67,6 +67,9 @@ pub struct App {
     pub reports: Option<EspnReportSource>,
     /// One report lookup at a time; a request that finds it taken answers from the store.
     pub report_slot: tokio::sync::Semaphore,
+    /// One backward reading of a title record at a time (seconds of exact brackets); the
+    /// rest get status 429.
+    pub strength_slot: tokio::sync::Semaphore,
     /// Held while a results sync runs (manual or scheduled); at most one at a time.
     pub sync_lock: Arc<tokio::sync::Mutex<()>>,
     sync_phase: std::sync::Mutex<SyncPhase>,
@@ -78,6 +81,10 @@ pub struct App {
     /// Application-wide shutdown signal.
     pub shutdown: CancellationToken,
     seasons: RwLock<HashMap<SeasonYear, Arc<SeasonData>>>,
+    /// The home-court bonus of each season's forecasts, fitted once per season.
+    home_advantages: RwLock<HashMap<SeasonYear, crate::domain::elo::HomeAdvantage>>,
+    /// Counts the cache invalidations, so a load that began before one is not cached after it.
+    cache_generation: AtomicU64,
     teams: RwLock<Option<Arc<HashMap<TeamId, Team>>>>,
 }
 
@@ -101,6 +108,7 @@ impl App {
             ask_slots: tokio::sync::Semaphore::new(ASK_SLOTS),
             reports,
             report_slot: tokio::sync::Semaphore::new(1),
+            strength_slot: tokio::sync::Semaphore::new(1),
             sync_lock: Arc::new(tokio::sync::Mutex::new(())),
             sync_phase: std::sync::Mutex::new(SyncPhase::Idle),
             started_at: chrono::Utc::now(),
@@ -108,6 +116,8 @@ impl App {
             cancel_flags: std::sync::Mutex::new(HashMap::new()),
             shutdown: CancellationToken::new(),
             seasons: RwLock::new(HashMap::new()),
+            home_advantages: RwLock::new(HashMap::new()),
+            cache_generation: AtomicU64::new(0),
             teams: RwLock::new(None),
         }
     }
@@ -134,6 +144,7 @@ impl App {
         {
             return Ok(d);
         }
+        let generation = self.cache_generation.load(Ordering::SeqCst);
         let games = self.store.season_games(season).await?;
         if games.is_empty() {
             return Err(SeasonLoadError::NoGames(season));
@@ -145,11 +156,50 @@ impl App {
             games,
             reconstruction,
         });
-        self.seasons
-            .write()
-            .unwrap_or_else(|e| e.into_inner())
-            .insert(season, data.clone());
+        let mut seasons = self.seasons.write().unwrap_or_else(|e| e.into_inner());
+        if self.cache_generation.load(Ordering::SeqCst) == generation {
+            seasons.insert(season, data.clone());
+        }
         Ok(data)
+    }
+
+    /// The home-court bonus the forecasts of `season` use: the regular-season value fitted on
+    /// the seasons before it (see `application::home_advantage`), cached until the next import.
+    /// A season of the window without games contributes nothing; a store failure is returned
+    /// and nothing is cached, so a bonus fitted on a partial window never stands.
+    pub async fn home_advantage(
+        &self,
+        season: SeasonYear,
+    ) -> Result<crate::domain::elo::HomeAdvantage, StoreError> {
+        if let Some(h) = self
+            .home_advantages
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(&season)
+        {
+            return Ok(h.clone());
+        }
+        let generation = self.cache_generation.load(Ordering::SeqCst);
+        let mut per_season = Vec::new();
+        for earlier in super::home_advantage::window(season) {
+            let samples = match self.season_data(earlier).await {
+                Ok(data) => super::home_advantage::samples(&data.games),
+                Err(SeasonLoadError::NoGames(_)) => Vec::new(),
+                Err(SeasonLoadError::Store(e)) => return Err(e),
+            };
+            per_season.push((earlier, samples));
+        }
+        // The fit is two passes over at most a few thousand samples per step, about a
+        // millisecond in all, so it runs on the request's thread.
+        let fitted = super::home_advantage::from_samples(&per_season);
+        let mut cache = self
+            .home_advantages
+            .write()
+            .unwrap_or_else(|e| e.into_inner());
+        if self.cache_generation.load(Ordering::SeqCst) == generation {
+            cache.insert(season, fitted.clone());
+        }
+        Ok(fitted)
     }
 
     /// Today's date in the configured sync time zone (`RESULTS_SYNC_TIMEZONE`, whether or
@@ -175,9 +225,14 @@ impl App {
         *self.sync_phase.lock().unwrap_or_else(|e| e.into_inner()) = phase;
     }
 
-    /// Drop cached data after an import.
+    /// Drop cached data after an import. The generation moves first, under the season lock,
+    /// so a load that began before the call cannot put its stale data into either cache.
     pub fn invalidate_cache(&self) {
-        self.seasons
+        let mut seasons = self.seasons.write().unwrap_or_else(|e| e.into_inner());
+        self.cache_generation.fetch_add(1, Ordering::SeqCst);
+        seasons.clear();
+        drop(seasons);
+        self.home_advantages
             .write()
             .unwrap_or_else(|e| e.into_inner())
             .clear();

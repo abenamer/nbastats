@@ -36,7 +36,7 @@
       { label: 'Best team-season', value: g => `${g.best.code} ${num(g.best.value, 0)} (${labelOf(g.best.season)})`, left: true, cls: () => 'good' },
       { label: 'Weakest', value: g => `${g.weakest.code} ${num(g.weakest.value, 0)} (${labelOf(g.weakest.season)})`, left: true, cls: () => 'bad' },
       { label: 'Titles', value: 'titles' }, { label: 'Champions', value: titleList, raw: true, left: true }, { label: 'Distinct', value: 'distinct_champions' },
-      { label: 'Title HHI', value: g => g.title_hhi == null ? '–' : num(g.title_hhi, 2) }, { label: 'Mean Elo', value: g => g.mean_elo == null ? '–' : num(g.mean_elo, 0) }, { label: 'Elo spread', value: g => g.elo_spread == null ? '–' : num(g.elo_spread, 0) }], rows) : '<p class="muted">No group matches these filters.</p>';
+      { label: 'Title HHI', value: g => g.title_hhi == null ? '–' : num(g.title_hhi, 2) }, { label: 'Mean Elo', value: g => g.mean_elo == null ? '–' : num(g.mean_elo, 0) }, { label: 'Elo spread', value: g => g.elo_spread == null ? '–' : num(g.elo_spread, 0) }, { label: 'Champion z', value: g => g.champion_z == null ? '–' : (g.champion_z >= 0 ? '+' : '') + num(g.champion_z, 2) }], rows) : '<p class="muted">No group matches these filters.</p>';
     $('groups').querySelectorAll('tbody tr').forEach((tr, i) => { if (rows[i] && rows[i].seasons < min) tr.classList.add('thin'); });
     const thin = rows.filter(g => g.seasons < min).length;
     $('gThin').textContent = thin ? `${thin} group${thin === 1 ? '' : 's'} with fewer than ${min} seasons shown in grey: too few seasons to compare.` : '';
@@ -56,7 +56,7 @@
       <div>Distinct champions</div><div>${g.distinct_champions} of ${g.titles}</div>
       <div>Title HHI</div><div>${g.title_hhi == null ? '–' : num(g.title_hhi, 2)}</div>
       <div>Mean Elo</div><div>${g.mean_elo == null ? '–' : num(g.mean_elo, 0)}</div>
-      <div>Elo spread</div><div>${g.elo_spread == null ? '–' : num(g.elo_spread, 0)}</div></div></div>`).join('') : '';
+      <div>Elo spread</div><div>${g.elo_spread == null ? '–' : num(g.elo_spread, 0)}</div><div>Champion z</div><div>${g.champion_z == null ? '–' : (g.champion_z >= 0 ? '+' : '') + num(g.champion_z, 2)}</div></div></div>`).join('') : '';
   }
   async function load() {
     const mine = ++loads; // only the latest request may draw the table

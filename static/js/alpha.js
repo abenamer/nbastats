@@ -1,5 +1,5 @@
 (async () => {
-  const { pct, num, esc, getJSON, runJob, table, cards, setStatus, chart } = NBA;
+  const { pct, num, esc, getJSON, runJob, table, cards, setStatus, chart, labelOf } = NBA;
   const status = document.getElementById('status');
   const editor = document.getElementById('alphaEditor');
   let names = null;
@@ -110,5 +110,60 @@
       { label: 'P(target ≥ K)', value: j => pct(j.result.p_target_at_least_k, 2) }, { label: 'E[# ≥ K]', value: j => num(j.result.expected_count_at_least_k, 3) },
       { label: 'Top-5', value: j => pct(j.result.top5_share_mean) }, { label: 'Gini', value: j => num(j.result.gini_mean, 3) }, { label: 'HHI', value: j => num(j.result.hhi_mean, 3) }, { label: 'Version', value: j => `${j.app_version} / ${j.model_version}`, left: true }], jobs);
   });
+  // Backward view: the strength a record implies, computed exactly by the server.
+  const $b = id => document.getElementById(id);
+  const signed = (x, d = 0) => `${x >= 0 ? '+' : ''}${num(x, d)}`;
+  let strength = null, strengthLoads = 0;
+  async function loadFranchiseList() {
+    try {
+      const fr = (await getJSON('/api/franchises')).filter(f => f.active);
+      $b('bFranchise').innerHTML = '<option value="">none</option>' + fr.map(f => `<option value="${esc(f.key)}" ${f.key === 'GSW' ? 'selected' : ''}>${esc(f.key)} · ${esc(f.name)}</option>`).join('');
+    } catch (e) { setStatus($b('bStatus'), e.message, true); }
+  }
+  async function updateStrength() {
+    const q = new URLSearchParams({ from: $b('bFrom').value, to: $b('bTo').value, titles: $b('bTitles').value });
+    if ($b('bFranchise').value) q.set('franchise', $b('bFranchise').value);
+    const alphaText = a => a == null ? 'none' : num(a, 2);
+    const gapText = r => r == null ? '–' : `${signed(r.gap)} Elo`;
+    // The chance a gap really has is shown when a seed change makes it differ from the one asked for.
+    const reached = (r, p) => r && Math.abs(r.title_chance - p) > 0.005 ? ` (the chance at that gap is ${pct(r.title_chance, 1)}: the team changes seed there)` : '';
+    const mine = ++strengthLoads;
+    try {
+      const answer = await getJSON(`/api/strength?${q}`);
+      if (mine !== strengthLoads) return;
+      strength = answer;
+      setStatus($b('bStatus'), '');
+      const a = strength.alpha, e = strength.elo, act = strength.actual;
+      cards($b('backAlpha'), [
+        { label: 'Title chance per season', value: pct(a.probability, 1), sub: `${a.titles} of ${a.seasons} seasons; 95% range ${pct(a.probability_low, 1)} to ${pct(a.probability_high, 1)}` },
+        { label: 'Implied alpha', value: alphaText(a.alpha), sub: a.alpha == null ? 'a title every season has no finite alpha' : `${num(a.alpha, 1)}× the tickets of each of the other ${a.franchises - 1}; 95% range ${alphaText(a.alpha_low)} to ${alphaText(a.alpha_high)}` },
+        { label: `P(≥ ${a.titles} titles) at that alpha`, value: pct(a.p_at_least, 1), sub: `falls short in ${pct(1 - a.p_at_least, 1)} of histories` },
+        { label: 'Alpha for even odds', value: alphaText(a.even_odds_alpha), sub: `a ${pct(a.even_odds_probability, 1)} title chance makes ${a.titles}+ titles a coin flip` },
+        { label: 'Luck alone', value: pct(a.p_at_least_equal, 2), sub: `P(≥ ${a.titles} titles) for an ordinary franchise (alpha 1)` }]);
+      if (!e) { $b('backElo').innerHTML = ''; $b('backNote').textContent = 'No season in the window has pre-playoff ratings.'; return; }
+      const imp = e.implied;
+      cards($b('backElo'), [
+        { label: 'Elo above the league mean', value: gapText(imp), sub: imp ? `a rating near ${num(imp.rating, 0)}; 95% range ${gapText(e.low)} to ${gapText(e.high)}${reached(imp, a.probability)}` : 'a title every season has no finite rating' },
+        { label: 'Points per game', value: imp ? signed(imp.points_per_game, 1) : '–', sub: 'better than an average team (100 Elo is 3.5 points)' },
+        { label: 'Wins per 82', value: imp ? num(imp.expected_wins_82, 0) : '–', sub: imp ? `against average opponents; beats one ${pct(imp.game_win_probability, 0)} of the time on a neutral floor` : '' },
+        { label: 'Elo for even odds', value: gapText(e.even_odds), sub: e.even_odds ? `${signed(e.even_odds.points_per_game, 1)} points per game, ${num(e.even_odds.expected_wins_82, 0)} wins per 82${reached(e.even_odds, a.even_odds_probability)}` : '' },
+        ...(act.franchise ? [{ label: `${act.franchise} actually rated`, value: act.mean_gap == null ? '–' : `${signed(act.mean_gap)} Elo`, sub: act.mean_gap == null ? 'no pre-playoff rating in the window' : `before the playoffs, mean over ${act.seasons_with_rating} season${act.seasons_with_rating === 1 ? '' : 's'}, missed postseasons included` }] : []),
+        { label: "The league's best team rated", value: act.best_mean_gap == null ? '–' : `${signed(act.best_mean_gap)} Elo`, sub: `before the playoffs, mean over ${act.seasons_with_field} season${act.seasons_with_field === 1 ? '' : 's'}` }]);
+      $b('backNote').textContent = `Fields: the pre-playoff ratings of every other team in ${e.seasons.length} season${e.seasons.length === 1 ? '' : 's'} (${labelOf(e.seasons[0])} to ${labelOf(e.seasons[e.seasons.length - 1])}), league mean ${num(e.league_mean, 0)}, home court ${num(e.home_advantage, 0)} Elo. An average team wins the title ${pct(e.p_average, 1)} of the time against these fields.`;
+    } catch (err) { if (mine !== strengthLoads) return; strength = null; ['backAlpha', 'backElo'].forEach(id => { $b(id).innerHTML = ''; }); $b('backNote').textContent = ''; setStatus($b('bStatus'), err.message, true); }
+  }
+  ['bFranchise', 'bFrom', 'bTo', 'bTitles'].forEach(id => $b(id).addEventListener('change', updateStrength));
+  $b('bApply').addEventListener('click', () => {
+    if (!strength || strength.alpha.alpha == null) { setStatus($b('bStatus'), 'No finite alpha to apply.', true); return; }
+    const a = strength.alpha;
+    const input = editor.querySelector(`input[data-i="${targetIndex()}"]`);
+    if (!input) return;
+    input.value = a.alpha.toFixed(2);
+    document.getElementById('seasons').value = a.seasons; document.getElementById('k').value = a.titles;
+    updateExact();
+    setStatus($b('bStatus'), `Alpha ${a.alpha.toFixed(2)} set on ${target.options[target.selectedIndex].textContent}; seasons ${a.seasons}, threshold ${a.titles}. Run the simulation above.`);
+    document.getElementById('run').scrollIntoView({ behavior: 'smooth', block: 'center' });
+  });
   buildEditor(false); updateExact(); loadScenarios();
+  loadFranchiseList().then(updateStrength);
 })();

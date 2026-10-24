@@ -1,7 +1,7 @@
 ---
 type: Runbook
 title: Run an alpha scenario
-description: Use the Alpha Simulator to find how often a title run happens by chance under assumed franchise strengths, save the scenario and compare it with others.
+description: Use the Alpha Simulator to find how often a title run happens by chance under assumed franchise strengths, read a title record backwards into a strength, save the scenario and compare it with others.
 tags: [engine-a, alpha, runbook, scenarios]
 generated: { by: "human:abenamer", at: "2026-10-23T18:00:00Z" }
 ---
@@ -33,6 +33,14 @@ generated: { by: "human:abenamer", at: "2026-10-23T18:00:00Z" }
 1. Set **Alpha mode** to "Season-dependent: alpha decays toward 1" and a **Half-life** of 5 seasons. The alpha of every franchise then moves half of the way to 1 every five seasons: a franchise at 4 is at 2.5 after five seasons, at 1.75 after ten, and part of the pack after twenty. An alpha below 1 rises toward 1 the same way, so set a franchise to 1, not 0, to make it ordinary.
 2. Run. There is no exact value in this mode; the ± value on the first card is the Monte Carlo interval.
 3. Raise **Iterations** when the interval is too wide for the comparison you make. The limit is `MAX_ITERATIONS` (see the [configuration reference](/reference/configuration.md)).
+
+# Procedure D: how strong did a champion have to be?
+
+1. Under **Work backwards from the titles**, pick the franchise (GSW), the window by season end years (2015 to 2022, the eight seasons of the run) and the titles won (4).
+2. Read the alpha cards. **Title chance per season** is titles divided by seasons (50 percent) with its 95 percent range; **Implied alpha** is that chance as an alpha against every other franchise at 1 (29, meaning 29 times the tickets of each other franchise), with the range the record leaves open; **P(≥ 4 titles) at that alpha** says how often that strength would have reached the record; **Alpha for even odds** is the strength at which the record becomes a coin flip; **Luck alone** is the chance of the record for an ordinary franchise.
+3. Read the strength cards. **Elo above the league mean** is the rating a team of constant strength would have needed, against the real playoff fields of those eight seasons, for a 50 percent title chance; **Points per game** and **Wins per 82** say the same in game terms; **Elo for even odds** is the gap at which four titles become a coin flip; the last card says what the franchise actually rated before the playoffs, averaged over the window with missed postseasons included, and what the league's best team did. The line under the cards names the fields and the title chance of an average team against them.
+4. Change **From** to 2001 to ask the same question over 22 seasons: the implied alpha drops to 6.4 and the gap with it, because the same four titles are spread over more draws. The window is a choice, so say which one you used when you quote a number.
+5. Click **Use this alpha for the franchise of interest** and run the simulation: the forward view shows the whole distribution of titles at that strength.
 
 # Compare scenarios
 
