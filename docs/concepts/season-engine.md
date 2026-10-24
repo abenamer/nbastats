@@ -26,14 +26,14 @@ The Season Forecast page shows, for every team, the probability to:
 
 1. Take each team's Elo after its last game on or before the cutoff date. Before the first game, take the preseason rating from the data.
 2. Count the standings from the games played on or before the cutoff.
-3. Simulate every later regular-season game from Elo. Update ratings with the regular-season K-factor (default 20).
+3. Simulate every later regular-season game from Elo, with the season's regular-season home-court bonus (fitted on the previous five seasons unless you set one; see the [Elo rating model](/concepts/elo-model.md)). Update ratings with the regular-season K-factor (default 20).
 4. Order each conference with the season's tiebreak rules. Ties use the group head-to-head record, then point differential, then a seeded random key.
 5. Resolve the play-in with a state machine:
    * 2020-21 and later: 7 hosts 8; 9 hosts 10; the loser of the first game hosts the winner of the second game.
    * 2019-20: the ninth team plays the eighth team when it is within four games. The ninth team must win twice.
    * Before 2019-20: the top eight qualify.
    A play-in game that was played on or before the cutoff keeps its real result.
-6. Build the bracket and play it with the playoff model. Playoff ratings are fixed unless you set a playoff K-factor.
+6. Build the bracket and play it with the playoff model and the playoff home-court bonus (default 100). Playoff ratings are fixed unless you set a playoff K-factor.
 
 # Information cutoff
 

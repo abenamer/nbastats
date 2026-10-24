@@ -37,8 +37,14 @@ pub struct SeasonParams {
     pub as_of: Option<NaiveDate>,
     pub iterations: u64,
     pub seed: u64,
+    /// Home-court bonus of the simulated playoff games (and of the regular-season games
+    /// when `regular_home_advantage` is not set).
     #[serde(default = "default_home_adv")]
     pub home_advantage: f64,
+    /// Home-court bonus of the simulated regular-season and play-in games; the application
+    /// fills it with the season's fitted value when a request leaves it out.
+    #[serde(default)]
+    pub regular_home_advantage: Option<f64>,
     /// Elo K-factor applied to simulated regular-season games (None = ratings fixed).
     #[serde(default = "default_k")]
     pub regular_season_k: Option<f64>,
@@ -71,6 +77,15 @@ impl SeasonParams {
             return invalid(
                 "home_advantage",
                 "home advantage must be between 0 and 400 Elo points",
+            );
+        }
+        if self
+            .regular_home_advantage
+            .is_some_and(|h| !(-100.0..=400.0).contains(&h))
+        {
+            return invalid(
+                "regular_home_advantage",
+                "the regular-season home advantage must be between -100 and 400 Elo points",
             );
         }
         for k in [self.regular_season_k, self.playoff_k]
@@ -499,7 +514,16 @@ impl Setup {
         );
         let home_won = rng.gen::<f64>() < p;
         if let Some(k) = rules.k {
-            let (nh, na) = elo::update(elo[home], elo[away], p, home_won, k);
+            // The update expects the archive's bonus, as the real update of the game will.
+            let expected = elo::game_probability(
+                elo[home],
+                elo[away],
+                true,
+                neutral,
+                elo::DEFAULT_HOME_ADVANTAGE,
+                1.0,
+            );
+            let (nh, na) = elo::update(elo[home], elo[away], expected, home_won, k);
             elo[home] = nh;
             elo[away] = na;
         }
@@ -635,13 +659,16 @@ pub fn run<P: Progress + ?Sized>(
         .iter()
         .filter(|g| g.game_date <= as_of && !g.is_playoff() && g.is_played())
         .count();
-    let home_adv = params.home_advantage;
+    // Regular-season and play-in games take the fitted bonus; the playoffs keep their own.
+    let home_adv = params
+        .regular_home_advantage
+        .unwrap_or(params.home_advantage);
     let rules = GameRules {
         home_advantage: home_adv,
         k: params.regular_season_k,
     };
     let playoff_model = EloModel {
-        home_advantage: home_adv,
+        home_advantage: params.home_advantage,
         scale: params.playoff_scale,
         k: params.playoff_k,
     };
@@ -672,7 +699,17 @@ pub fn run<P: Progress + ?Sized>(
                     );
                     let home_won = rng.gen::<f64>() < p;
                     if let Some(k) = params.regular_season_k {
-                        let (nh, na) = elo::update(st.elo[g.home], st.elo[g.away], p, home_won, k);
+                        // The update expects the archive's bonus, as the real update will.
+                        let expected = elo::game_probability(
+                            st.elo[g.home],
+                            st.elo[g.away],
+                            true,
+                            g.neutral,
+                            elo::DEFAULT_HOME_ADVANTAGE,
+                            1.0,
+                        );
+                        let (nh, na) =
+                            elo::update(st.elo[g.home], st.elo[g.away], expected, home_won, k);
                         st.elo[g.home] = nh;
                         st.elo[g.away] = na;
                     }

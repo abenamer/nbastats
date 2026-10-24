@@ -1,8 +1,83 @@
 //! Elo rating mathematics: game win probabilities, home-court adjustments, series
 //! probabilities and the simple rating update used for optional in-simulation updating.
 
-/// Default home-court advantage in Elo points (FiveThirtyEight's NBA model uses 100).
+use serde::Serialize;
+
+use crate::domain::ids::SeasonYear;
+
+/// Default home-court advantage in Elo points (FiveThirtyEight's NBA model uses 100). The
+/// rating updates always use it, so the ratings stay on the archive's scale; forecasts of
+/// regular-season games use the fitted value of [`HomeAdvantage`] instead.
 pub const DEFAULT_HOME_ADVANTAGE: f64 = 100.0;
+/// Seasons of regular-season games the home advantage of a season is fitted on: the ones
+/// before it.
+pub const HOME_ADVANTAGE_WINDOW: usize = 5;
+/// Fewest games for a fit; with fewer the default stands.
+pub const HOME_ADVANTAGE_MIN_GAMES: usize = 2000;
+
+/// The home-court bonus a season's forecasts use: for the regular season the value fitted on
+/// the seasons before it, for the playoffs the default, whose fit moves too much from one
+/// postseason to the next to help.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct HomeAdvantage {
+    pub regular: f64,
+    pub playoff: f64,
+    /// The seasons the regular value was fitted on, first and last; `None` when the default
+    /// stands.
+    pub fitted_from: Option<(SeasonYear, SeasonYear)>,
+    /// Regular-season games the fit used.
+    pub games: usize,
+}
+
+impl HomeAdvantage {
+    pub const DEFAULT: HomeAdvantage = HomeAdvantage {
+        regular: DEFAULT_HOME_ADVANTAGE,
+        playoff: DEFAULT_HOME_ADVANTAGE,
+        fitted_from: None,
+        games: 0,
+    };
+}
+
+/// Mean log loss of the Elo forecast over `samples` of (home rating minus away rating,
+/// home won) with home bonus `bonus`.
+fn home_log_loss(samples: &[(f64, bool)], bonus: f64) -> f64 {
+    let total: f64 = samples
+        .iter()
+        .map(|&(diff, home_won)| {
+            let p = 1.0 / (1.0 + 10f64.powf(-(diff + bonus) / 400.0));
+            -(if home_won { p } else { 1.0 - p }).ln()
+        })
+        .sum();
+    total / samples.len() as f64
+}
+
+/// The lowest and highest bonus the fit may return; a fit that lands on either is rejected.
+pub const HOME_ADVANTAGE_FIT_RANGE: (f64, f64) = (-100.0, 300.0);
+
+/// The home bonus that minimises the log loss of the Elo forecast over `samples`, on the Elo
+/// scale within [`HOME_ADVANTAGE_FIT_RANGE`]; `None` with fewer than
+/// [`HOME_ADVANTAGE_MIN_GAMES`] samples, with a sample that is not a finite number, or when
+/// the minimum sits within a point of either end of the range (degenerate samples, such as
+/// a home win in every game, drive the search to an end). The log loss is convex in the
+/// bonus, so a ternary search finds the minimum.
+pub fn fit_home_advantage(samples: &[(f64, bool)]) -> Option<f64> {
+    if samples.len() < HOME_ADVANTAGE_MIN_GAMES || samples.iter().any(|(d, _)| !d.is_finite()) {
+        return None;
+    }
+    let (mut lo, mut hi) = HOME_ADVANTAGE_FIT_RANGE;
+    for _ in 0..60 {
+        let m1 = lo + (hi - lo) / 3.0;
+        let m2 = hi - (hi - lo) / 3.0;
+        if home_log_loss(samples, m1) < home_log_loss(samples, m2) {
+            hi = m2;
+        } else {
+            lo = m1;
+        }
+    }
+    let bonus = (lo + hi) / 2.0;
+    let (floor, ceiling) = HOME_ADVANTAGE_FIT_RANGE;
+    (bonus - floor > 1.0 && ceiling - bonus > 1.0).then_some(bonus)
+}
 /// FiveThirtyEight's K-factor.
 pub const FIVETHIRTYEIGHT_K: f64 = 20.0;
 /// Rating every team is pulled toward between seasons.
@@ -263,5 +338,34 @@ mod tests {
         let (a, b) = update(1500.0, 1500.0, 0.5, true, 20.0);
         assert_abs_diff_eq!(a, 1510.0, epsilon = 1e-12);
         assert_abs_diff_eq!(b, 1490.0, epsilon = 1e-12);
+    }
+
+    #[test]
+    fn the_home_advantage_fit_recovers_the_bonus_the_games_were_drawn_with() {
+        // Deterministic samples: for each rating gap, the share of home wins the Elo model
+        // gives at a bonus of 60 points, so the fit must land near 60.
+        let mut samples = Vec::new();
+        for i in 0..40 {
+            let diff = -200.0 + 10.0 * i as f64;
+            let p = 1.0 / (1.0 + 10f64.powf(-(diff + 60.0) / 400.0));
+            let wins = (p * 100.0).round() as usize;
+            for j in 0..100 {
+                samples.push((diff, j < wins));
+            }
+        }
+        let fit = fit_home_advantage(&samples).unwrap();
+        assert!((fit - 60.0).abs() < 3.0, "{fit}");
+        assert!(home_log_loss(&samples, fit) <= home_log_loss(&samples, 100.0));
+        // Too few games: no fit.
+        assert_eq!(fit_home_advantage(&samples[..100]), None);
+        // Degenerate samples drive the search to an end of the range: no fit either.
+        let all_home: Vec<_> = samples.iter().map(|(d, _)| (*d, true)).collect();
+        assert_eq!(fit_home_advantage(&all_home), None);
+        let all_away: Vec<_> = samples.iter().map(|(d, _)| (*d, false)).collect();
+        assert_eq!(fit_home_advantage(&all_away), None);
+        let mut with_nan = samples.clone();
+        with_nan[0].0 = f64::NAN;
+        assert_eq!(fit_home_advantage(&with_nan), None);
+        assert_eq!(HomeAdvantage::DEFAULT.regular, DEFAULT_HOME_ADVANTAGE);
     }
 }

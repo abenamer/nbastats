@@ -30,6 +30,10 @@ pub fn router(app: State) -> Router {
             get(api::season_elo_history),
         )
         .route("/seasons/{season}/bracket", get(api::season_bracket))
+        .route(
+            "/seasons/{season}/home-advantage",
+            get(api::season_home_advantage),
+        )
         .route("/franchises", get(api::franchises))
         .route("/records", get(api::records))
         .route("/records/groups", get(api::records_groups))

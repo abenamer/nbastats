@@ -4,6 +4,7 @@ pub mod ask;
 pub mod continuation;
 pub mod dashboard;
 pub mod dynasty;
+pub mod home_advantage;
 pub mod imports;
 pub mod jobs;
 pub mod ports;

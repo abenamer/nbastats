@@ -80,7 +80,7 @@ Franchise identity follows relocations and renamings (SEA → OKC, NJN → BRK).
 
 ## Models
 
-* **Elo**: `P(A beats B) = 1 / (1 + 10^((E_B − E_A)/400))`, home bonus 100 points, optional scale and K-factor. See [Elo rating model](docs/concepts/elo-model.md).
+* **Elo**: `P(A beats B) = 1 / (1 + 10^((E_B − E_A)/400))`, home bonus 100 points in the rating update and the playoffs, a bonus fitted per season for regular-season forecasts, optional scale and K-factor. See [Elo rating model](docs/concepts/elo-model.md).
 * **Engine A**: alpha-weighted lottery with an exact occupancy check. For 30 equal franchises over 22 seasons, P(some franchise wins 4+) = 16.05%. See [Alpha lottery engine](docs/concepts/alpha-engine.md).
 * **Engine B**: 16-team bracket, exact dynamic program plus Monte Carlo. See [Playoff simulator](docs/concepts/playoff-engine.md).
 * **Engine C**: full-season simulation with the play-in state machine. See [Season forecast engine](docs/concepts/season-engine.md).

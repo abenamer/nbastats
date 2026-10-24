@@ -840,7 +840,21 @@ pub async fn submit_season(
     State(app): State<AppState>,
     Json(body): Json<Named<SeasonParams>>,
 ) -> ApiResult<Value> {
-    queue(&app, SeasonJob(body.params), body.name).await
+    // A request without a regular-season bonus takes the season's fitted value, so the
+    // stored parameters say which bonus the forecast used.
+    let mut params = body.params;
+    if params.regular_home_advantage.is_none() {
+        params.regular_home_advantage = Some(app.home_advantage(params.season).await?.regular);
+    }
+    queue(&app, SeasonJob(params), body.name).await
+}
+
+/// The home-court bonus the forecasts of a season use.
+pub async fn season_home_advantage(
+    State(app): State<AppState>,
+    Path(season): Path<SeasonYear>,
+) -> ApiResult<Value> {
+    Ok(Json(json!(app.home_advantage(season).await?)))
 }
 
 pub async fn submit_backtest(
@@ -1249,9 +1263,21 @@ pub async fn ask(State(app): State<AppState>, Json(body): Json<AskBody>) -> ApiR
     let _slot = app.ask_slots.try_acquire().map_err(|_| {
         ApiError::Busy("another question is being answered; try again in a moment".to_string())
     })?;
-    let answer = ask::answer(&app.store, model, &body.question, app.today())
-        .await
-        .map_err(ask_error)?;
+    // Reject an empty or over-long question before any work on its behalf.
+    ask::validate_question(&body.question).map_err(ask_error)?;
+    let regular_home_advantage = app
+        .home_advantage(scheduler::current_season(app.today()))
+        .await?
+        .regular;
+    let answer = ask::answer(
+        &app.store,
+        model,
+        &body.question,
+        app.today(),
+        regular_home_advantage,
+    )
+    .await
+    .map_err(ask_error)?;
     Ok(Json(answer))
 }
 

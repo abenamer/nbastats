@@ -224,6 +224,7 @@ async fn forecasts_never_use_future_information(pool: PgPool) {
         iterations: 300,
         seed: 5,
         home_advantage: 100.0,
+        regular_home_advantage: None,
         regular_season_k: Some(20.0),
         playoff_k: None,
         playoff_scale: 1.0,
@@ -709,6 +710,7 @@ async fn computed_elo_continues_from_the_previous_season(pool: PgPool) {
         iterations: 200,
         seed: 1,
         home_advantage: 100.0,
+        regular_home_advantage: None,
         regular_season_k: Some(20.0),
         playoff_k: None,
         playoff_scale: 1.0,
@@ -978,7 +980,7 @@ async fn question_box_tools_read_the_store(pool: PgPool) {
     .await
     .unwrap();
 
-    let tools = Tools::new(&store);
+    let tools = Tools::new(&store, 100.0);
     let call = |name: &str, args: Value| ToolCall {
         id: name.to_string(),
         name: name.to_string(),
@@ -1071,7 +1073,7 @@ async fn question_box_tools_read_the_store(pool: PgPool) {
         },
     ]));
     let today = NaiveDate::from_ymd_opt(2026, 10, 23).unwrap();
-    let a = ask::answer(&store, &model, " who won in 2016? ", today)
+    let a = ask::answer(&store, &model, " who won in 2016? ", today, 100.0)
         .await
         .unwrap();
     assert!(!a.declined);
@@ -1084,7 +1086,7 @@ async fn question_box_tools_read_the_store(pool: PgPool) {
     assert!(raw["error"].as_str().unwrap().contains("not valid JSON"));
     assert_eq!(a.question, "who won in 2016?");
     assert!(matches!(
-        ask::answer(&store, &model, "   ", today).await,
+        ask::answer(&store, &model, "   ", today, 100.0).await,
         Err(ask::AskError::Empty)
     ));
 }

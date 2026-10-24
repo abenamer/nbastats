@@ -1,5 +1,5 @@
 (async () => {
-  const { pct, num, esc, runJob, table, setStatus, chart, RESULT, getJSON } = NBA;
+  const { pct, num, esc, runJob, table, setStatus, chart, RESULT, getJSON, labelOf } = NBA;
   const status = document.getElementById('status');
   const seasons = await getJSON('/api/seasons').catch(() => []);
   const provenance = (season) => {
@@ -9,11 +9,28 @@
   };
   document.getElementById('preseason').addEventListener('change', e => document.getElementById('asOf').disabled = e.target.checked);
   document.getElementById('asOf').disabled = true;
+  // The regular-season home-court bonus is fitted per season; the field shows the fit as its
+  // placeholder and a typed value replaces it. Playoff games keep the archive's 100.
+  let advRequest = 0;
+  const showAdvantage = async () => {
+    const season = parseInt(document.getElementById('season').value);
+    const radv = document.getElementById('radv'); const note = document.getElementById('advNote');
+    const mine = ++advRequest;
+    const h = await getJSON(`/api/seasons/${season}/home-advantage`).catch(() => null);
+    if (mine !== advRequest) return;
+    if (!h) { radv.placeholder = '100'; note.textContent = ''; return; }
+    radv.placeholder = num(h.regular, 0);
+    note.textContent = h.fitted_from
+      ? `Regular-season home-court bonus for ${labelOf(season)}: ${num(h.regular, 0)} Elo, fitted on ${h.games.toLocaleString()} regular-season games of ${labelOf(h.fitted_from[0])} to ${labelOf(h.fitted_from[1])}. Playoff games use ${num(h.playoff, 0)}.`
+      : `Regular-season home-court bonus for ${labelOf(season)}: ${num(h.regular, 0)} Elo (the default; fewer than 2,000 earlier regular-season games are stored). Playoff games use ${num(h.playoff, 0)}.`;
+  };
+  document.getElementById('season').addEventListener('change', showAdvantage);
+  showAdvantage();
   document.getElementById('run').addEventListener('click', async () => {
     const btn = document.getElementById('run'); btn.disabled = true;
-    const pk = document.getElementById('pk').value;
+    const pk = document.getElementById('pk').value; const radv = document.getElementById('radv').value;
     const p = { season: parseInt(document.getElementById('season').value), iterations: parseInt(document.getElementById('iterations').value), seed: parseInt(document.getElementById('seed').value) || 0,
-      home_advantage: parseFloat(document.getElementById('adv').value), regular_season_k: parseFloat(document.getElementById('k').value), playoff_k: pk === '' ? null : parseFloat(pk), playoff_scale: 1.0 };
+      home_advantage: parseFloat(document.getElementById('adv').value), regular_home_advantage: radv === '' ? null : parseFloat(radv), regular_season_k: parseFloat(document.getElementById('k').value), playoff_k: pk === '' ? null : parseFloat(pk), playoff_scale: 1.0 };
     if (!document.getElementById('preseason').checked && document.getElementById('asOf').value) p.as_of = document.getElementById('asOf').value;
     const name = document.getElementById('name').value.trim(); if (name) p.name = name;
     try {

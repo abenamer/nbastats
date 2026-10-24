@@ -5,7 +5,8 @@
   <label>Season <select id="season">{% for s in seasons %}<option value="{{ s.season }}">{{ s.label }}</option>{% endfor %}</select></label>
   <label>As of date <input id="asOf" type="date"></label>
   <label><input id="preseason" type="checkbox" checked> Preseason (before any game)</label>
-  <label>Home adv. <input id="adv" type="number" value="100" min="0" max="400" step="5"></label>
+  <label>Reg-season home adv. <input id="radv" type="number" placeholder="fitted" min="-100" max="400" step="5" title="Empty: the value fitted on the previous five seasons"></label>
+  <label>Playoff home adv. <input id="adv" type="number" value="100" min="0" max="400" step="5"></label>
   <label>Reg-season K <input id="k" type="number" value="20" min="0" max="100" step="1"></label>
   <label>Playoff K <input id="pk" type="number" placeholder="fixed" min="0" max="100" step="1"></label>
   <label>Iterations <input id="iterations" type="number" value="10000" min="500" step="500"></label>
@@ -14,6 +15,7 @@
   <button id="run" class="primary">Forecast</button>
   <span id="status" class="muted"></span>
 </section>
+<p class="muted small" id="advNote"></p>
 <p class="muted small" id="note"></p>
 <section class="panel"><div id="results" class="table-wrap"></div></section>
 <section class="grid2">
