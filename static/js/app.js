@@ -114,5 +114,20 @@ window.NBA = (() => {
     // One retry for the dates still to be looked up, a few times at most.
     if (pending.length && attempt < 4) setTimeout(() => attachReports(container, pending, attempt + 1), 2500);
   }
-  return { pct, num, esc, labelOf, RESULT, getJSON, postJSON, runJob, table, bar, cards, setStatus, chart, color, dayOf, dateOf, dateScale, unplayedShade, scoreCell, attachReports };
+  // A sixteen-slot bracket as HTML: East then West, slots paired into first-round series.
+  // `exact` gives each slot's title chance; `series` ({slot_a, slot_b, p_a}) the first-round
+  // probabilities of a projected bracket; a played series shows its actual result instead.
+  function bracketHtml(b, exact, series) {
+    const slots = b.teams, byPos = [[0, 1], [2, 3], [4, 5], [6, 7]];
+    const conf = (ci, name) => `<div class="conf"><h4>${name}</h4>` + byPos.map(([p, q]) => {
+      const sa = ci * 8 + p, sb = ci * 8 + q, a = slots[sa], c = slots[sb];
+      const s = (b.actual_series || []).find(x => (x.slot_a === sa && x.slot_b === sb) || (x.slot_b === sa && x.slot_a === sb));
+      const f = (series || []).find(x => x.slot_a === sa && x.slot_b === sb);
+      const w = (t, slot) => `<div class="t ${s && s.winner_slot === slot ? 'w' : ''}"><span>${t.seed} ${esc(t.code)} (${t.wins}-${t.losses})</span><span>${num(t.elo, 0)}${exact ? ' · ' + pct(exact[slot][3]) : ''}</span></div>`;
+      const line = s ? `actual ${s.wins_a}-${s.wins_b}` : f ? `${esc(a.code)} wins series ${pct(f.p_a)}` : 'not played';
+      return `<div class="series">${w(a, sa)}${w(c, sb)}<div class="round">${line}</div></div>`;
+    }).join('') + '</div>';
+    return conf(0, 'East') + conf(1, 'West');
+  }
+  return { pct, num, esc, labelOf, RESULT, getJSON, postJSON, runJob, table, bar, cards, setStatus, chart, color, dayOf, dateOf, dateScale, unplayedShade, scoreCell, attachReports, bracketHtml };
 })();

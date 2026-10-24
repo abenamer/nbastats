@@ -230,6 +230,64 @@ async fn forecasts_never_use_future_information(pool: PgPool) {
         playoff_scale: 1.0,
     };
     let full = season::run(&params, &games, &by_id, &Silent).unwrap();
+    // The projected bracket: sixteen distinct teams, seeds 1 to 8 per conference, exact
+    // title chances that sum to one, and a seeding at most as common as its field.
+    let pb = full.projected_bracket.as_ref().expect("a bracket");
+    let mut ids: Vec<_> = pb.bracket.teams.iter().map(|t| t.team_id).collect();
+    ids.sort_unstable();
+    ids.dedup();
+    assert_eq!(ids.len(), 16);
+    for conf in 0..2 {
+        let mut seeds: Vec<u8> = pb.bracket.teams[conf * 8..conf * 8 + 8]
+            .iter()
+            .map(|t| t.seed)
+            .collect();
+        seeds.sort_unstable();
+        assert_eq!(seeds, (1..=8).collect::<Vec<u8>>());
+    }
+    assert!((pb.exact.iter().map(|e| e[3]).sum::<f64>() - 1.0).abs() < 1e-9);
+    // Slots follow the bracket order; each first-round pair shares a conference.
+    use nba_elo_simulator::domain::playoffs::bracket::SLOT_SEEDS;
+    for (s, t) in pb.bracket.teams.iter().enumerate() {
+        assert_eq!(t.seed, SLOT_SEEDS[s % 8]);
+    }
+    assert_eq!(pb.first_round.len(), 8);
+    for (k, fr) in pb.first_round.iter().enumerate() {
+        assert_eq!((fr.slot_a, fr.slot_b), (2 * k, 2 * k + 1));
+        assert!((0.0..=1.0).contains(&fr.p_a));
+        assert_eq!(
+            pb.bracket.teams[fr.slot_a].conference,
+            pb.bracket.teams[fr.slot_b].conference
+        );
+    }
+    // Every completed season was sampled (300 iterations are within the sample), the most
+    // frequent seeding occurred at least once, and the projected field occurred at least
+    // as often as the projected seeding.
+    assert_eq!(pb.sampled, full.iterations);
+    assert!(pb.most_common_count >= 1 && pb.most_common_count >= pb.exact_count);
+    assert!(pb.field_count >= pb.exact_count);
+    assert!((pb.p_most_common - pb.most_common_count as f64 / pb.sampled as f64).abs() < 1e-12);
+    // Each seed is held by one team per conference per completed season, and a team's
+    // seed chances add up to its playoff chance.
+    for conf in [Conference::East, Conference::West] {
+        for k in 0..8 {
+            let held: f64 = full
+                .teams
+                .iter()
+                .filter(|t| t.conference == conf)
+                .map(|t| t.seed_distribution[k])
+                .sum();
+            assert!(
+                (held - 1.0).abs() < 1e-9,
+                "seed {} of {conf:?}: {held}",
+                k + 1
+            );
+        }
+    }
+    assert!(full
+        .teams
+        .iter()
+        .all(|t| (t.seed_distribution.iter().sum::<f64>() - t.p_playoffs).abs() < 1e-9));
     let truncated_games: Vec<_> = games
         .iter()
         .filter(|g| g.game_date <= cutoff || g.game_type == GameType::Regular)

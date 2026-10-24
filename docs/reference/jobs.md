@@ -42,7 +42,7 @@ Each job stores the application version and the model version of its engine:
 |------|---------------|
 | alpha | `alpha-lottery-1.0` |
 | playoff | `elo-playoff-1.0` |
-| season | `elo-season-1.0` |
+| season | `elo-season-1.2` |
 | backtest | `backtest-1.1` |
 
 A new application version does not change stored results. Compare the versions when you compare scenarios.

@@ -1,5 +1,44 @@
 (async () => {
-  const { pct, num, esc, runJob, table, setStatus, chart, RESULT, getJSON, labelOf } = NBA;
+  const { pct, num, esc, runJob, table, setStatus, chart, RESULT, getJSON, labelOf, bracketHtml } = NBA;
+  // A probability cell shaded by its value; the text stays readable on every shade.
+  const shade = p => p == null ? '' : `<span class="heat" style="background:rgba(37,99,235,${(0.08 + 0.72 * p).toFixed(2)});color:${p > 0.5 ? '#fff' : 'inherit'}">${pct(p, 0)}</span>`;
+  const heatmap = (teams, pick, n, head) => {
+    const cols = [{ label: 'Team', value: t => t.code, left: true }];
+    for (let k = 0; k < n; k++) cols.push({ label: `${head}${k + 1}`, value: t => shade((pick(t) || [])[k]), raw: true });
+    return table(cols, teams);
+  };
+  function renderCup(r) {
+    const cup = r.cup;
+    const note = document.getElementById('cupNote');
+    if (!cup) {
+      note.textContent = r.cup_note || (r.cup === undefined ? 'This forecast was run before the Cup forecast existed; run it again.' : '');
+      document.getElementById('cupGroups').innerHTML = ''; document.getElementById('cupBracket').innerHTML = ''; document.getElementById('cupBracketNote').textContent = '';
+      return;
+    }
+    const chance = {}; cup.teams.forEach(t => { chance[t.code] = t; });
+    note.textContent = `${cup.group_games_played} of ${cup.group_games_total} group games played on or before the cutoff; the knockout formed in ${cup.iterations.toLocaleString()} simulated seasons.${cup.actual_winner ? ` The Cup was decided: ${cup.actual_winner} won it.` : ''} The group letters are the application's, not the league's.`;
+    document.getElementById('cupGroups').innerHTML = cup.groups.map(g => `<div><h3 class="small">${esc(g.label)}</h3>${table([
+      { label: 'Team', value: t => t.code, left: true }, { label: 'Group record', value: t => `${t.wins}-${t.losses}` }, { label: 'Diff', value: t => (t.diff >= 0 ? '+' : '') + t.diff },
+      { label: 'Knockout', value: t => pct((chance[t.code] || {}).p_knockout || 0) }, { label: 'Final', value: t => pct((chance[t.code] || {}).p_final || 0) },
+      { label: 'Wins Cup', value: t => pct((chance[t.code] || {}).p_winner || 0, 1), cls: () => 'good' }], g.teams)}</div>`).join('');
+    const pb = cup.projected;
+    if (!pb) { document.getElementById('cupBracket').innerHTML = '<p class="muted small">No simulated season formed a knockout.</p>'; document.getElementById('cupBracketNote').textContent = ''; return; }
+    const times = c => c === 0 ? 'in none' : c === 1 ? 'in 1' : `in ${c.toLocaleString()}`;
+    document.getElementById('cupBracketNote').textContent = `Each seed in turn to the team that held it most often among the teams not yet placed; the chances are exact at the cutoff date's ratings. This exact bracket occurred ${times(pb.exact_count)} of the ${pb.sampled.toLocaleString()} simulated seasons counted, these eight teams in any seeding ${times(pb.field_count)}, and the most frequent bracket of all ${times(pb.most_common_count)}.`;
+    const slot = (s, i) => `<div class="t"><span>${s.seed} ${esc(s.code)}</span><span>${num(s.elo, 0)} · ${pct(pb.exact[i][2], 1)}</span></div>`;
+    const conf = (ci, name) => `<div class="conf"><h4>${name}</h4>` + pb.quarterfinals.filter(q => Math.floor(q.slot_a / 4) === ci).map(q => `<div class="series">${slot(pb.slots[q.slot_a], q.slot_a)}${slot(pb.slots[q.slot_b], q.slot_b)}<div class="round">${esc(pb.slots[q.slot_a].code)} wins quarterfinal ${pct(q.p_a)}</div></div>`).join('') + '</div>';
+    document.getElementById('cupBracket').innerHTML = conf(0, 'East') + conf(1, 'West');
+  }
+  function renderProjected(r) {
+    const pb = r.projected_bracket;
+    document.getElementById('projected').innerHTML = pb ? bracketHtml(pb.bracket, pb.exact, pb.first_round) : '<p class="muted small">No simulated season produced a full bracket.</p>';
+    const times = c => c === 0 ? 'in none' : c === 1 ? 'in 1' : `in ${c.toLocaleString()}`;
+    document.getElementById('bracketNote').textContent = pb ? `This exact seeding occurred ${times(pb.exact_count)} of the ${pb.sampled.toLocaleString()} simulated seasons counted, and these sixteen teams made the playoffs in any seeding ${times(pb.field_count)}. The most frequent seeding of all occurred ${times(pb.most_common_count)}.${pb.sampled < r.iterations ? ` The counts cover the first ${pb.sampled.toLocaleString()} of ${r.iterations.toLocaleString()} simulated seasons.` : ''}` : '';
+    const east = r.teams.filter(t => t.conference === 'east'), west = r.teams.filter(t => t.conference === 'west');
+    const byConf = (pick, n, head) => `<h3 class="small">East</h3>${heatmap(east, pick, n, head)}<h3 class="small">West</h3>${heatmap(west, pick, n, head)}`;
+    document.getElementById('positions').innerHTML = byConf(t => t.position_distribution, Math.max(east.length, west.length), '');
+    document.getElementById('seeds').innerHTML = byConf(t => t.seed_distribution, 8, 'S');
+  }
   const status = document.getElementById('status');
   const seasons = await getJSON('/api/seasons').catch(() => []);
   const provenance = (season) => {
@@ -45,6 +84,7 @@
         { label: 'Title', value: t => `${pct(t.p_champion, 2)} ± ${pct(1.96 * t.p_champion_se, 2)}`, cls: () => 'good' },
         { label: 'Actual', value: t => t.actual_result ? RESULT[t.actual_result] + (t.actual_seed ? ` (${t.actual_seed})` : '') : '–', left: true, cls: t => t.actual_result === 'champion' ? 'good' : '' }];
       document.getElementById('results').innerHTML = table(cols, r.teams);
+      renderProjected(r); renderCup(r);
       const top = r.teams.slice(0, 16);
       chart('champChart', { type: 'bar', data: { labels: top.map(t => t.code), datasets: [{ label: 'P(champion)', data: top.map(t => t.p_champion), backgroundColor: '#2563eb' }] }, options: { scales: { y: { ticks: { callback: v => pct(v, 0) } } } } });
       const all = r.teams.slice().sort((a, b) => b.p_playoffs - a.p_playoffs);

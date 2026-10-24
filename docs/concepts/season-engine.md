@@ -1,7 +1,7 @@
 ---
 type: Model
 title: Season forecast engine
-description: Engine C simulates the rest of a season from a cutoff date and gives every team's probability for each stage.
+description: Engine C simulates the rest of a season from a cutoff date, gives every team's probability for each stage and position, and draws the most likely bracket with its own small probability.
 tags: [engine-c, season, play-in, forecast]
 generated: { by: "human:abenamer", at: "2026-10-21T17:30:00Z" }
 sources:
@@ -34,6 +34,18 @@ The Season Forecast page shows, for every team, the probability to:
    * Before 2019-20: the top eight qualify.
    A play-in game that was played on or before the cutoff keeps its real result.
 6. Build the bracket and play it with the playoff model and the playoff home-court bonus (default 100). Playoff ratings are fixed unless you set a playoff K-factor.
+7. For a season with an NBA Cup, build the group tables from the group games, seed the knockout and play it; see the [NBA Cup forecast](nba-cup.md).
+
+# Projected bracket
+
+The forecast is a distribution over thousands of brackets, not one bracket. The page still draws one, the projected bracket, and says how unlikely it is:
+
+1. For each conference and each seed in turn, from 1 to 8, the slot goes to the team that held that seed most often in the simulated seasons among the teams not yet placed. When every team that held a seed is already placed, the seed goes to the unplaced team that made the playoffs most often. The seeds are the seeds after the play-in, when the season has one.
+2. Each team shows its projected final record (its expected wins, rounded). A higher seed can therefore show a worse record than a lower one.
+3. The probabilities through the bracket are exact: each team's title chance and each first-round series, from the playoff model with its home-court bonus and scale, at the ratings of the cutoff date, with fixed ratings (no playoff K-factor).
+4. The line under the bracket says how often this exact seeding occurred, how often these sixteen teams made the playoffs in any seeding, and how often the single most frequent seeding occurred. The counts cover the first 200,000 simulated seasons, which bounds the memory of the counting. These shares are small. The bracket is one draw from the distribution, chosen for being the most plausible slot by slot. The stage probabilities in the table above it remain the forecast.
+
+Two heat maps show the distribution the bracket is drawn from: each team's chance of each regular-season position in its conference, and of each playoff seed after the play-in when the season has one. The season model version is `elo-season-1.1` from this change; a result stored under 1.0 has no projected bracket.
 
 # Information cutoff
 
