@@ -1,17 +1,10 @@
 (async () => {
-  const { pct, num, esc, getJSON, runJob, table, setStatus, chart, RESULT } = NBA;
+  const { pct, num, esc, getJSON, runJob, table, setStatus, chart, RESULT, bracketHtml } = NBA;
   const status = document.getElementById('status');
   let bracket = null, overrides = {};
   const ROUND = { first: '1st round', second: '2nd round', conf_finals: 'Conf. finals', finals: 'Finals' };
   function renderBracket(b, exact) {
-    const slots = b.teams, byPos = [[0, 1], [2, 3], [4, 5], [6, 7]];
-    const conf = (ci, name) => `<div class="conf"><h4>${name}</h4>` + byPos.map(([p, q]) => {
-      const a = slots[ci * 8 + p], c = slots[ci * 8 + q];
-      const s = b.actual_series.find(x => (x.slot_a === ci * 8 + p && x.slot_b === ci * 8 + q) || (x.slot_b === ci * 8 + p && x.slot_a === ci * 8 + q));
-      const w = (t, slot) => `<div class="t ${s && s.winner_slot === slot ? 'w' : ''}"><span>${t.seed} ${esc(t.code)} (${t.wins}-${t.losses})</span><span>${num(t.elo, 0)}${exact ? ' · ' + pct(exact[slot][3]) : ''}</span></div>`;
-      return `<div class="series">${w(a, ci * 8 + p)}${w(c, ci * 8 + q)}<div class="round">${s ? `actual ${s.wins_a}-${s.wins_b}` : 'not played'}</div></div>`;
-    }).join('') + '</div>';
-    document.getElementById('bracket').innerHTML = conf(0, 'East') + conf(1, 'West');
+    document.getElementById('bracket').innerHTML = bracketHtml(b, exact, null);
     document.getElementById('notes').innerHTML = (b.notes || []).map(esc).join('<br>');
   }
   async function loadBracket() {

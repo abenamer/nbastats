@@ -73,6 +73,7 @@ td.good { color:var(--good); font-weight:600; } td.warn { color:var(--warn); } t
 .series .t { display:flex; justify-content:space-between; gap:.3rem; }
 .series .w { font-weight:700; }
 .series .round { color:var(--muted); font-size:.7rem; }
+.heat { display:inline-block; min-width:2.6em; padding:.05rem .25rem; border-radius:3px; text-align:right; }
 pre { background:#f8fafc; border:1px solid var(--line); border-radius:6px; padding:.6rem; overflow:auto; max-height:260px; }
 .status-queued { color:var(--muted); } .status-running { color:var(--accent); } .status-completed { color:var(--good); }
 .status-failed, .status-interrupted, .status-cancelled { color:var(--bad); }

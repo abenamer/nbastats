@@ -58,6 +58,7 @@ These are project-specific technical terms. They are not a reproduction of the A
 | Player era | The seasons a listed player was active, from the curated table in `domain::players`; a season belongs to every listed player active in it. |
 | Port | A trait in `application::ports` that the application requires from the outside world. |
 | Projection | A placeholder season: the previous season's matchups one year later, no scores, reverted ratings. |
+| Projected bracket | The most likely playoff bracket of a season forecast. Each seed goes in turn to the team that held it most often in the simulated seasons among the teams not yet placed. The bracket is priced exactly at the cutoff date's ratings and shown with the share of simulated seasons that had this exact seeding and this field. It is one bracket of very many, not the forecast. |
 | Question box | The panel on the Dashboard that answers a plain-language question from the stored data through a language model with read-only tools, and declines every other question with a fixed sentence. |
 | Reference rating | The archive's rating before or after an archive game, kept beside the application's rating for validation. |
 | Result source | Where a game's result came from: `archive`, `results` (a results source or upload) or `projection`. Archive games always stand. |

@@ -5,7 +5,8 @@
 //! the season's seeding rules, the play-in is resolved by a small state machine (actual
 //! results are used when they happened on or before the cutoff), and the playoff bracket
 //! is played out. Output: every team's probability of reaching the play-in, the playoffs,
-//! each round, the Finals, and winning the title.
+//! each round, the Finals, and winning the title; its chance of each position and seed; and
+//! the projected bracket, the most likely bracket slot by slot, with how rarely it occurred.
 
 use std::collections::HashMap;
 
@@ -16,14 +17,15 @@ use serde::{Deserialize, Serialize};
 
 use crate::domain::elo;
 use crate::domain::ids::{SeasonYear, TeamId};
-use crate::domain::models::{Conference, Game, GameType, PlayoffResult, Team};
+use crate::domain::models::{Conference, Game, GameType, PlayoffResult, Round, Team};
 use crate::domain::simulation::progress::{ChunkTracker, Progress};
 use crate::domain::simulation::rng::{chunk_rng, chunks};
 use crate::domain::simulation::stats;
 use crate::domain::validation::{invalid, ValidationError};
 
 use super::bracket::{
-    play_bracket, Bracket, BracketTeam, EloModel, PlayoffFormat, RoundCounts, SLOTS, SLOT_SEEDS,
+    play_bracket, Bracket, BracketTeam, EloModel, PlayoffFormat, RoundCounts, SeriesModel, SLOTS,
+    SLOT_SEEDS,
 };
 use super::reconstruct;
 use super::seeding::{self, Qualification};
@@ -126,9 +128,55 @@ pub struct TeamForecast {
     pub p_champion_se: f64,
     /// Probability of each conference finishing position (index 0 = 1st).
     pub position_distribution: Vec<f64>,
+    /// Probability of holding each playoff seed, 1 to 8, after the play-in.
+    #[serde(default)]
+    pub seed_distribution: Vec<f64>,
     pub actual_result: Option<PlayoffResult>,
     pub actual_seed: Option<u8>,
 }
+
+/// A first-round series of the projected bracket.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FirstRoundSeries {
+    pub slot_a: usize,
+    pub slot_b: usize,
+    /// The exact probability that slot a wins the series.
+    pub p_a: f64,
+}
+
+/// The most likely bracket: for each conference and each seed in turn, the team most often
+/// seeded there in the simulation among the teams not yet placed. One bracket of very many:
+/// `p_exact` says how often this exact seeding occurred and `p_field` how often these
+/// sixteen teams made the playoffs in any seeding, both over the first
+/// [`BRACKET_SAMPLE`] simulated seasons. The probabilities through the bracket are exact,
+/// at the ratings of the cutoff date with fixed ratings (no playoff K-factor).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProjectedBracket {
+    /// The bracket; a team's record is its projected final record (expected wins, rounded).
+    pub bracket: Bracket,
+    /// Per slot, the exact probabilities of reaching the second round, the conference
+    /// finals, the Finals and winning the title through this bracket.
+    pub exact: Vec<[f64; 4]>,
+    pub first_round: Vec<FirstRoundSeries>,
+    /// Simulated seasons the shares below were counted over.
+    pub sampled: u64,
+    /// Times exactly this seeding occurred among the sampled seasons.
+    pub exact_count: u64,
+    /// Times these sixteen teams were the field, in any seeding, among the sampled seasons.
+    pub field_count: u64,
+    /// Times the single most frequent seeding occurred among the sampled seasons.
+    pub most_common_count: u64,
+    /// `exact_count / sampled`.
+    pub p_exact: f64,
+    /// `field_count / sampled`.
+    pub p_field: f64,
+    /// `most_common_count / sampled`.
+    pub p_most_common: f64,
+}
+
+/// The simulated seasons whose seedings and fields are counted: enough for the shares,
+/// and a bound on the memory of the counts, which hold one entry per distinct seeding.
+pub const BRACKET_SAMPLE: u64 = 200_000;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SeasonForecast {
@@ -142,6 +190,9 @@ pub struct SeasonForecast {
     pub seed: u64,
     pub params: SeasonParams,
     pub teams: Vec<TeamForecast>,
+    /// `None` when no simulated season reached the playoffs.
+    #[serde(default)]
+    pub projected_bracket: Option<ProjectedBracket>,
     pub elapsed_ms: u128,
 }
 
@@ -300,6 +351,14 @@ struct Acc {
     playoffs: Vec<u64>,
     reached: Vec<[u64; 4]>,
     positions: Vec<[u64; 16]>,
+    /// Times each team held each playoff seed.
+    seeds: Vec<[u64; 8]>,
+    /// Simulated seasons in the sample whose seedings and fields were counted.
+    sampled: u64,
+    /// Times each exact seeding (team index per slot) occurred in the sample.
+    brackets: HashMap<[u8; SLOTS], u64>,
+    /// Times each sixteen-team field (sorted per conference) occurred in the sample.
+    fields: HashMap<[u8; SLOTS], u64>,
 }
 
 impl Acc {
@@ -312,10 +371,21 @@ impl Acc {
             playoffs: vec![0; n],
             reached: vec![[0; 4]; n],
             positions: vec![[0; 16]; n],
+            seeds: vec![[0; 8]; n],
+            sampled: 0,
+            brackets: HashMap::new(),
+            fields: HashMap::new(),
         }
     }
     fn merge(mut self, o: Acc) -> Acc {
         self.iterations += o.iterations;
+        self.sampled += o.sampled;
+        for (k, v) in o.brackets {
+            *self.brackets.entry(k).or_insert(0) += v;
+        }
+        for (k, v) in o.fields {
+            *self.fields.entry(k).or_insert(0) += v;
+        }
         for i in 0..self.wins_sum.len() {
             self.wins_sum[i] += o.wins_sum[i];
             self.top6[i] += o.top6[i];
@@ -327,9 +397,59 @@ impl Acc {
             for p in 0..16 {
                 self.positions[i][p] += o.positions[i][p];
             }
+            for s in 0..8 {
+                self.seeds[i][s] += o.seeds[i][s];
+            }
         }
         self
     }
+}
+
+/// The keys of a simulated bracket: the exact seeding (team per slot) and the field (the
+/// eight teams of each conference in index order). Slots 0 to 7 are the East and 8 to 15
+/// the West, as the simulation and [`most_likely_slots`] both fill them. `None` when a
+/// team index does not fit.
+fn bracket_keys(slot_team: &[Ti]) -> Option<([u8; SLOTS], [u8; SLOTS])> {
+    if slot_team.len() != SLOTS || slot_team.iter().any(|&t| t > u8::MAX as usize) {
+        return None;
+    }
+    let mut exact = [0u8; SLOTS];
+    for (k, &t) in exact.iter_mut().zip(slot_team) {
+        *k = t as u8;
+    }
+    let mut field = exact;
+    field[..8].sort_unstable();
+    field[8..].sort_unstable();
+    Some((exact, field))
+}
+
+/// The most likely slots: for each conference and each seed in turn, the team of that
+/// conference most often seeded there among the teams not yet placed, in slot order (East
+/// then West, slots in [`SLOT_SEEDS`] order). When every team that held a seed is already
+/// placed, the seed goes to the unplaced team that made the playoffs most often. `None`
+/// when no simulated season reached the playoffs.
+fn most_likely_slots(seeds: &[[u64; 8]], conf: &[Conference]) -> Option<Vec<Ti>> {
+    let playoffs = |i: usize| seeds[i].iter().sum::<u64>();
+    let mut out = Vec::with_capacity(SLOTS);
+    for c in [Conference::East, Conference::West] {
+        let mut by_seed = [usize::MAX; 8];
+        let mut placed = vec![false; seeds.len()];
+        for seed_idx in 0..8 {
+            let unplaced = || (0..seeds.len()).filter(|&i| conf[i] == c && !placed[i]);
+            let best = unplaced()
+                .filter(|&i| seeds[i][seed_idx] > 0)
+                .max_by_key(|&i| (seeds[i][seed_idx], std::cmp::Reverse(i)))
+                .or_else(|| {
+                    unplaced()
+                        .filter(|&i| playoffs(i) > 0)
+                        .max_by_key(|&i| (playoffs(i), std::cmp::Reverse(i)))
+                })?;
+            placed[best] = true;
+            by_seed[seed_idx] = best;
+        }
+        out.extend(SLOT_SEEDS.iter().map(|&s| by_seed[s as usize - 1]));
+    }
+    Some(out)
 }
 
 struct Setup {
@@ -633,6 +753,18 @@ impl IterState {
     }
 }
 
+/// Simulated seasons per work chunk.
+const CHUNK: u64 = 250;
+
+/// Games of team `i` still to play.
+fn remaining_of(setup: &Setup, i: Ti) -> i32 {
+    setup
+        .remaining
+        .iter()
+        .filter(|g| g.home == i || g.away == i)
+        .count() as i32
+}
+
 pub fn run<P: Progress + ?Sized>(
     params: &SeasonParams,
     games: &[Game],
@@ -672,7 +804,7 @@ pub fn run<P: Progress + ?Sized>(
         scale: params.playoff_scale,
         k: params.playoff_k,
     };
-    let chunk_list = chunks(params.iterations, 250);
+    let chunk_list = chunks(params.iterations, CHUNK);
     let tracker = ChunkTracker::new(progress, chunk_list.len() as u64);
 
     let acc = chunk_list
@@ -685,6 +817,8 @@ pub fn run<P: Progress + ?Sized>(
             let mut rng = chunk_rng(params.seed, idx);
             let mut st = IterState::new(&setup);
             let mut reached: RoundCounts = [[0; SLOTS]; 4];
+            // Seedings and fields are counted over the first BRACKET_SAMPLE seasons only.
+            let in_sample = idx * CHUNK < BRACKET_SAMPLE;
             for _ in 0..count {
                 st.reset(&setup, &mut rng);
                 // remaining regular season
@@ -745,6 +879,7 @@ pub fn run<P: Progress + ?Sized>(
                     let mut conf_slots: [Option<(Ti, BracketTeam)>; 8] = Default::default();
                     for (seed_idx, &ti) in qualified.iter().enumerate() {
                         acc.playoffs[ti] += 1;
+                        acc.seeds[ti][seed_idx] += 1;
                         let seed = (seed_idx + 1) as u8;
                         let p = SLOT_SEEDS
                             .iter()
@@ -775,6 +910,13 @@ pub fn run<P: Progress + ?Sized>(
                 }
                 if !ok {
                     continue;
+                }
+                if in_sample {
+                    if let Some((exact, field)) = bracket_keys(&slot_team) {
+                        acc.sampled += 1;
+                        *acc.brackets.entry(exact).or_insert(0) += 1;
+                        *acc.fields.entry(field).or_insert(0) += 1;
+                    }
                 }
                 let bracket = Bracket {
                     season: params.season,
@@ -817,6 +959,76 @@ pub fn run<P: Progress + ?Sized>(
                 .collect()
         })
         .unwrap_or_default();
+    let projected_bracket = most_likely_slots(&acc.seeds, &setup.conf).map(|slots| {
+        let games_total =
+            |i: Ti| setup.base_wins[i] + setup.base_losses[i] + remaining_of(&setup, i);
+        let teams_in: Vec<BracketTeam> = slots
+            .iter()
+            .enumerate()
+            .map(|(slot, &i)| {
+                let wins = (acc.wins_sum[i] / it).round() as i32;
+                let losses = (games_total(i) - wins).max(0);
+                BracketTeam {
+                    team_id: setup.ids[i],
+                    code: setup.codes[i].clone(),
+                    name: setup.names[i].clone(),
+                    franchise_key: setup.fran[i].clone(),
+                    conference: setup.conf[i],
+                    seed: SLOT_SEEDS[slot % 8],
+                    elo: setup.elo[i],
+                    wins,
+                    losses,
+                    win_pct: f64::from(wins) / f64::from((wins + losses).max(1)),
+                    actual_result: None,
+                }
+            })
+            .collect();
+        let bracket = Bracket {
+            season: params.season,
+            teams: teams_in,
+            format: setup.format,
+            actual_series: vec![],
+            notes: vec![],
+        };
+        let exact_model = EloModel {
+            home_advantage: params.home_advantage,
+            scale: params.playoff_scale,
+            k: None,
+        };
+        let exact = bracket.exact_probabilities(&exact_model);
+        let elos: Vec<f64> = bracket.teams.iter().map(|t| t.elo).collect();
+        let first_round = (0..SLOTS)
+            .step_by(2)
+            .map(|a| FirstRoundSeries {
+                slot_a: a,
+                slot_b: a + 1,
+                p_a: exact_model.series_probability(&bracket, a, a + 1, Round::First, &elos),
+            })
+            .collect();
+        let (exact_count, field_count) = bracket_keys(&slots)
+            .map(|(e, f)| {
+                (
+                    acc.brackets.get(&e).copied().unwrap_or(0),
+                    acc.fields.get(&f).copied().unwrap_or(0),
+                )
+            })
+            .unwrap_or((0, 0));
+        let most_common_count = acc.brackets.values().copied().max().unwrap_or(0);
+        let sampled = acc.sampled;
+        let share = |c: u64| c as f64 / sampled.max(1) as f64;
+        ProjectedBracket {
+            bracket,
+            exact,
+            first_round,
+            sampled,
+            exact_count,
+            field_count,
+            most_common_count,
+            p_exact: share(exact_count),
+            p_field: share(field_count),
+            p_most_common: share(most_common_count),
+        }
+    });
     let mut teams_out: Vec<TeamForecast> = (0..n)
         .map(|i| {
             let p_champ = acc.reached[i][3] as f64 / it;
@@ -830,11 +1042,7 @@ pub fn run<P: Progress + ?Sized>(
                 elo_as_of: setup.elo[i],
                 wins: setup.base_wins[i],
                 losses: setup.base_losses[i],
-                remaining_games: setup
-                    .remaining
-                    .iter()
-                    .filter(|g| g.home == i || g.away == i)
-                    .count() as i32,
+                remaining_games: remaining_of(&setup, i),
                 expected_wins: acc.wins_sum[i] / it,
                 p_top6: acc.top6[i] as f64 / it,
                 p_play_in: acc.play_in[i] as f64 / it,
@@ -845,6 +1053,7 @@ pub fn run<P: Progress + ?Sized>(
                 p_champion: p_champ,
                 p_champion_se: stats::binomial_se(p_champ, acc.iterations),
                 position_distribution: acc.positions[i].iter().map(|&c| c as f64 / it).collect(),
+                seed_distribution: acc.seeds[i].iter().map(|&c| c as f64 / it).collect(),
                 actual_result: actual_results.get(&setup.ids[i]).copied(),
                 actual_seed: actual_seed.get(&setup.ids[i]).copied(),
             }
@@ -867,6 +1076,7 @@ pub fn run<P: Progress + ?Sized>(
         seed: params.seed,
         params: params.clone(),
         teams: teams_out,
+        projected_bracket,
         elapsed_ms: start.elapsed().as_millis(),
     })
 }
@@ -915,5 +1125,55 @@ mod tests {
                 seed8: 2
             }
         );
+    }
+    #[test]
+    fn the_most_likely_slots_take_each_seed_in_turn_without_repeating_a_team() {
+        // Four East and four West teams would be too few; sixteen teams, two conferences.
+        let conf: Vec<Conference> = (0..16)
+            .map(|i| {
+                if i < 8 {
+                    Conference::East
+                } else {
+                    Conference::West
+                }
+            })
+            .collect();
+        // Team i of each conference is most often seed i+1, but team 0 also leads seed 2,
+        // so seed 2 goes to the next team not yet placed.
+        let mut seeds = vec![[0u64; 8]; 16];
+        for c in 0..2 {
+            for i in 0..8 {
+                seeds[c * 8 + i][i] = 100;
+            }
+            seeds[c * 8][1] = 150;
+            seeds[c * 8 + 1][1] = 90;
+        }
+        let slots = most_likely_slots(&seeds, &conf).unwrap();
+        assert_eq!(slots.len(), SLOTS);
+        let mut sorted = slots.clone();
+        sorted.sort_unstable();
+        sorted.dedup();
+        assert_eq!(sorted.len(), SLOTS, "a team sits in one slot");
+        // Slot order follows SLOT_SEEDS: slot 0 is seed 1 (team 0), slot 1 is seed 8.
+        assert_eq!((slots[0], slots[1], slots[4]), (0, 7, 1));
+        assert_eq!(slots[8], 8);
+        // Team 3 held seed 2 only (never seed 4). Seed 4 then has no unplaced holder, so it
+        // goes to the unplaced team that qualified most often (team 4, 100 times), and the
+        // seeds after it follow the same rule until team 3, which qualified 50 times,
+        // takes seed 8: every team that ever qualified is placed once.
+        seeds[3] = [0, 50, 0, 0, 0, 0, 0, 0];
+        let slots = most_likely_slots(&seeds, &conf).unwrap();
+        let mut east: Vec<Ti> = slots[..8].to_vec();
+        east.sort_unstable();
+        assert_eq!(east, (0..8).collect::<Vec<_>>());
+        assert_eq!(slots[1], 3, "seed 8 is team 3");
+        // Only seven East teams ever qualified: no full bracket.
+        seeds[3] = [0; 8];
+        assert!(most_likely_slots(&seeds, &conf).is_none());
+        // The keys: the exact seeding and the field in index order per conference.
+        let (exact, field) = bracket_keys(&slots).unwrap();
+        assert_eq!(exact[1], 3);
+        assert_eq!(&field[..8], &[0, 1, 2, 3, 4, 5, 6, 7]);
+        assert!(bracket_keys(&slots[..15]).is_none());
     }
 }
