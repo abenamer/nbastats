@@ -2,10 +2,14 @@
 //!
 //! `GET /v1/games?seasons[]=<start year>&per_page=100&cursor=<n>` pages through a season;
 //! `start_date` and `end_date` bound a daily refresh to the days since the last result.
+//! The same adapter is the player source: `GET /v1/stats?dates[]=<date>` gives the box
+//! scores of a date, `GET /v1/player_injuries` the injury report and `GET /v1/teams` the
+//! source's team identifiers (these endpoints are on the paid plans).
 //! The free tier allows 5 requests per minute, so requests are paced and a 429 is retried
 //! after the `Retry-After` delay. Team abbreviations differ from the Elo dataset for three
 //! teams (BKN, CHA, PHX); `dataset_code` maps them.
 
+use std::collections::HashMap;
 use std::time::Duration;
 
 use chrono::NaiveDate;
@@ -14,8 +18,8 @@ use tokio::sync::Mutex;
 use tokio::time::Instant;
 
 use crate::application::ports::{
-    FetchProgress, FetchProgressSink, FetchWindow, ResultRecord, ResultsFetch, ResultsSource,
-    SourceError,
+    BoxScoreLine, FetchProgress, FetchProgressSink, FetchWindow, InjuryRecord, PlayerRecord,
+    PlayerSource, ResultRecord, ResultsFetch, ResultsSource, SourceError,
 };
 use crate::domain::ids::SeasonYear;
 
@@ -38,6 +42,8 @@ pub struct BalldontlieSource {
     config: BalldontlieConfig,
     /// Earliest instant the next request may start (pacing for the per-minute quota).
     next_slot: Mutex<Instant>,
+    /// The source's team identifiers by dataset code, fetched once for the injury report.
+    teams: Mutex<Option<HashMap<i64, String>>>,
 }
 
 impl BalldontlieSource {
@@ -56,6 +62,7 @@ impl BalldontlieSource {
             client,
             config,
             next_slot: Mutex::new(Instant::now()),
+            teams: Mutex::new(None),
         })
     }
 
@@ -398,5 +405,510 @@ mod tests {
         .err()
         .unwrap();
         assert!(matches!(err, SourceError::NotConfigured(_)));
+    }
+}
+
+// ---------------------------------------------------------------------------------------
+// Player source: box scores by date and the injury report
+// ---------------------------------------------------------------------------------------
+
+/// The injury report has no season; the sync asks for it once a day.
+const INJURIES_PATH: &str = "player_injuries";
+const STATS_PATH: &str = "stats";
+const TEAMS_PATH: &str = "teams";
+
+impl BalldontlieSource {
+    /// One request to `path` with `query`, paced and retried like a games page.
+    async fn get(
+        &self,
+        path: &str,
+        query: &[(&str, String)],
+        progress: &dyn FetchProgressSink,
+        so_far: FetchProgress,
+    ) -> Result<Vec<u8>, SourceError> {
+        let url = format!("{}/{path}", self.config.base_url.trim_end_matches('/'));
+        let mut retries = 0;
+        loop {
+            self.pace(progress, so_far).await;
+            let resp = self
+                .client
+                .get(&url)
+                .header("Authorization", self.config.api_key.as_str())
+                .query(query)
+                .send()
+                .await
+                .map_err(|e| SourceError::Transport(e.to_string()))?;
+            let status = resp.status();
+            if status.as_u16() == 429 {
+                retries += 1;
+                if retries > MAX_RATE_LIMIT_RETRIES {
+                    return Err(SourceError::RateLimited(MAX_RATE_LIMIT_RETRIES));
+                }
+                let wait = resp
+                    .headers()
+                    .get("retry-after")
+                    .and_then(|v| v.to_str().ok())
+                    .and_then(|v| v.parse::<u64>().ok())
+                    .map(Duration::from_secs)
+                    .unwrap_or_else(|| self.interval() * 2);
+                tracing::warn!(?wait, retries, path, "balldontlie rate limit hit; waiting");
+                progress.report(FetchProgress {
+                    waiting: Some(wait),
+                    rate_limited: true,
+                    ..so_far
+                });
+                tokio::time::sleep(wait).await;
+                continue;
+            }
+            if !status.is_success() {
+                let message = resp.text().await.unwrap_or_default();
+                return Err(SourceError::Rejected {
+                    status: status.as_u16(),
+                    message: message.chars().take(300).collect(),
+                });
+            }
+            let bytes = resp
+                .bytes()
+                .await
+                .map_err(|e| SourceError::Transport(e.to_string()))?;
+            if bytes.len() > MAX_PAGE_BYTES {
+                return Err(SourceError::InvalidPayload(format!(
+                    "page of {} bytes",
+                    bytes.len()
+                )));
+            }
+            return Ok(bytes.to_vec());
+        }
+    }
+
+    /// The source's team identifiers by abbreviation, fetched once.
+    async fn team_codes(
+        &self,
+        progress: &dyn FetchProgressSink,
+    ) -> Result<HashMap<i64, String>, SourceError> {
+        if let Some(map) = self.teams.lock().await.as_ref() {
+            return Ok(map.clone());
+        }
+        let body = self
+            .get(TEAMS_PATH, &[], progress, FetchProgress::default())
+            .await?;
+        let map = parse_teams_page(&body)?;
+        *self.teams.lock().await = Some(map.clone());
+        Ok(map)
+    }
+}
+
+impl PlayerSource for BalldontlieSource {
+    fn name(&self) -> &'static str {
+        "balldontlie"
+    }
+
+    async fn box_scores_on(
+        &self,
+        date: NaiveDate,
+        progress: &dyn FetchProgressSink,
+    ) -> Result<Vec<BoxScoreLine>, SourceError> {
+        let mut lines = Vec::new();
+        let mut cursor: Option<i64> = None;
+        for requests in 0..MAX_PAGES {
+            let mut query = vec![
+                ("dates[]", date.to_string()),
+                ("per_page", PER_PAGE.to_string()),
+            ];
+            if let Some(c) = cursor {
+                query.push(("cursor", c.to_string()));
+            }
+            let so_far = FetchProgress {
+                requests,
+                games: lines.len(),
+                ..Default::default()
+            };
+            let body = self.get(STATS_PATH, &query, progress, so_far).await?;
+            let page = parse_stats_page(&body)?;
+            lines.extend(page.lines);
+            progress.report(FetchProgress {
+                requests: requests + 1,
+                games: lines.len(),
+                ..Default::default()
+            });
+            match page.next_cursor {
+                Some(c) => cursor = Some(c),
+                None => return Ok(lines),
+            }
+        }
+        Err(SourceError::InvalidPayload(format!(
+            "more than {MAX_PAGES} pages of box scores for one date"
+        )))
+    }
+
+    async fn injury_report(
+        &self,
+        progress: &dyn FetchProgressSink,
+    ) -> Result<Vec<InjuryRecord>, SourceError> {
+        let teams = self.team_codes(progress).await?;
+        let mut records = Vec::new();
+        let mut cursor: Option<i64> = None;
+        for requests in 0..MAX_PAGES {
+            let mut query = vec![("per_page", PER_PAGE.to_string())];
+            if let Some(c) = cursor {
+                query.push(("cursor", c.to_string()));
+            }
+            let so_far = FetchProgress {
+                requests,
+                games: records.len(),
+                ..Default::default()
+            };
+            let body = self.get(INJURIES_PATH, &query, progress, so_far).await?;
+            let page = parse_injuries_page(&body, &teams)?;
+            records.extend(page.records);
+            progress.report(FetchProgress {
+                requests: requests + 1,
+                games: records.len(),
+                ..Default::default()
+            });
+            match page.next_cursor {
+                Some(c) => cursor = Some(c),
+                None => return Ok(records),
+            }
+        }
+        Err(SourceError::InvalidPayload(format!(
+            "more than {MAX_PAGES} pages of injuries"
+        )))
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct ApiPlayer {
+    id: i64,
+    #[serde(default)]
+    first_name: String,
+    #[serde(default)]
+    last_name: String,
+    #[serde(default)]
+    position: Option<String>,
+    #[serde(default)]
+    height: Option<String>,
+    #[serde(default)]
+    weight: Option<String>,
+    #[serde(default)]
+    college: Option<String>,
+    #[serde(default)]
+    country: Option<String>,
+    #[serde(default)]
+    draft_year: Option<i32>,
+    #[serde(default)]
+    draft_round: Option<i32>,
+    #[serde(default)]
+    draft_number: Option<i32>,
+    #[serde(default)]
+    team_id: Option<i64>,
+}
+
+impl ApiPlayer {
+    fn record(&self) -> PlayerRecord {
+        let clean = |s: &Option<String>| {
+            s.as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(String::from)
+        };
+        PlayerRecord {
+            source_id: self.id,
+            first_name: self.first_name.trim().to_string(),
+            last_name: self.last_name.trim().to_string(),
+            position: clean(&self.position),
+            height: clean(&self.height),
+            weight: clean(&self.weight),
+            college: clean(&self.college),
+            country: clean(&self.country),
+            draft_year: self.draft_year,
+            draft_round: self.draft_round,
+            draft_number: self.draft_number,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct ApiStatTeam {
+    abbreviation: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct ApiStatGame {
+    date: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct ApiStat {
+    #[serde(default)]
+    min: Option<String>,
+    #[serde(default)]
+    pts: Option<i32>,
+    #[serde(default)]
+    reb: Option<i32>,
+    #[serde(default)]
+    oreb: Option<i32>,
+    #[serde(default)]
+    dreb: Option<i32>,
+    #[serde(default)]
+    ast: Option<i32>,
+    #[serde(default)]
+    stl: Option<i32>,
+    #[serde(default)]
+    blk: Option<i32>,
+    #[serde(default)]
+    turnover: Option<i32>,
+    #[serde(default)]
+    pf: Option<i32>,
+    #[serde(default)]
+    fgm: Option<i32>,
+    #[serde(default)]
+    fga: Option<i32>,
+    #[serde(default)]
+    fg3m: Option<i32>,
+    #[serde(default)]
+    fg3a: Option<i32>,
+    #[serde(default)]
+    ftm: Option<i32>,
+    #[serde(default)]
+    fta: Option<i32>,
+    player: ApiPlayer,
+    team: ApiStatTeam,
+    game: ApiStatGame,
+}
+
+#[derive(Debug, Deserialize)]
+struct StatsPage {
+    data: Vec<ApiStat>,
+    #[serde(default)]
+    meta: Meta,
+}
+
+#[derive(Debug, Default, PartialEq)]
+pub struct ParsedStats {
+    pub lines: Vec<BoxScoreLine>,
+    pub next_cursor: Option<i64>,
+}
+
+/// Playing time as the source writes it (`"34:12"`, `"34"`, `""`) in seconds; `None` when
+/// absent or unreadable.
+pub fn parse_minutes(min: Option<&str>) -> Option<i32> {
+    let s = min?.trim();
+    if s.is_empty() {
+        return None;
+    }
+    let mut parts = s.splitn(2, ':');
+    let minutes: i32 = parts.next()?.trim().parse().ok()?;
+    let seconds: i32 = match parts.next() {
+        Some(sec) => sec.trim().parse().ok()?,
+        None => 0,
+    };
+    (minutes >= 0 && (0..60).contains(&seconds)).then_some(minutes * 60 + seconds)
+}
+
+/// Parse one page of `GET /stats`: one line per player, the game named by its date and
+/// the player's team.
+pub fn parse_stats_page(body: &[u8]) -> Result<ParsedStats, SourceError> {
+    let page: StatsPage =
+        serde_json::from_slice(body).map_err(|e| SourceError::InvalidPayload(e.to_string()))?;
+    let mut lines = Vec::with_capacity(page.data.len());
+    for s in page.data {
+        let date = parse_date(&s.game.date).ok_or_else(|| {
+            SourceError::InvalidPayload(format!("bad game date {:?}", s.game.date))
+        })?;
+        lines.push(BoxScoreLine {
+            date,
+            team_code: dataset_code(&s.team.abbreviation),
+            player: s.player.record(),
+            seconds: parse_minutes(s.min.as_deref()),
+            pts: s.pts,
+            reb: s.reb,
+            oreb: s.oreb,
+            dreb: s.dreb,
+            ast: s.ast,
+            stl: s.stl,
+            blk: s.blk,
+            tov: s.turnover,
+            pf: s.pf,
+            fgm: s.fgm,
+            fga: s.fga,
+            fg3m: s.fg3m,
+            fg3a: s.fg3a,
+            ftm: s.ftm,
+            fta: s.fta,
+        });
+    }
+    Ok(ParsedStats {
+        lines,
+        next_cursor: page.meta.next_cursor,
+    })
+}
+
+#[derive(Debug, Deserialize)]
+struct TeamsPage {
+    data: Vec<ApiTeamRow>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ApiTeamRow {
+    id: i64,
+    abbreviation: String,
+}
+
+/// Parse `GET /teams` into the dataset code of each source team identifier.
+pub fn parse_teams_page(body: &[u8]) -> Result<HashMap<i64, String>, SourceError> {
+    let page: TeamsPage =
+        serde_json::from_slice(body).map_err(|e| SourceError::InvalidPayload(e.to_string()))?;
+    Ok(page
+        .data
+        .into_iter()
+        .map(|t| (t.id, dataset_code(&t.abbreviation)))
+        .collect())
+}
+
+#[derive(Debug, Deserialize)]
+struct ApiInjury {
+    player: ApiPlayer,
+    #[serde(default)]
+    return_date: Option<String>,
+    #[serde(default)]
+    description: Option<String>,
+    #[serde(default)]
+    status: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct InjuriesPage {
+    data: Vec<ApiInjury>,
+    #[serde(default)]
+    meta: Meta,
+}
+
+#[derive(Debug, Default, PartialEq)]
+pub struct ParsedInjuries {
+    pub records: Vec<InjuryRecord>,
+    pub next_cursor: Option<i64>,
+}
+
+/// Parse one page of `GET /player_injuries`. A line whose player has no team the source
+/// names is dropped: the report is by team.
+pub fn parse_injuries_page(
+    body: &[u8],
+    teams: &HashMap<i64, String>,
+) -> Result<ParsedInjuries, SourceError> {
+    let page: InjuriesPage =
+        serde_json::from_slice(body).map_err(|e| SourceError::InvalidPayload(e.to_string()))?;
+    let mut records = Vec::with_capacity(page.data.len());
+    for i in page.data {
+        let Some(team_code) = i.player.team_id.and_then(|id| teams.get(&id)).cloned() else {
+            continue;
+        };
+        records.push(InjuryRecord {
+            player: i.player.record(),
+            team_code,
+            status: i
+                .status
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .unwrap_or("Unknown")
+                .to_string(),
+            return_date: i.return_date.as_deref().and_then(parse_date),
+            description: i
+                .description
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(|s| s.chars().take(500).collect()),
+        });
+    }
+    Ok(ParsedInjuries {
+        records,
+        next_cursor: page.meta.next_cursor,
+    })
+}
+
+#[cfg(test)]
+mod player_tests {
+    use super::*;
+
+    #[test]
+    fn minutes_parse_in_both_forms() {
+        assert_eq!(parse_minutes(Some("34:12")), Some(2052));
+        assert_eq!(parse_minutes(Some("34")), Some(2040));
+        assert_eq!(parse_minutes(Some("0:00")), Some(0));
+        assert_eq!(parse_minutes(Some("")), None);
+        assert_eq!(parse_minutes(Some("34:75")), None);
+        assert_eq!(parse_minutes(Some("abc")), None);
+        assert_eq!(parse_minutes(None), None);
+    }
+
+    const STATS: &str = r#"{"data":[
+      {"id":1,"min":"34:12","fgm":9,"fga":20,"fg3m":5,"fg3a":12,"ftm":7,"fta":8,"oreb":1,"dreb":4,"reb":5,"ast":7,"stl":1,"blk":0,"turnover":3,"pf":2,"pts":30,
+       "player":{"id":115,"first_name":"Stephen","last_name":"Curry","position":"G","height":"6-2","weight":"185","jersey_number":"30","college":"Davidson","country":"USA","draft_year":2009,"draft_round":1,"draft_number":7,"team_id":10},
+       "team":{"id":10,"abbreviation":"GSW","full_name":"Golden State Warriors"},
+       "game":{"id":5,"date":"2019-06-13","season":2018,"status":"Final","home_team_id":10,"visitor_team_id":28,"postseason":true}},
+      {"id":2,"min":"","pts":0,
+       "player":{"id":200,"first_name":"Kevin","last_name":"Durant","team_id":10},
+       "team":{"id":10,"abbreviation":"GSW"},
+       "game":{"id":5,"date":"2019-06-13T00:00:00.000Z","home_team_id":10}},
+      {"id":3,"min":"40:01","pts":26,
+       "player":{"id":300,"first_name":"Kawhi","last_name":"Leonard","position":"","team_id":28},
+       "team":{"id":28,"abbreviation":"TOR"},
+       "game":{"id":5,"date":"2019-06-13","home_team_id":10}}
+    ],"meta":{"next_cursor":3,"per_page":100}}"#;
+
+    #[test]
+    fn parses_box_score_lines_with_the_game_by_date_and_team() {
+        let page = parse_stats_page(STATS.as_bytes()).unwrap();
+        assert_eq!(page.next_cursor, Some(3));
+        assert_eq!(page.lines.len(), 3);
+        let c = &page.lines[0];
+        assert_eq!(c.date, NaiveDate::from_ymd_opt(2019, 6, 13).unwrap());
+        assert_eq!(c.team_code, "GSW");
+        assert_eq!(c.player.source_id, 115);
+        assert_eq!(c.player.last_name, "Curry");
+        assert_eq!(c.player.draft_number, Some(7));
+        assert_eq!(
+            (c.seconds, c.pts, c.tov, c.fg3m),
+            (Some(2052), Some(30), Some(3), Some(5))
+        );
+        let d = &page.lines[1];
+        assert_eq!((d.seconds, d.pts, d.reb), (None, Some(0), None));
+        let k = &page.lines[2];
+        assert_eq!(k.team_code, "TOR");
+        assert_eq!(k.player.position, None);
+        assert!(parse_stats_page(b"[]").is_err());
+    }
+
+    #[test]
+    fn parses_the_injury_report_by_team() {
+        let teams = parse_teams_page(
+            br#"{"data":[{"id":10,"abbreviation":"GSW"},{"id":4,"abbreviation":"CHA"}]}"#,
+        )
+        .unwrap();
+        assert_eq!(teams[&4], "CHO");
+        let page = parse_injuries_page(
+            br#"{"data":[
+              {"player":{"id":115,"first_name":"Stephen","last_name":"Curry","team_id":10},"return_date":"2026-11-02","description":"Right knee; out","status":"Out"},
+              {"player":{"id":7,"first_name":"Nobody","last_name":"Traded","team_id":99},"status":"Day-To-Day"},
+              {"player":{"id":8,"first_name":"Blank","last_name":"Status","team_id":4},"status":"  "}
+            ],"meta":{"per_page":100}}"#,
+            &teams,
+        )
+        .unwrap();
+        assert_eq!(page.next_cursor, None);
+        assert_eq!(page.records.len(), 2);
+        let c = &page.records[0];
+        assert_eq!((c.team_code.as_str(), c.status.as_str()), ("GSW", "Out"));
+        assert_eq!(c.return_date, NaiveDate::from_ymd_opt(2026, 11, 2));
+        assert_eq!(c.description.as_deref(), Some("Right knee; out"));
+        assert_eq!(
+            (
+                page.records[1].team_code.as_str(),
+                page.records[1].status.as_str()
+            ),
+            ("CHO", "Unknown")
+        );
     }
 }

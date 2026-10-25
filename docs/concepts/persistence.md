@@ -14,7 +14,7 @@ sources:
 
 | Volume | Mount | Content |
 |--------|-------|---------|
-| `nba_postgres_data` | `/var/lib/postgresql/data` in `nba-postgres` | All tables: games, seasons, jobs, forecasts, imports. |
+| `nba_postgres_data` | `/var/lib/postgresql/data` in `nba-postgres` | All tables: games, seasons, jobs, forecasts, imports, players, box-score lines, injury reports. |
 | `nba_application_data` | `/var/lib/nba-app` in `nba-app` | Downloaded datasets and other file state. |
 
 The volumes have explicit names. A different project directory does not create a second database.

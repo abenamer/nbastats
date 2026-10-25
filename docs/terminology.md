@@ -17,7 +17,9 @@ These are project-specific technical terms. They are not a reproduction of the A
 | Term | Meaning |
 | --- | --- |
 | Alpha | Strength weight of a franchise in Engine A. The title probability is alpha divided by the sum of all alphas. |
+| Appearance | One player's box-score line in one stored game: team, seconds played and the counting statistics. Stored in `appearances`, keyed by game and player. |
 | Bargaining period | A run of NBA/BAA seasons under one collective bargaining agreement, from the first season the agreement applied to. The table of periods and their changes is curated in `domain::cba`; see [Rule periods and bargaining periods](/concepts/periods.md). |
+| Box-score fetch | The record that one date's box scores were fetched: the source, the time and the counts of lines received, matched and unmatched. A backfill skips the dates that have one. |
 | Bracket | The 16 playoff slots and their pairings. Slots 0 to 7 are the East, 8 to 15 the West. |
 | Champion z | The champion's pre-playoff rating above the league mean in standard deviations of that season's ratings; averaged over a group's seasons with a champion in the group records. Part of the parity profile. |
 | Competition format | A period of the postseason and in-season structure: early playoffs, the 16-team field, best-of-seven throughout, the play-in era, the NBA Cup era. Curated in `domain::eras`. |
@@ -48,6 +50,7 @@ These are project-specific technical terms. They are not a reproduction of the A
 | Implied strength | The rating gap above the league mean at which a team of constant strength, against the actual playoff fields of a window of seasons, has the title chance a record implies; given in Elo points, points per game and wins per 82. Computed in `domain::strength`. |
 | Information cutoff | The last date whose games a forecast may use. |
 | Job | A stored simulation request with parameters, seed, versions, progress and result. |
+| Injury report | The source's list of players with a status (out, day-to-day, questionable), the expected return date and a description, stored once per day under the day it was fetched. |
 | Language model | A chat model with tool calling behind the `LanguageModel` port; the `OpenRouterModel` adapter calls it through OpenRouter's OpenAI-compatible API. |
 | League size | The number of teams of one league (NBA/BAA or ABA) in one season. |
 | Lookup | One tool call the language model makes to read the store (tool, arguments, rows). The question box lists the lookups under each answer. |
@@ -59,6 +62,8 @@ These are project-specific technical terms. They are not a reproduction of the A
 | Player era | The seasons a listed player was active, from the curated table in `domain::players`; a season belongs to every listed player active in it. |
 | Port | A trait in `application::ports` that the application requires from the outside world. |
 | Projection | A placeholder season: the previous season's matchups one year later, no scores, reverted ratings. |
+| Player source | The `PlayerSource` port: the box-score lines of one date and the current injury report from the BALLDONTLIE API. The adapter is `BalldontlieSource`, the same as the results source. |
+| Player sync | One run of the player data fetch: a backfill of a season, the daily run (unfetched dates, the settling dates, the injury report) or an injury report alone. One at a time. |
 | Projected bracket | The most likely playoff bracket of a season forecast. Each seed goes in turn to the team that held it most often in the simulated seasons among the teams not yet placed. The bracket is priced exactly at the cutoff date's ratings and shown with the share of simulated seasons that had this exact seeding and this field. It is one bracket of very many, not the forecast. |
 | Question box | The panel on the Dashboard that answers a plain-language question from the stored data through a language model with read-only tools, and declines every other question with a fixed sentence. |
 | Reference rating | The archive's rating before or after an archive game, kept beside the application's rating for validation. |
@@ -72,6 +77,7 @@ These are project-specific technical terms. They are not a reproduction of the A
 | Series score | The score of one played playoff series: the probability a model gave the actual winner against the actual loser with the actual home court, read as a two-sided Brier score, a log loss and whether the favourite won. Fifteen a season; defined in `domain::backtesting`. |
 | Seed | Playoff position 1 to 8 inside a conference. |
 | Series | A best-of-five or best-of-seven playoff matchup. A `SeriesState` is either in progress or decided. |
+| Settling window | The last 2 days before today. The daily player sync fetches their box scores again, because a date fetched while a game was on holds partial lines. |
 | Store | The `PostgresStore` adapter, which implements every store port. |
 | Threshold (K) | The title count that counts as a dynasty in the Alpha Simulator: the results report how often a franchise wins K or more titles. |
 | Team | A team code and era, such as SEA or OKC. Identified by `TeamId`. |

@@ -805,7 +805,10 @@ async fn computed_elo_continues_from_the_previous_season(pool: PgPool) {
     let outcome = continuation::sync_results(&store, &source, s2017, today, &|_| {})
         .await
         .unwrap();
-    assert_eq!(outcome.games_inserted, 4);
+    // The three stored games are updated in place (the DAL game gets its result); only
+    // the new game is inserted.
+    assert_eq!(outcome.games_inserted, 1);
+    assert!(outcome.games_updated >= 1);
     assert!(outcome
         .notes
         .iter()
@@ -1193,4 +1196,440 @@ async fn game_reports_are_stored_with_their_lookup(pool: PgPool) {
         .await
         .unwrap();
     assert_eq!(store.reports_on(&[date]).await.unwrap(), vec![updated]);
+}
+
+// ---------------------------------------------------------------------------------------
+// Players, box scores and injury reports
+// ---------------------------------------------------------------------------------------
+
+mod players {
+    use super::*;
+    use nba_elo_simulator::application::players;
+    use nba_elo_simulator::application::ports::{
+        BoxScoreLine, FetchProgressSink, InjuryRecord, PlayerRecord, PlayerSource, PlayerStore,
+        SourceError,
+    };
+    use std::sync::Mutex;
+
+    fn person(id: i64, first: &str, last: &str) -> PlayerRecord {
+        PlayerRecord {
+            source_id: id,
+            first_name: first.to_string(),
+            last_name: last.to_string(),
+            position: Some("G".to_string()),
+            height: Some("6-2".to_string()),
+            weight: None,
+            college: None,
+            country: Some("USA".to_string()),
+            draft_year: Some(2009),
+            draft_round: Some(1),
+            draft_number: Some(7),
+        }
+    }
+
+    fn line(date: &str, team: &str, player: PlayerRecord, seconds: i32, pts: i32) -> BoxScoreLine {
+        BoxScoreLine {
+            date: super::date(date),
+            team_code: team.to_string(),
+            player,
+            seconds: Some(seconds),
+            pts: Some(pts),
+            reb: Some(5),
+            oreb: Some(1),
+            dreb: Some(4),
+            ast: Some(6),
+            stl: Some(1),
+            blk: Some(0),
+            tov: Some(3),
+            pf: Some(2),
+            fgm: Some(10),
+            fga: Some(20),
+            fg3m: Some(4),
+            fg3a: Some(10),
+            ftm: Some(3),
+            fta: Some(3),
+        }
+    }
+
+    /// Lines for one date only; every other date is empty. Fails once on the date given.
+    struct FakePlayers {
+        lines: Vec<BoxScoreLine>,
+        fail_on: Mutex<Option<NaiveDate>>,
+        asked: Mutex<Vec<NaiveDate>>,
+        injuries: Vec<InjuryRecord>,
+    }
+
+    impl PlayerSource for FakePlayers {
+        fn name(&self) -> &'static str {
+            "fake-players"
+        }
+        async fn box_scores_on(
+            &self,
+            date: NaiveDate,
+            progress: &dyn FetchProgressSink,
+        ) -> Result<Vec<BoxScoreLine>, SourceError> {
+            self.asked.lock().unwrap().push(date);
+            if self
+                .fail_on
+                .lock()
+                .unwrap()
+                .take_if(|d| *d == date)
+                .is_some()
+            {
+                return Err(SourceError::RateLimited(3));
+            }
+            progress.report(FetchProgress {
+                requests: 1,
+                ..Default::default()
+            });
+            Ok(self
+                .lines
+                .iter()
+                .filter(|l| l.date == date)
+                .cloned()
+                .collect())
+        }
+        async fn injury_report(
+            &self,
+            _progress: &dyn FetchProgressSink,
+        ) -> Result<Vec<InjuryRecord>, SourceError> {
+            Ok(self.injuries.clone())
+        }
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    async fn box_scores_match_stored_games_and_the_backfill_resumes(pool: PgPool) {
+        let (store, _teams) = common::setup(pool).await;
+        imports::import_bytes(
+            &store,
+            common::FIXTURE.as_bytes(),
+            prov("mini_2016.csv"),
+            false,
+        )
+        .await
+        .unwrap();
+        // Opening night of the fixture: CHI hosts CLE, ATL hosts DET.
+        let opening = "2015-10-27";
+        let curry = person(115, "Stephen", "Curry");
+        let lines = vec![
+            line(opening, "CHI", person(1, "Derrick", "Rose"), 2052, 18),
+            line(opening, "CLE", person(2, "LeBron", "James"), 2400, 25),
+            line(opening, "CLE", person(3, "Kevin", "Love"), 1800, 10),
+            // No stored game for this code on that date: counted, not stored.
+            line(opening, "ZZZ", person(4, "Nobody", "Here"), 10, 0),
+            line("2015-10-30", "GSW", curry.clone(), 2100, 40),
+        ];
+        let pending = store.dates_without_box_scores(S2016).await.unwrap();
+        assert!(pending.len() > 100, "{} dates", pending.len());
+        assert_eq!(pending[0], date(opening));
+        assert!(pending.windows(2).all(|w| w[0] < w[1]), "dates in order");
+
+        let fake = FakePlayers {
+            lines,
+            fail_on: Mutex::new(Some(pending[2])),
+            asked: Mutex::new(vec![]),
+            injuries: vec![],
+        };
+        // The first run stops at its third date; the two dates before it stay stored.
+        let err = players::backfill_season(&store, &fake, S2016, &|_| {})
+            .await
+            .unwrap_err();
+        assert_eq!(err.done.dates_fetched, 2);
+        assert_eq!(err.dates_total, pending.len());
+        assert_eq!(err.done.lines, 4);
+        assert_eq!(err.done.matched, 3);
+        assert_eq!(err.done.unmatched, 1);
+        assert_eq!(err.done.players_upserted, 3);
+        let left = store.dates_without_box_scores(S2016).await.unwrap();
+        assert_eq!(left.len(), pending.len() - 2);
+        assert_eq!(left[0], pending[2]);
+
+        // The second run takes only the dates left and finishes.
+        let outcome = players::backfill_season(&store, &fake, S2016, &|_| {})
+            .await
+            .unwrap();
+        assert_eq!(outcome.dates_fetched, pending.len() - 2);
+        assert_eq!(outcome.matched, 1, "Curry's line on 2015-10-30");
+        let asked = fake.asked.lock().unwrap().clone();
+        assert_eq!(
+            asked.len(),
+            pending.len() + 1,
+            "the failed date was asked twice"
+        );
+        assert!(store
+            .dates_without_box_scores(S2016)
+            .await
+            .unwrap()
+            .is_empty());
+        let fetches = store.box_score_fetches(S2016).await.unwrap();
+        assert_eq!(fetches.len(), pending.len());
+        assert_eq!(fetches[0].counts.lines, 4);
+        assert_eq!(fetches[0].counts.unmatched, 1);
+
+        // Players and their lines.
+        let found = store.search_players("james", 10).await.unwrap();
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].last_name, "James");
+        assert!(
+            store.search_players("%", 10).await.unwrap().is_empty(),
+            "no wildcard"
+        );
+        let james = store.player(found[0].id).await.unwrap().unwrap();
+        assert_eq!(james.source_id, 2);
+        assert_eq!(james.draft_number, Some(7));
+        let games = store.player_appearances(james.id, S2016).await.unwrap();
+        assert_eq!(games.len(), 1);
+        assert_eq!(games[0].team_code, "CLE");
+        assert_eq!(games[0].opponent_code, "CHI");
+        assert!(!games[0].home, "CLE visited CHI");
+        assert_eq!(games[0].pts, Some(25));
+        assert_eq!(games[0].oreb, Some(1));
+        assert_eq!(games[0].pf, Some(2));
+        let seasons = store.player_seasons(james.id).await.unwrap();
+        assert_eq!(seasons.len(), 1);
+        assert_eq!((seasons[0].games, seasons[0].pts), (1, Some(25)));
+        let box_score = store.game_appearances(games[0].game_id).await.unwrap();
+        assert_eq!(box_score.len(), 3, "three lines of the CHI–CLE game");
+        assert!(box_score.iter().any(|l| l.team_code == "CHI" && l.home));
+        assert!(store
+            .player_appearances(james.id, SeasonYear::of(2017))
+            .await
+            .unwrap()
+            .is_empty());
+
+        // A second fetch of a date replaces its lines and updates the player.
+        let mut again = person(2, "LeBron", "James");
+        again.position = Some("F".to_string());
+        let counts = store
+            .save_box_scores(
+                date(opening),
+                "fake-players",
+                &[line(opening, "CLE", again, 2000, 30)],
+            )
+            .await
+            .unwrap();
+        assert_eq!((counts.lines, counts.matched), (1, 1));
+        let box_score = store.game_appearances(games[0].game_id).await.unwrap();
+        assert_eq!(box_score.len(), 1);
+        assert_eq!(box_score[0].pts, Some(30));
+        assert_eq!(
+            store.player(james.id).await.unwrap().unwrap().position,
+            Some("F".to_string())
+        );
+        // A blank field never overwrites a filled one; an empty answer never erases a day.
+        let mut blank = person(2, "", "");
+        blank.position = None;
+        blank.draft_number = None;
+        store
+            .save_box_scores(
+                date(opening),
+                "fake-players",
+                &[line(opening, "CLE", blank, 1500, 12)],
+            )
+            .await
+            .unwrap();
+        let kept = store.player(james.id).await.unwrap().unwrap();
+        assert_eq!(
+            (kept.first_name.as_str(), kept.last_name.as_str()),
+            ("LeBron", "James")
+        );
+        assert_eq!(
+            (kept.position.as_deref(), kept.draft_number),
+            (Some("F"), Some(7))
+        );
+        let counts = store
+            .save_box_scores(date(opening), "fake-players", &[])
+            .await
+            .unwrap();
+        assert_eq!(
+            counts,
+            nba_elo_simulator::application::ports::BoxScoreCounts::default()
+        );
+        assert_eq!(
+            store
+                .game_appearances(games[0].game_id)
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
+        // A line dated another day than the fetch is not matched.
+        let counts = store
+            .save_box_scores(
+                date("2015-10-28"),
+                "fake-players",
+                &[line(opening, "CLE", person(2, "LeBron", "James"), 1500, 12)],
+            )
+            .await
+            .unwrap();
+        assert_eq!((counts.matched, counts.unmatched), (0, 1));
+
+        let coverage = store.player_coverage().await.unwrap();
+        assert_eq!(coverage.players, 4, "Rose, James, Love, Curry");
+        assert_eq!(coverage.appearances, 2);
+        assert_eq!(coverage.dates_fetched as usize, pending.len());
+        assert_eq!(coverage.first_date_fetched, Some(date(opening)));
+        assert_eq!(coverage.injury_report_dates, 0);
+    }
+
+    /// The daily results sync replaces a season's non-archive games; the lines stored for
+    /// those games must survive it, and a season removed and stored again is fetched again.
+    #[sqlx::test(migrations = "./migrations")]
+    async fn box_scores_survive_a_results_sync(pool: PgPool) {
+        use nba_elo_simulator::application::continuation;
+        let (store, _teams) = common::setup(pool).await;
+        imports::import_bytes(
+            &store,
+            common::FIXTURE.as_bytes(),
+            prov("mini_2016.csv"),
+            false,
+        )
+        .await
+        .unwrap();
+        let s2017 = SeasonYear::of(2017);
+        let results = |played: bool| {
+            FakeResults::with(vec![
+                record("2016-10-25", "GSW", "SAS", Some((100, 129))),
+                record("2016-10-28", "GSW", "NOP", Some((122, 114))),
+                record("2016-10-30", "DAL", "GSW", played.then_some((95, 100))),
+            ])
+        };
+        continuation::sync_results(&store, &results(false), s2017, date("2016-10-31"), &|_| {})
+            .await
+            .unwrap();
+        let day = "2016-10-28";
+        let fake = FakePlayers {
+            lines: vec![
+                line(day, "GSW", person(115, "Stephen", "Curry"), 2100, 40),
+                line(day, "NOP", person(9, "Anthony", "Davis"), 2200, 30),
+            ],
+            fail_on: Mutex::new(None),
+            asked: Mutex::new(vec![]),
+            injuries: vec![],
+        };
+        let outcome = players::backfill_season(&store, &fake, s2017, &|_| {})
+            .await
+            .unwrap();
+        assert_eq!((outcome.dates_fetched, outcome.matched), (2, 2));
+        let game_id = store.season_games(s2017).await.unwrap()[1].id;
+        assert_eq!(store.game_appearances(game_id).await.unwrap().len(), 2);
+
+        // The next day's sync brings the third game's result: the stored games are updated
+        // in place and the lines stay attached.
+        continuation::sync_results(&store, &results(true), s2017, date("2016-10-31"), &|_| {})
+            .await
+            .unwrap();
+        let games = store.season_games(s2017).await.unwrap();
+        assert_eq!(games[1].id, game_id, "the game keeps its identifier");
+        assert!(games[2].is_played());
+        assert_eq!(store.game_appearances(game_id).await.unwrap().len(), 2);
+        assert_eq!(
+            store.dates_without_box_scores(s2017).await.unwrap(),
+            vec![date("2016-10-30")],
+            "only the newly played date is unfetched"
+        );
+        assert_eq!(store.player_coverage().await.unwrap().appearances, 2);
+
+        // A game the incoming data no longer holds goes, with its lines (a results upload
+        // replaces the whole season; a sync keeps the games before its window).
+        let csv = "date,home,away,home_score,away_score,neutral,playoff\n2016-10-25,GSW,SAS,100,129,0,0\n2016-10-30,DAL,GSW,95,100,0,0\n";
+        continuation::import_results(&store, s2017, csv.as_bytes(), Some("results.csv"))
+            .await
+            .unwrap();
+        assert_eq!(store.season_games(s2017).await.unwrap().len(), 2);
+        assert!(store.game_appearances(game_id).await.unwrap().is_empty());
+        assert_eq!(store.player_coverage().await.unwrap().appearances, 0);
+
+        // Removing the season drops its lines and its fetch records, so a season stored
+        // again starts from nothing.
+        continuation::remove_season(&store, s2017).await.unwrap();
+        let coverage = store.player_coverage().await.unwrap();
+        assert_eq!((coverage.appearances, coverage.dates_fetched), (0, 0));
+        continuation::sync_results(&store, &results(true), s2017, date("2016-10-31"), &|_| {})
+            .await
+            .unwrap();
+        assert_eq!(
+            store.dates_without_box_scores(s2017).await.unwrap().len(),
+            3
+        );
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    async fn injury_reports_are_kept_day_by_day(pool: PgPool) {
+        let (store, _teams) = common::setup(pool).await;
+        let report = |status: &str| InjuryRecord {
+            player: person(115, "Stephen", "Curry"),
+            team_code: "GSW".to_string(),
+            status: status.to_string(),
+            return_date: Some(date("2026-01-20")),
+            description: Some("Knee; sprain".to_string()),
+        };
+        let fake = FakePlayers {
+            lines: vec![],
+            fail_on: Mutex::new(None),
+            asked: Mutex::new(vec![]),
+            injuries: vec![
+                report("Out"),
+                InjuryRecord {
+                    player: person(7, "Kevon", "Looney"),
+                    team_code: "GSW".to_string(),
+                    status: "Day-To-Day".to_string(),
+                    return_date: None,
+                    description: None,
+                },
+            ],
+        };
+        assert_eq!(store.latest_injury_report_date().await.unwrap(), None);
+        let day1 = date("2026-01-15");
+        let stored = players::fetch_injury_report(&store, &fake, day1, &|_| {})
+            .await
+            .unwrap();
+        assert_eq!(stored, 2);
+        // The next day's report replaces nothing of the day before.
+        let day2 = date("2026-01-16");
+        store
+            .save_injury_report(day2, "fake-players", &[report("Questionable")])
+            .await
+            .unwrap();
+        assert_eq!(store.latest_injury_report_date().await.unwrap(), Some(day2));
+        let first = store.injury_report(day1).await.unwrap();
+        assert_eq!(first.len(), 2);
+        let curry = first
+            .iter()
+            .find(|l| l.player_name == "Stephen Curry")
+            .unwrap();
+        assert_eq!(curry.status, "Out");
+        assert_eq!(curry.team_code, "GSW");
+        assert_eq!(curry.return_date, Some(date("2026-01-20")));
+        let second = store.injury_report(day2).await.unwrap();
+        assert_eq!(second.len(), 1);
+        assert_eq!(second[0].status, "Questionable");
+        assert_eq!(
+            second[0].player_id, curry.player_id,
+            "the same stored player"
+        );
+        // Saving a day again replaces that day's rows.
+        store
+            .save_injury_report(day2, "fake-players", &[])
+            .await
+            .unwrap();
+        assert!(store.injury_report(day2).await.unwrap().is_empty());
+        assert_eq!(store.injury_report(day1).await.unwrap().len(), 2);
+        // A line for a team code the store does not know is dropped, not an error.
+        let n = store
+            .save_injury_report(
+                day2,
+                "fake-players",
+                &[InjuryRecord {
+                    team_code: "ZZZ".to_string(),
+                    ..report("Out")
+                }],
+            )
+            .await
+            .unwrap();
+        assert_eq!(n, 0);
+        let coverage = store.player_coverage().await.unwrap();
+        assert_eq!(coverage.injury_report_dates, 1, "day 2 holds no rows now");
+        assert_eq!(coverage.last_injury_report, Some(day1));
+    }
 }

@@ -15,8 +15,10 @@ use crate::application::continuation::{self, ContinuationUseCaseError};
 use crate::application::imports::{self, Provenance};
 use crate::application::jobs::specs::{AlphaJob, BacktestJob, PlayoffJob, SeasonJob};
 use crate::application::jobs::{self, Limits, Submit};
+use crate::application::players::{self, PlayerSyncKind};
 use crate::application::ports::{
-    AnalysisStore, GameLog, ImportLog, JobStore, LanguageModel, ModelError, ResultsSource,
+    AnalysisStore, GameLog, ImportLog, JobStore, LanguageModel, ModelError, PlayerStore,
+    ResultsSource,
 };
 use crate::application::reports::{self, Fetching, PlayedGame, ReportError};
 use crate::application::{dashboard, dynasty};
@@ -28,7 +30,7 @@ use crate::domain::eras::{
     self, Dimension, Facet, GroupQuery, Scope, DYNASTY_GAP, DYNASTY_TITLES, MAX_DIMENSIONS,
     MAX_FACETS,
 };
-use crate::domain::ids::SeasonYear;
+use crate::domain::ids::{PlayerId, SeasonYear};
 use crate::domain::models::{JobKind, SimulationJob};
 use crate::domain::playoffs::bracket::ModelSpec;
 use crate::domain::playoffs::season::SeasonParams;
@@ -1161,6 +1163,186 @@ pub async fn coverage(State(app): State<AppState>) -> ApiResult<Value> {
             })
         }),
     })))
+}
+
+// ---------------------------------------------------------------------------------------
+// Players, box scores and injury reports
+// ---------------------------------------------------------------------------------------
+
+/// The longest name query the search accepts; longer ones are cut, not rejected.
+const PLAYER_QUERY_MAX: usize = 80;
+const PLAYER_SEARCH_LIMIT: i64 = 25;
+
+#[derive(Deserialize)]
+pub struct PlayerSearchQuery {
+    #[serde(default)]
+    pub q: String,
+}
+
+/// Players whose name contains `q` (at least two characters), at most 25.
+pub async fn players_search(
+    State(app): State<AppState>,
+    Query(q): Query<PlayerSearchQuery>,
+) -> ApiResult<Value> {
+    let query: String = q.q.trim().chars().take(PLAYER_QUERY_MAX).collect();
+    if query.chars().count() < 2 {
+        return Err(ApiError::bad_request(
+            "q must hold at least two characters of the player's name",
+        ));
+    }
+    let players = app
+        .store
+        .search_players(&query, PLAYER_SEARCH_LIMIT)
+        .await?;
+    Ok(Json(json!({ "query": query, "players": players })))
+}
+
+fn player_id(raw: i32) -> Result<PlayerId, ApiError> {
+    if raw <= 0 {
+        return Err(ApiError::bad_request("the player id must be positive"));
+    }
+    Ok(PlayerId::new(raw))
+}
+
+/// One player with the seasons he appeared in.
+pub async fn player(State(app): State<AppState>, Path(id): Path<i32>) -> ApiResult<Value> {
+    let id = player_id(id)?;
+    let player = app
+        .store
+        .player(id)
+        .await?
+        .ok_or_else(|| ApiError::not_found(format!("no player {id}")))?;
+    let seasons = app.store.player_seasons(id).await?;
+    Ok(Json(json!({ "player": player, "seasons": seasons })))
+}
+
+#[derive(Deserialize)]
+pub struct PlayerGamesQuery {
+    pub season: Option<String>,
+}
+
+/// A player's box-score lines in one season (the latest stored season when none is given).
+pub async fn player_games(
+    State(app): State<AppState>,
+    Path(id): Path<i32>,
+    Query(q): Query<PlayerGamesQuery>,
+) -> ApiResult<Value> {
+    let id = player_id(id)?;
+    let player = app
+        .store
+        .player(id)
+        .await?
+        .ok_or_else(|| ApiError::not_found(format!("no player {id}")))?;
+    let season = match season_param(q.season.as_deref(), "season")? {
+        Some(s) => Some(s),
+        None => app.store.player_seasons(id).await?.last().map(|s| s.season),
+    };
+    let games = match season {
+        Some(s) => app.store.player_appearances(id, s).await?,
+        None => vec![],
+    };
+    Ok(Json(
+        json!({ "player": player, "season": season, "games": games }),
+    ))
+}
+
+/// Every stored box-score line of one game.
+pub async fn game_box_score(
+    State(app): State<AppState>,
+    Path(game_id): Path<i64>,
+) -> ApiResult<Value> {
+    if game_id <= 0 {
+        return Err(ApiError::bad_request("the game id must be positive"));
+    }
+    let lines = app.store.game_appearances(game_id).await?;
+    Ok(Json(json!({ "game_id": game_id, "lines": lines })))
+}
+
+#[derive(Deserialize)]
+pub struct InjuriesQuery {
+    pub date: Option<NaiveDate>,
+}
+
+/// The injury report stored for `date` (the latest stored report when none is given).
+pub async fn injuries(
+    State(app): State<AppState>,
+    Query(q): Query<InjuriesQuery>,
+) -> ApiResult<Value> {
+    let date = match q.date {
+        Some(d) => Some(d),
+        None => app.store.latest_injury_report_date().await?,
+    };
+    let lines = match date {
+        Some(d) => app.store.injury_report(d).await?,
+        None => vec![],
+    };
+    Ok(Json(json!({ "date": date, "lines": lines })))
+}
+
+#[derive(Deserialize)]
+pub struct PlayerDataQuery {
+    pub season: Option<String>,
+}
+
+/// Coverage of the player tables, the fetches of one season and the sync configuration.
+pub async fn players_data(
+    State(app): State<AppState>,
+    Query(q): Query<PlayerDataQuery>,
+) -> ApiResult<Value> {
+    let coverage = app.store.player_coverage().await?;
+    let season = season_param(q.season.as_deref(), "season")?;
+    let (fetches, dates_missing) = match season {
+        Some(s) => (
+            app.store.box_score_fetches(s).await?,
+            app.store.dates_without_box_scores(s).await?.len(),
+        ),
+        None => (vec![], 0),
+    };
+    Ok(Json(json!({
+        "coverage": coverage,
+        "season": season,
+        "fetches": fetches,
+        "dates_missing": dates_missing,
+        "configured": app.results.is_some(),
+        "daily_sync": app.sync_schedule.is_some() && app.config.player_sync_enabled,
+        "settling_days": players::SETTLING_DAYS,
+        "status_url": "/api/data/players/status",
+    })))
+}
+
+/// Live state of the player sync for the Data page to poll.
+pub async fn players_status(State(app): State<AppState>) -> ApiResult<Value> {
+    Ok(Json(json!(app.player_phase())))
+}
+
+fn start_player_sync(app: &AppState, kind: PlayerSyncKind) -> ApiResult<Value> {
+    match players::start(app.clone(), kind) {
+        Ok(()) => Ok(Json(
+            json!({ "started": true, "kind": kind, "status_url": "/api/data/players/status" }),
+        )),
+        Err(players::StartError::NotConfigured) => Err(ApiError::bad_request(
+            players::StartError::NotConfigured.to_string(),
+        )),
+        Err(e @ players::StartError::AlreadyRunning) => Err(ApiError::conflict(e.to_string())),
+    }
+}
+
+/// Fetch the box scores of every unfetched date of a season, in the background.
+pub async fn players_backfill(
+    State(app): State<AppState>,
+    Json(body): Json<ProjectBody>,
+) -> ApiResult<Value> {
+    start_player_sync(
+        &app,
+        PlayerSyncKind::Backfill {
+            season: body.season,
+        },
+    )
+}
+
+/// Fetch and store today's injury report, in the background.
+pub async fn players_injury_report(State(app): State<AppState>) -> ApiResult<Value> {
+    start_player_sync(&app, PlayerSyncKind::InjuryReport)
 }
 
 // ---------------------------------------------------------------------------------------

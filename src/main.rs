@@ -19,7 +19,7 @@ use nba_elo_simulator::application::ports::LanguageModel;
 use nba_elo_simulator::application::ports::{GameLog, GameStore, ImportLog, JobStore};
 use nba_elo_simulator::application::scheduler::{self, SyncSchedule};
 use nba_elo_simulator::application::state::App;
-use nba_elo_simulator::application::{continuation, imports, recompute};
+use nba_elo_simulator::application::{continuation, imports, players, recompute};
 use nba_elo_simulator::config::{Config, APP_VERSION};
 use nba_elo_simulator::domain::ids::SeasonYear;
 
@@ -54,6 +54,15 @@ enum Command {
     SyncResults {
         /// Season end year, for example 2026 for 2025-26
         season: i32,
+    },
+    /// Fetch the box scores of every unfetched date of a season from BALLDONTLIE (needs
+    /// BALLDONTLIE_API_KEY and a tier with box scores); resumes where a previous run stopped
+    BackfillPlayers {
+        /// Season end year, for example 2026 for 2025-26
+        season: i32,
+        /// Also store today's injury report
+        #[arg(long)]
+        injuries: bool,
     },
     /// Container health check: GET /healthz on the bound address (exit 0 when healthy)
     Healthcheck,
@@ -180,6 +189,44 @@ async fn main() -> anyhow::Result<()> {
             let today = chrono::Utc::now().with_timezone(&zone).date_naive();
             let outcome =
                 continuation::sync_results(&store, &results, season, today, &progress).await?;
+            println!("{}", serde_json::to_string_pretty(&outcome)?);
+            Ok(())
+        }
+        Command::BackfillPlayers { season, injuries } => {
+            let season = SeasonYear::try_new(season)?;
+            let results = results.ok_or_else(|| {
+                anyhow::anyhow!(
+                    "BALLDONTLIE_API_KEY must be set to fetch box scores (see .env.example)"
+                )
+            })?;
+            let progress = |p: players::PlayerProgress| {
+                eprintln!(
+                    "dates: {}/{}{} lines: {} requests: {}{}",
+                    p.dates_done,
+                    p.dates_total,
+                    p.current_date
+                        .map(|d| format!(" ({d})"))
+                        .unwrap_or_default(),
+                    p.lines,
+                    p.fetch.requests,
+                    p.fetch
+                        .waiting
+                        .map(|w| format!(" (next request in {}s)", w.as_secs()))
+                        .unwrap_or_default()
+                );
+            };
+            let mut outcome = players::backfill_season(&store, &results, season, &progress).await?;
+            if injuries {
+                let zone: chrono_tz::Tz = config
+                    .results_sync_timezone
+                    .trim()
+                    .parse()
+                    .unwrap_or(chrono_tz::America::New_York);
+                let today = chrono::Utc::now().with_timezone(&zone).date_naive();
+                let lines =
+                    players::fetch_injury_report(&store, &results, today, &progress).await?;
+                outcome.injury_report = Some((today, lines));
+            }
             println!("{}", serde_json::to_string_pretty(&outcome)?);
             Ok(())
         }

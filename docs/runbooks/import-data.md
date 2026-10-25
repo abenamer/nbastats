@@ -63,6 +63,19 @@ Command line alternative, for an external scheduler:
 
     docker compose exec nba-app nba-elo-simulator sync-results 2026
 
+## Player data
+
+With a BALLDONTLIE tier that serves box scores, the application also stores every player's line in every stored game and the league's injury report, day by day; see [Player data](/concepts/player-data.md).
+
+* On the Data page, enter the season end year and click **Backfill box scores**. The run walks the dates with a played game and no fetch yet. A run that stops resumes on the next click with the dates left.
+* Click **Fetch today's injury report** to store the current report under today's date.
+* After each daily results sync that completed, the application fetches the current season's unfetched dates, the last 2 days again, and today's injury report. Set `PLAYER_SYNC_ENABLED=false` to turn this off and keep the buttons.
+* The free tier serves no box scores: the run fails with the API's status, the page says so, and the game results are not affected.
+
+Command line alternative:
+
+    docker compose exec nba-app nba-elo-simulator backfill-players 2026 --injuries
+
 ## Import results and the schedule
 
 1. Prepare a CSV file with this header: `date,home,away,home_score,away_score,neutral,playoff`.

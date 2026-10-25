@@ -15,6 +15,11 @@ use crate::domain::reference;
 
 use super::PostgresStore;
 
+/// Removes the box-score fetch records of dates that no longer have a game, after games
+/// were deleted, so a date stored again is fetched again.
+const DELETE_ORPHAN_FETCHES: &str = "DELETE FROM box_score_fetches f
+     WHERE NOT EXISTS (SELECT 1 FROM games g WHERE g.game_date = f.game_date)";
+
 const GAME_COLS: &str = "id, season, game_date, seq, home_team_id, away_team_id, neutral, game_type, home_score, away_score,
     home_elo_pre, away_elo_pre, home_elo_post, away_elo_post, home_win_prob, elo_source, result_source,
     ref_home_elo_pre, ref_away_elo_pre, ref_home_elo_post, ref_away_elo_post";
@@ -236,10 +241,27 @@ impl GameStore for PostgresStore {
         ratings: &[GameRating],
     ) -> StoreResult<UpsertCounts> {
         let mut tx = self.pool.begin().await?;
-        sqlx::query("DELETE FROM games WHERE season = $1 AND result_source <> 'archive'")
-            .bind(season)
-            .execute(&mut *tx)
-            .await?;
+        // Only the non-archive games the incoming rows no longer hold are deleted; the rest
+        // are updated in place, so their identifiers, and the box-score lines that
+        // reference them, survive a sync.
+        let dates: Vec<NaiveDate> = rows.iter().map(|r| r.date).collect();
+        let homes: Vec<TeamId> = rows.iter().map(|r| r.home).collect();
+        let aways: Vec<TeamId> = rows.iter().map(|r| r.away).collect();
+        let seqs: Vec<i16> = rows.iter().map(|r| r.seq).collect();
+        sqlx::query(
+            "DELETE FROM games g WHERE g.season = $1 AND g.result_source <> 'archive'
+             AND NOT EXISTS (
+                SELECT 1 FROM UNNEST($2::date[], $3::int4[], $4::int4[], $5::int2[]) AS k(d, h, a, q)
+                WHERE k.d = g.game_date AND k.h = g.home_team_id AND k.a = g.away_team_id AND k.q = g.seq)",
+        )
+        .bind(season)
+        .bind(&dates)
+        .bind(&homes)
+        .bind(&aways)
+        .bind(&seqs)
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query(DELETE_ORPHAN_FETCHES).execute(&mut *tx).await?;
         let mut counts = upsert_games_in(&mut tx, import_id, rows).await?;
         let rerated = update_ratings_in(&mut tx, ratings).await? as i64;
         counts.updated += rerated;
@@ -270,6 +292,9 @@ impl GameStore for PostgresStore {
             .execute(&mut *tx)
             .await?
             .rows_affected();
+        // The season's box-score lines went with its games (cascade); the fetch records
+        // of dates without a game go here, so a season stored again is fetched again.
+        sqlx::query(DELETE_ORPHAN_FETCHES).execute(&mut *tx).await?;
         sqlx::query("DELETE FROM seasons WHERE season = $1")
             .bind(season)
             .execute(&mut *tx)

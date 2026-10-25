@@ -1,7 +1,7 @@
 ---
 type: Architecture Decision
 title: Ports at the store, dataset and HTTP boundaries
-description: Why the application defines seven port traits and one concrete store adapter.
+description: Why the application defines twelve port traits and one concrete store adapter.
 tags: [decision, architecture, reas]
 generated: { by: "human:abenamer", at: "2026-10-21T19:00:00Z" }
 ---
@@ -14,8 +14,8 @@ REAS favours ports and adapters for human-maintained code and asks three questio
 
 ## Decision
 
-* The application defines ten ports in `src/application/ports.rs`: `GameLog`, `GameStore`, `ImportLog`, `JobStore`, `AnalysisStore`, `ReportStore`, `DatasetSource`, `ResultsSource`, `LanguageModel`, `ReportSource`.
-* One adapter type, `PostgresStore`, implements the six store ports. `HttpDatasetSource` implements `DatasetSource`. `BalldontlieSource` implements `ResultsSource` (added 2026-10-21 when the archive no longer covered the current season). `OpenRouterModel` implements `LanguageModel` (added 2026-10-23 for the question box, [ADR 0005](0005-question-box-via-openrouter.md)). `EspnReportSource` implements `ReportSource` and `PostgresStore` also implements `ReportStore` (added 2026-10-23 for the game report links).
+* The application defines twelve ports in `src/application/ports.rs`: `GameLog`, `GameStore`, `ImportLog`, `JobStore`, `AnalysisStore`, `ReportStore`, `PlayerStore`, `DatasetSource`, `ResultsSource`, `LanguageModel`, `ReportSource`, `PlayerSource`.
+* One adapter type, `PostgresStore`, implements the seven store ports. `HttpDatasetSource` implements `DatasetSource`. `BalldontlieSource` implements `ResultsSource` (added 2026-10-21 when the archive no longer covered the current season). `OpenRouterModel` implements `LanguageModel` (added 2026-10-23 for the question box, [ADR 0005](0005-question-box-via-openrouter.md)). `EspnReportSource` implements `ReportSource` and `PostgresStore` also implements `ReportStore` (added 2026-10-23 for the game report links). `BalldontlieSource` also implements `PlayerSource` and `PostgresStore` implements `PlayerStore` (added 2026-10-25 for the player data: one adapter, two ports, because the same API and key serve both).
 * `App` holds the concrete adapters. Use cases that benefit from fakes (import, job runner, refresh) take the ports as generic parameters. HTTP handlers call the ports through `app.store`.
 * `main.rs` is the composition root.
 

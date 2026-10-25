@@ -15,6 +15,7 @@ use crate::adapters::dataset::HttpDatasetSource;
 use crate::adapters::espn::EspnReportSource;
 use crate::adapters::openrouter::OpenRouterModel;
 use crate::adapters::postgres::PostgresStore;
+use crate::application::players::PlayerPhase;
 use crate::application::results_sync::SyncPhase;
 use crate::application::scheduler::SyncSchedule;
 use crate::config::Config;
@@ -73,6 +74,9 @@ pub struct App {
     /// Held while a results sync runs (manual or scheduled); at most one at a time.
     pub sync_lock: Arc<tokio::sync::Mutex<()>>,
     sync_phase: std::sync::Mutex<SyncPhase>,
+    /// Held while a player sync runs (backfill, daily run or injury report); at most one.
+    pub player_lock: Arc<tokio::sync::Mutex<()>>,
+    player_phase: std::sync::Mutex<PlayerPhase>,
     pub started_at: chrono::DateTime<chrono::Utc>,
     /// Wakes the job runner when a job is queued.
     pub job_notify: Notify,
@@ -111,6 +115,8 @@ impl App {
             strength_slot: tokio::sync::Semaphore::new(1),
             sync_lock: Arc::new(tokio::sync::Mutex::new(())),
             sync_phase: std::sync::Mutex::new(SyncPhase::Idle),
+            player_lock: Arc::new(tokio::sync::Mutex::new(())),
+            player_phase: std::sync::Mutex::new(PlayerPhase::Idle),
             started_at: chrono::Utc::now(),
             job_notify: Notify::new(),
             cancel_flags: std::sync::Mutex::new(HashMap::new()),
@@ -223,6 +229,17 @@ impl App {
 
     pub fn set_sync_phase(&self, phase: SyncPhase) {
         *self.sync_phase.lock().unwrap_or_else(|e| e.into_inner()) = phase;
+    }
+
+    pub fn player_phase(&self) -> PlayerPhase {
+        self.player_phase
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+    }
+
+    pub fn set_player_phase(&self, phase: PlayerPhase) {
+        *self.player_phase.lock().unwrap_or_else(|e| e.into_inner()) = phase;
     }
 
     /// Drop cached data after an import. The generation moves first, under the season lock,

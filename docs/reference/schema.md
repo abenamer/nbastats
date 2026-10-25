@@ -8,6 +8,9 @@ sources:
   - id: migration
     resource: /migrations/0001_initial_schema.sql
     title: Initial migration
+  - id: players
+    resource: /migrations/0005_players.sql
+    title: Player tables
 ---
 
 # Reference tables
@@ -42,6 +45,17 @@ The import rebuilds these tables for every season it touches.
 | `simulation_jobs` | id (UUID) | Kind, name, status, parameters (JSONB), result (JSONB), seed, versions, timestamps. |
 | `forecasts` | (job, model, season, team) | Backtest forecasts with the information cutoff date. |
 
+# Player data
+
+Added by migration `0005_players`; see [Player data](/concepts/player-data.md).
+
+| Table | Key | Content |
+|-------|-----|---------|
+| `players` | (source, source_id) | Name, position, height, weight, college, country, draft year, round and pick; `updated_at`. |
+| `appearances` | (game, player) | One player's line in one game: team, seconds, points, rebounds (total, offensive, defensive), assists, steals, blocks, turnovers, fouls, field goals, three-pointers and free throws made and attempted. Deleted with the game. |
+| `box_score_fetches` | game date | Source, time of the fetch, lines received, matched and unmatched. |
+| `injury_reports` | (report date, player) | Team, status, expected return date, description, time of the fetch. |
+
 # Indexes
 
-Games are indexed by (season, date), by (season, Elo source), by home team and by away team. Jobs are indexed by status and by kind. The parameters column has a GIN index for containment queries.
+Games are indexed by (season, date), by (season, Elo source), by home team and by away team. Jobs are indexed by status and by kind. The parameters column has a GIN index for containment queries. Appearances are indexed by player and by team; injury reports by player.

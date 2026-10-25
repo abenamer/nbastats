@@ -49,7 +49,7 @@ Every table sorts on a header click: numbers as numbers, text as text, blanks la
 | Season Forecast | `/season` | Every team's probability to reach the play-in, the playoffs, each round and the title. |
 | Dynasty Lab | `/dynasty` | Expected versus actual titles and significance estimates. |
 | Validation | `/validation` | Backtest results, calibration plots, baselines and assumptions. |
-| Data | `/data` | Imports, coverage, refresh controls, database health and version. |
+| Data | `/data` | Imports, coverage, refresh controls, database health and version; the player data (box-score backfill, injury report, player search). |
 | Jobs | `/jobs` | All simulation jobs with status, versions, retry and cancel. |
 
 # Design rules
