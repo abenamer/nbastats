@@ -9,7 +9,7 @@ use sqlx::postgres::{PgArgumentBuffer, PgHasArrayType, PgRow, PgTypeInfo, PgValu
 use sqlx::{Decode, Encode, FromRow, Postgres, Row, Type};
 use uuid::Uuid;
 
-use crate::domain::ids::{FranchiseId, SeasonYear, TeamId};
+use crate::domain::ids::{FranchiseId, PlayerId, SeasonYear, TeamId};
 use crate::domain::models::{
     ChampionshipView, Conference, DataImport, EloSource, Franchise, Game, GameType, ImportStatus,
     JobKind, JobStatus, PlayoffResult, ResultSource, Season, SimulationJob, Team, TeamSeason,
@@ -54,6 +54,8 @@ macro_rules! int_newtype {
 }
 
 int_newtype!(TeamId, |raw| Ok(TeamId::new(raw)), |id: TeamId| id.as_i32());
+int_newtype!(PlayerId, |raw| Ok(PlayerId::new(raw)), |id: PlayerId| id
+    .as_i32());
 int_newtype!(
     FranchiseId,
     |raw| Ok(FranchiseId::new(raw)),

@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
 
-use crate::domain::ids::{FranchiseId, SeasonYear, TeamId};
+use crate::domain::ids::{FranchiseId, PlayerId, SeasonYear, TeamId};
 use crate::domain::models::{
     ChampionshipView, DataImport, EloSource, Franchise, Game, GameType, JobEvent, JobKind,
     JobStatus, PlayoffResult, ResultSource, Season, SimulationJob, Team, TeamSeason,
@@ -658,4 +658,222 @@ pub struct ReportListing {
 pub trait ReportSource: Send + Sync {
     fn name(&self) -> &'static str;
     async fn reports_on(&self, date: NaiveDate) -> Result<ReportListing, SourceError>;
+}
+
+// ---------------------------------------------------------------------------------------
+// Players (the player catalogue, box scores and injury reports)
+// ---------------------------------------------------------------------------------------
+
+/// A player as a player source describes it, keyed by the source's own identifier.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct PlayerRecord {
+    pub source_id: i64,
+    pub first_name: String,
+    pub last_name: String,
+    pub position: Option<String>,
+    pub height: Option<String>,
+    pub weight: Option<String>,
+    pub college: Option<String>,
+    pub country: Option<String>,
+    pub draft_year: Option<i32>,
+    pub draft_round: Option<i32>,
+    pub draft_number: Option<i32>,
+}
+
+/// One player's line in a box score, with the game named by its date and the player's
+/// team (a team plays at most one game a day). Counting stats are `None` when the source
+/// does not have them, as for the early decades.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct BoxScoreLine {
+    pub date: NaiveDate,
+    /// The player's team, in the dataset's code convention. The stored game decides the
+    /// team's side.
+    pub team_code: String,
+    pub player: PlayerRecord,
+    /// Playing time in seconds; `None` when the source gives no minutes.
+    pub seconds: Option<i32>,
+    pub pts: Option<i32>,
+    pub reb: Option<i32>,
+    pub oreb: Option<i32>,
+    pub dreb: Option<i32>,
+    pub ast: Option<i32>,
+    pub stl: Option<i32>,
+    pub blk: Option<i32>,
+    pub tov: Option<i32>,
+    pub pf: Option<i32>,
+    pub fgm: Option<i32>,
+    pub fga: Option<i32>,
+    pub fg3m: Option<i32>,
+    pub fg3a: Option<i32>,
+    pub ftm: Option<i32>,
+    pub fta: Option<i32>,
+}
+
+/// One line of the injury report: a player, his team, his status and the return date when
+/// the source gives one.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct InjuryRecord {
+    pub player: PlayerRecord,
+    pub team_code: String,
+    pub status: String,
+    pub return_date: Option<NaiveDate>,
+    pub description: Option<String>,
+}
+
+/// Where players, box scores and injury reports come from. The concrete adapter is
+/// `adapters::balldontlie::BalldontlieSource`, the same adapter as the results source.
+#[allow(async_fn_in_trait)]
+pub trait PlayerSource: Send + Sync {
+    fn name(&self) -> &'static str;
+    /// Every box-score line of the games played on `date`.
+    async fn box_scores_on(
+        &self,
+        date: NaiveDate,
+        progress: &dyn FetchProgressSink,
+    ) -> Result<Vec<BoxScoreLine>, SourceError>;
+    /// The current injury report.
+    async fn injury_report(
+        &self,
+        progress: &dyn FetchProgressSink,
+    ) -> Result<Vec<InjuryRecord>, SourceError>;
+}
+
+/// A stored player.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Player {
+    pub id: PlayerId,
+    pub source: String,
+    pub source_id: i64,
+    pub first_name: String,
+    pub last_name: String,
+    pub position: Option<String>,
+    pub height: Option<String>,
+    pub weight: Option<String>,
+    pub college: Option<String>,
+    pub country: Option<String>,
+    pub draft_year: Option<i32>,
+    pub draft_round: Option<i32>,
+    pub draft_number: Option<i32>,
+}
+
+/// A stored box-score line, joined to its game.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Appearance {
+    pub game_id: i64,
+    pub season: SeasonYear,
+    pub game_date: NaiveDate,
+    pub game_type: GameType,
+    pub player_id: PlayerId,
+    pub team_id: TeamId,
+    pub team_code: String,
+    pub opponent_code: String,
+    pub home: bool,
+    pub seconds: Option<i32>,
+    pub pts: Option<i32>,
+    pub reb: Option<i32>,
+    pub oreb: Option<i32>,
+    pub dreb: Option<i32>,
+    pub ast: Option<i32>,
+    pub stl: Option<i32>,
+    pub blk: Option<i32>,
+    pub tov: Option<i32>,
+    pub pf: Option<i32>,
+    pub fgm: Option<i32>,
+    pub fga: Option<i32>,
+    pub fg3m: Option<i32>,
+    pub fg3a: Option<i32>,
+    pub ftm: Option<i32>,
+    pub fta: Option<i32>,
+}
+
+/// What one date's box-score fetch stored: the lines matched to a stored game, and the
+/// lines whose game or team the store does not have.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
+pub struct BoxScoreCounts {
+    pub lines: i64,
+    pub matched: i64,
+    pub unmatched: i64,
+    pub players_upserted: i64,
+}
+
+/// A date whose box scores were fetched, for the resumable backfill.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct BoxScoreFetch {
+    pub game_date: NaiveDate,
+    pub source: String,
+    pub fetched_at: chrono::DateTime<chrono::Utc>,
+    pub counts: BoxScoreCounts,
+}
+
+/// A stored injury-report line.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct InjuryLine {
+    pub report_date: NaiveDate,
+    pub player_id: PlayerId,
+    pub player_name: String,
+    pub team_code: String,
+    pub status: String,
+    pub return_date: Option<NaiveDate>,
+    pub description: Option<String>,
+}
+
+/// Counts of the player tables, for the Data page.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Default)]
+pub struct PlayerCoverage {
+    pub players: i64,
+    pub appearances: i64,
+    pub dates_fetched: i64,
+    pub first_date_fetched: Option<NaiveDate>,
+    pub last_date_fetched: Option<NaiveDate>,
+    pub injury_report_dates: i64,
+    pub last_injury_report: Option<NaiveDate>,
+}
+
+#[allow(async_fn_in_trait)]
+pub trait PlayerStore: Send + Sync {
+    /// Store one date's box scores in one transaction: upsert the players seen, insert the
+    /// lines matched to stored games (replacing that date's lines), and record the fetch.
+    async fn save_box_scores(
+        &self,
+        date: NaiveDate,
+        source: &str,
+        lines: &[BoxScoreLine],
+    ) -> StoreResult<BoxScoreCounts>;
+    /// The dates in `season` that have a played game in the store and no box-score fetch.
+    async fn dates_without_box_scores(&self, season: SeasonYear) -> StoreResult<Vec<NaiveDate>>;
+    async fn box_score_fetches(&self, season: SeasonYear) -> StoreResult<Vec<BoxScoreFetch>>;
+    /// Replace the injury report of `date` in one transaction, upserting the players seen.
+    async fn save_injury_report(
+        &self,
+        date: NaiveDate,
+        source: &str,
+        lines: &[InjuryRecord],
+    ) -> StoreResult<i64>;
+    async fn injury_report(&self, date: NaiveDate) -> StoreResult<Vec<InjuryLine>>;
+    async fn latest_injury_report_date(&self) -> StoreResult<Option<NaiveDate>>;
+    /// Players whose name contains `query` (case-insensitive), at most `limit`.
+    async fn search_players(&self, query: &str, limit: i64) -> StoreResult<Vec<Player>>;
+    async fn player(&self, id: PlayerId) -> StoreResult<Option<Player>>;
+    /// A player's lines in `season`, in game order.
+    async fn player_appearances(
+        &self,
+        id: PlayerId,
+        season: SeasonYear,
+    ) -> StoreResult<Vec<Appearance>>;
+    /// The seasons a player appeared in, with his team codes and game counts.
+    async fn player_seasons(&self, id: PlayerId) -> StoreResult<Vec<PlayerSeason>>;
+    /// Every line of one stored game.
+    async fn game_appearances(&self, game_id: i64) -> StoreResult<Vec<Appearance>>;
+    async fn player_coverage(&self) -> StoreResult<PlayerCoverage>;
+}
+
+/// One season of a player's career: the team, the games and the minutes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct PlayerSeason {
+    pub season: SeasonYear,
+    pub team_code: String,
+    pub games: i64,
+    pub playoff_games: i64,
+    pub seconds: Option<i64>,
+    pub pts: Option<i64>,
 }

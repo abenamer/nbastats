@@ -65,6 +65,15 @@ pub fn router(app: State) -> Router {
         .route("/data/sync/status", get(api::sync_status))
         .route("/data/seasons/{season}", delete(api::remove_season))
         .route("/data/coverage", get(api::coverage))
+        .route("/data/players", get(api::players_data))
+        .route("/data/players/status", get(api::players_status))
+        .route("/data/players/backfill", post(api::players_backfill))
+        .route("/data/players/injuries", post(api::players_injury_report))
+        .route("/players", get(api::players_search))
+        .route("/players/{id}", get(api::player))
+        .route("/players/{id}/games", get(api::player_games))
+        .route("/games/{id}/box-score", get(api::game_box_score))
+        .route("/injuries", get(api::injuries))
         .route("/ask/status", get(api::ask_status))
         .route(
             "/ask",

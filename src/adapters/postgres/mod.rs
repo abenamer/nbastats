@@ -8,6 +8,7 @@ mod analysis_store;
 mod game_store;
 mod import_log;
 mod job_store;
+mod player_store;
 pub mod records;
 mod report_store;
 

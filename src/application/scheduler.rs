@@ -14,7 +14,8 @@ use crate::domain::ids::SeasonYear;
 use crate::domain::models::ImportStatus;
 
 use super::continuation::ContinuationUseCaseError;
-use super::ports::{ImportLog, ResultsSource};
+use super::players;
+use super::ports::{ImportLog, PlayerSource, ResultsSource};
 use super::results_sync::{self, Trigger};
 use super::state::App;
 
@@ -143,6 +144,19 @@ pub async fn sync_current<R: ResultsSource>(app: &App, source: &R) -> Option<Sea
     None
 }
 
+/// The daily player sync of the current season, after the results sync marked the games
+/// played. Off when `PLAYER_SYNC_ENABLED` is false.
+async fn sync_players<P: PlayerSource>(app: &App, source: &P) {
+    let Some(schedule) = app.sync_schedule else {
+        return;
+    };
+    if !app.config.player_sync_enabled {
+        return;
+    }
+    let season = current_season(Utc::now().with_timezone(&schedule.zone).date_naive());
+    players::sync_scheduled(app, source, season).await;
+}
+
 /// Whether a completed sync from `source` has run since the last scheduled instant.
 async fn synced_since<S: ImportLog>(
     store: &S,
@@ -160,6 +174,9 @@ pub async fn run(app: Arc<App>) {
     let (Some(source), Some(schedule)) = (app.results.as_ref(), app.sync_schedule) else {
         return;
     };
+    if app.config.player_sync_enabled {
+        info!("daily player sync (box scores and injury report) follows the results sync");
+    }
     info!(time = %schedule.time, zone = %schedule.zone, "daily results sync scheduled");
     // Let the server finish starting before the first network call.
     tokio::select! {
@@ -167,11 +184,19 @@ pub async fn run(app: Arc<App>) {
         _ = app.shutdown.cancelled() => return,
     }
     let now = Utc::now();
-    match synced_since(&app.store, source.name(), schedule.previous_run(now)).await {
+    match synced_since(
+        &app.store,
+        ResultsSource::name(source),
+        schedule.previous_run(now),
+    )
+    .await
+    {
         Ok(true) => {}
         Ok(false) => {
             info!("no results sync since the last scheduled time; syncing now");
-            sync_current(&app, source).await;
+            if sync_current(&app, source).await.is_some() {
+                sync_players(&app, source).await;
+            }
         }
         Err(e) => warn!(error = %e, "could not read the import log; skipping catch-up"),
     }
@@ -183,7 +208,11 @@ pub async fn run(app: Arc<App>) {
             _ = tokio::time::sleep(wait) => {}
             _ = app.shutdown.cancelled() => break,
         }
-        sync_current(&app, source).await;
+        // The player sync follows a results sync that completed: after a failure the
+        // source is likely down or over quota, and the box scores can wait a day.
+        if sync_current(&app, source).await.is_some() {
+            sync_players(&app, source).await;
+        }
     }
     info!("results sync scheduler stopped");
 }

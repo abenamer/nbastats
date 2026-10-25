@@ -55,13 +55,14 @@ A projection is a placeholder. Its schedule is not the real schedule. Use it to 
 
 # Rules
 
-* A results import, a sync or a projection replaces every game of the season whose result did not come from the archive, then computes every rating of the season again from its start ratings, archive games included. The archive games keep their rows and receive the new ratings; the replacement and the ratings are written in one transaction, so a failure leaves the season as it was.
+* A results import, a sync or a projection stores the season's games again: a game the incoming data holds is updated in place, a non-archive game it no longer holds is deleted, so a game keeps its identifier and its box-score lines. Then every rating of the season is computed again from its start ratings, archive games included. The archive games keep their rows and receive the new ratings; the replacement and the ratings are written in one transaction, so a failure leaves the season as it was.
 * Archive games always stand. An incoming game that matches an archive game by its date and its two teams, in either order (sources disagree on the home team at a neutral site, such as the NBA Cup final), is dropped. A source or file that adds no game beyond the archive stores nothing. A projection or a removal of a season with archive games is refused.
 * After you complete a season, sync the next season again: its start ratings come from the final ratings of the completed season.
 * An archive import stores the results and the reference ratings, then computes every season's ratings again from the first season, because an archive correction can move every later chain. The ratings of every season are written in one transaction: when the computation fails, no rating changes, the import is marked failed, and the games stay stored for a later `recompute`. The identical file imported again changes nothing.
 * The application needs the previous season in the store, or archive games of the season itself to seed from. The start rating of each franchise comes from its last game of the previous season.
 * Team codes must exist in the reference table. Unknown codes stop the import with a message.
 * The BALLDONTLIE adapter maps three abbreviations to the dataset's codes: BKN to BRK, CHA to CHO, PHX to PHO. A game counts as played only when its status is `Final`. The adapter paces its requests to the plan's quota and waits when the API answers with status 429.
+* A results sync updates the season's non-archive games in place and deletes only the games the source no longer lists. The box-score lines therefore stay attached. A completed daily results sync is followed by the player sync when `PLAYER_SYNC_ENABLED` is true: the season's box scores and today's injury report; see [Player data](/concepts/player-data.md). The ratings do not use them yet.
 
 # Limits
 

@@ -30,6 +30,8 @@ pub struct Config {
     pub results_sync_enabled: bool,
     pub results_sync_time: String,
     pub results_sync_timezone: String,
+    /// Fetch box scores and the injury report after the daily results sync.
+    pub player_sync_enabled: bool,
     /// OpenRouter API key for the question box; `None` disables it.
     pub openrouter_api_key: Option<String>,
     pub openrouter_base_url: String,
@@ -102,6 +104,9 @@ impl Config {
             env::var("RESULTS_SYNC_TIME").unwrap_or_else(|_| "04:00".to_string());
         let results_sync_timezone =
             env::var("RESULTS_SYNC_TIMEZONE").unwrap_or_else(|_| "America/New_York".to_string());
+        let player_sync_enabled = env::var("PLAYER_SYNC_ENABLED")
+            .map(|v| matches!(v.to_ascii_lowercase().as_str(), "1" | "true" | "yes"))
+            .unwrap_or(true);
         let openrouter_api_key = env::var("OPENROUTER_API_KEY")
             .ok()
             .map(|k| k.trim().to_string())
@@ -143,6 +148,7 @@ impl Config {
             results_sync_enabled,
             results_sync_time,
             results_sync_timezone,
+            player_sync_enabled,
             openrouter_api_key,
             openrouter_base_url,
             openrouter_model,
@@ -211,6 +217,7 @@ mod tests {
             results_sync_enabled: false,
             results_sync_time: "04:00".to_string(),
             results_sync_timezone: "America/New_York".to_string(),
+            player_sync_enabled: false,
             openrouter_api_key: None,
             openrouter_base_url: String::new(),
             openrouter_model: String::new(),

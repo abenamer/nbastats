@@ -26,6 +26,26 @@ impl fmt::Display for TeamId {
     }
 }
 
+/// Database key of a player (one row per player of the player source).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct PlayerId(i32);
+
+impl PlayerId {
+    pub const fn new(raw: i32) -> Self {
+        Self(raw)
+    }
+    pub const fn as_i32(self) -> i32 {
+        self.0
+    }
+}
+
+impl fmt::Display for PlayerId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "player#{}", self.0)
+    }
+}
+
 /// Database key of a franchise (the organisation through relocations and renamings).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(transparent)]

@@ -24,6 +24,20 @@
   <form id="resultsForm" class="row"><input type="file" id="resultsFile" accept=".csv,.gz"><button type="submit">Upload results / schedule CSV for that season</button></form>
   <p class="muted small">CSV layout: <code>date,home,away,home_score,away_score,neutral,playoff</code>. Leave the scores empty for games not yet played. Team codes as in the Elo Explorer (OKC, GSW, …). Uploading again replaces the season's games that did not come from the archive; archive games always stand.</p>
 </section>
+<section class="panel"><h2>Players, box scores and injury reports</h2>
+  <p class="small">Player data comes from the BALLDONTLIE API: every player's box-score line in every stored game (minutes, points, rebounds, assists, steals, blocks, turnovers, fouls, shooting), matched to the game by date and team, and the league's injury report, kept day by day. Box scores need a BALLDONTLIE tier that serves them; the free tier does not. A backfill walks the dates of a season that have a played game and no fetch yet, so a run that stops resumes where it stopped. After the daily results sync the application fetches the last days' box scores and today's injury report.</p>
+  <div id="playerCoverage" class="kv"></div>
+  <div class="row">
+    <label>Season (end year) <input id="playerSeason" type="number" min="1947" max="2100" style="width:6rem"></label>
+    <button id="playerBackfill">Backfill box scores</button>
+    <button id="playerInjuries">Fetch today's injury report</button>
+    <span id="playerHint" class="muted small"></span>
+  </div>
+  <div id="playerStatus" class="small" style="margin:.5rem 0"></div>
+  <div class="row"><label>Find a player <input id="playerQuery" type="search" placeholder="at least two letters of the name" style="width:16rem"></label></div>
+  <div id="playerResults" class="table-wrap"></div>
+  <details><summary class="small">Dates fetched for that season</summary><div id="playerFetches" class="table-wrap"></div></details>
+</section>
 <section class="panel"><h2>Season coverage</h2><div id="coverage" class="table-wrap"></div></section>
 <section class="panel"><h2>Import history</h2><div id="imports" class="table-wrap"></div></section>
 {% endblock %}
