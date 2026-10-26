@@ -39,7 +39,7 @@ The groups are derived, not stored. On the group nights every game is a group ga
 
 # Limits
 
-* Knockout games the schedule does not hold yet are not in the simulated standings. The two games each team plays in Cup week are a small share of a season. Their effect on the seeding is below the noise of the forecast.
+* Knockout games the schedule does not hold yet are not in the simulated standings. The league publishes 80 games per team and adds the two Cup-week games in December, once the knockout field is known. Until then a stored schedule holds 80 games, and the forecast simulates those. The two games each team plays in Cup week are a small share of a season. Their effect on the seeding is below the noise of the forecast. The question box says so when a schedule is short (`domain::cup::games_to_be_scheduled`).
 * Margins are simulated for the tiebreaks only, from a simple normal model. The forecast never uses them elsewhere.
 * The curated dates and the derived groups are only as good as the stored schedule. A season whose schedule is a projection, not the league's, derives groups from that projection, and the shape check usually fails.
 * The season model version is `elo-season-1.2` from this change. A result stored under an earlier version has no Cup forecast.

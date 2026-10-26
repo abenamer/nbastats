@@ -21,9 +21,10 @@ use serde::Serialize;
 use serde_json::{json, Value};
 use tracing::info;
 
+use crate::domain::cup;
 use crate::domain::elo;
 use crate::domain::ids::SeasonYear;
-use crate::domain::models::{Game, Team};
+use crate::domain::models::{Game, GameType, Team};
 
 use super::ports::{
     AnalysisStore, ChatMessage, ChatRequest, GameLog, LanguageModel, ModelError, StoreError,
@@ -224,7 +225,9 @@ pub fn system_prompt(today: NaiveDate, latest: Option<SeasonYear>) -> String {
          injured players back (\"fully healthy\", \"everyone available\"), call team_availability \
          for the Elo the absences cost and forecast_effect for what that means for the season; a \
          worth is in Elo points, and 28 Elo is about one point of margin per game. Name the date \
-         a rating stands at (rating_date), and say so when it is a preseason rating. Answer in a \
+         a rating stands at (rating_date), and say so when it is a preseason rating. When a tool \
+         result carries a schedule_note, say so: the missing games are the Cup-week games the \
+         league adds in December. Answer in a \
          few short sentences with the numbers, the season labels and the team names; no markdown \
          tables."
     )
@@ -726,6 +729,11 @@ impl<'a, S: GameLog + AnalysisStore, P: PlayerLookups> Tools<'a, S, P> {
             )));
         }
         let total = mine.len();
+        let on_schedule = games
+            .iter()
+            .filter(|g| g.involves(team.id) && g.game_type == GameType::Regular)
+            .count();
+        let schedule_note = cup::schedule_note(season, on_schedule);
         let rows: Vec<Value> = mine
             .iter()
             .take(MAX_GAME_ROWS)
@@ -740,6 +748,8 @@ impl<'a, S: GameLog + AnalysisStore, P: PlayerLookups> Tools<'a, S, P> {
             "season": season.end_year(), "label": season.label(), "team": code, "name": team.name,
             "games": total, "returned": rows.len(), "wins": wins, "losses": losses,
             "truncated": total > rows.len(),
+            "regular_season_games_on_schedule": on_schedule,
+            "schedule_note": schedule_note,
             "rows": rows,
         }))
     }
