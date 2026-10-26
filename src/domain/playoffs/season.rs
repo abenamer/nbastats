@@ -165,6 +165,9 @@ pub struct TeamForecast {
     /// The mean rating penalty over the team's remaining games from the absences given.
     #[serde(default)]
     pub absence_penalty: f64,
+    /// The penalty on the cutoff date: what the team plays without today.
+    #[serde(default)]
+    pub absence_penalty_today: f64,
     pub expected_wins: f64,
     pub p_top6: f64,
     pub p_play_in: f64,
@@ -1549,10 +1552,14 @@ pub fn run<P: Progress + ?Sized>(
                         st.knockout_sim.push((g.home, g.away, home_won));
                     }
                     if let Some(k) = params.regular_season_k {
-                        // The update expects the archive's bonus, as the real update will.
+                        // The update expects the archive's bonus, as the real update will,
+                        // and it expects the penalized sides: a known absence is a temporary
+                        // condition, not a change in the team's quality, so it moves the
+                        // standings and not the rating. The team plays at its full rating
+                        // again from the day the absence ends.
                         let expected = elo::game_probability(
-                            st.elo[g.home],
-                            st.elo[g.away],
+                            st.elo[g.home] - home_penalty,
+                            st.elo[g.away] - away_penalty,
                             true,
                             g.neutral,
                             elo::DEFAULT_HOME_ADVANTAGE,
@@ -1763,6 +1770,7 @@ pub fn run<P: Progress + ?Sized>(
                 losses: setup.base_losses[i],
                 remaining_games: remaining_of(&setup, i),
                 absence_penalty: penalty_of(&setup, i),
+                absence_penalty_today: worth::penalty(&params.absences, setup.ids[i], as_of),
                 expected_wins: acc.wins_sum[i] / it,
                 p_top6: acc.top6[i] as f64 / it,
                 p_play_in: acc.play_in[i] as f64 / it,
@@ -2020,6 +2028,51 @@ mod tests {
         (teams, games)
     }
 
+    /// The thirty teams of `cup_season` with a long schedule: every pair meets once, one
+    /// game a day per team at most, from 2023-11-02 on; nothing played. The Cup setup is
+    /// rejected (cross-conference pairs on the group nights), so every game is an ordinary one.
+    fn long_season() -> (HashMap<TeamId, Team>, Vec<Game>) {
+        use crate::domain::models::{EloSource, ResultSource};
+        let (teams, _) = cup_season(2024, false, false);
+        let start = NaiveDate::from_ymd_opt(2023, 11, 2).unwrap();
+        let mut games = Vec::new();
+        let mut seq: i16 = 1;
+        // A round-robin by the circle method: 29 rounds of 15 games, one round per day.
+        let n = 30usize;
+        for round in 0..n - 1 {
+            for k in 0..n / 2 {
+                let a = if k == 0 { n - 1 } else { (round + k) % (n - 1) };
+                let b = (round + n - 1 - k) % (n - 1);
+                let (home, away) = if round % 2 == 0 { (a, b) } else { (b, a) };
+                games.push(Game {
+                    id: i64::from(seq),
+                    season: SeasonYear::of(2024),
+                    game_date: start + chrono::Duration::days(round as i64),
+                    seq,
+                    home_team_id: TeamId::new(home as i32 + 1),
+                    away_team_id: TeamId::new(away as i32 + 1),
+                    neutral: false,
+                    game_type: GameType::Regular,
+                    home_score: None,
+                    away_score: None,
+                    home_elo_pre: 1500.0,
+                    away_elo_pre: 1500.0,
+                    home_elo_post: 1500.0,
+                    away_elo_post: 1500.0,
+                    home_win_prob: None,
+                    elo_source: EloSource::Computed,
+                    result_source: ResultSource::Results,
+                    ref_home_elo_pre: None,
+                    ref_away_elo_pre: None,
+                    ref_home_elo_post: None,
+                    ref_away_elo_post: None,
+                });
+                seq += 1;
+            }
+        }
+        (teams, games)
+    }
+
     fn cup_params(season: i32, as_of: &str) -> SeasonParams {
         SeasonParams {
             season: SeasonYear::of(season),
@@ -2057,6 +2110,7 @@ mod tests {
         let row = hurt.teams.iter().find(|t| t.team_id == team).unwrap();
         assert_eq!(hurt.absences_applied, 1);
         assert!((row.absence_penalty - 150.0).abs() < 1e-9);
+        assert!((row.absence_penalty_today - 150.0).abs() < 1e-9);
         // At 150 Elo down the win chance of an even game falls from a half to about 0.3,
         // whatever the number of games left in the fixture.
         assert!(
@@ -2085,6 +2139,63 @@ mod tests {
         params.absences[0].to = params.absences[0].from;
         params.absences[0].se_elo = 1000.0;
         assert!(params.validate(10_000).is_err());
+    }
+
+    #[test]
+    fn an_absence_costs_the_same_wins_early_or_late_because_the_rating_does_not_slide() {
+        use crate::domain::simulation::progress::Silent;
+        let (teams, games) = long_season();
+        let mut params = cup_params(2024, "2023-11-01");
+        params.iterations = 4000;
+        // A large K and a capped penalty make any slide of the rating large and quick.
+        params.regular_season_k = Some(100.0);
+        let base = run(&params, &games, &teams, &Silent).unwrap();
+        let team = base.teams[0].team_id;
+        let base_wins = base.teams[0].expected_wins;
+        let dates: Vec<NaiveDate> = games
+            .iter()
+            .filter(|g| {
+                g.game_type == GameType::Regular
+                    && g.game_date > NaiveDate::from_ymd_opt(2023, 11, 1).unwrap()
+                    && (g.home_team_id == team || g.away_team_id == team)
+            })
+            .map(|g| g.game_date)
+            .collect();
+        assert_eq!(dates.len(), 29);
+        let span = |from: NaiveDate, to: NaiveDate| {
+            vec![worth::Absence {
+                team_id: team,
+                from,
+                to,
+                elo: worth::MAX_ABSENCE_ELO,
+                player_id: None,
+                se_elo: 0.0,
+            }]
+        };
+        // The same twenty-game absence at the start of the schedule and at its end.
+        params.absences = span(dates[0], dates[19]);
+        let early = run(&params, &games, &teams, &Silent).unwrap();
+        params.absences = span(dates[9], dates[28]);
+        let late = run(&params, &games, &teams, &Silent).unwrap();
+        let wins = |f: &SeasonForecast| {
+            f.teams
+                .iter()
+                .find(|t| t.team_id == team)
+                .unwrap()
+                .expected_wins
+        };
+        let (lost_early, lost_late) = (base_wins - wins(&early), base_wins - wins(&late));
+        assert!(
+            lost_early > 0.5 && lost_late > 0.5,
+            "{lost_early} {lost_late}"
+        );
+        // With the rating sliding during the absence, the early absence would cost about a
+        // third more than the late one (the team would play its last nine games under-rated).
+        // It does not: the two differ only by simulation noise.
+        assert!(
+            (lost_early - lost_late).abs() < 0.1 * lost_early.max(lost_late),
+            "early {lost_early} vs late {lost_late}"
+        );
     }
 
     #[test]

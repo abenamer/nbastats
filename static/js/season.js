@@ -48,6 +48,23 @@
   };
   document.getElementById('preseason').addEventListener('change', e => document.getElementById('asOf').disabled = e.target.checked);
   document.getElementById('asOf').disabled = true;
+  // The season in progress defaults to today: that is what "the forecast" means for it.
+  // A past season keeps the preseason default, where the interesting question lives.
+  // The local date, not the UTC one: a US evening is already tomorrow in UTC.
+  const today = new Date(); const pad = n => String(n).padStart(2, '0');
+  const todayIso = `${today.getFullYear()}-${pad(today.getMonth() + 1)}-${pad(today.getDate())}`;
+  const currentSeason = today.getMonth() >= 8 ? today.getFullYear() + 1 : today.getFullYear();
+  let dateTouched = false;
+  document.getElementById('preseason').addEventListener('change', () => { dateTouched = true; });
+  const defaultDate = () => {
+    if (dateTouched) return;
+    const season = parseInt(document.getElementById('season').value);
+    const pre = document.getElementById('preseason'); const asOf = document.getElementById('asOf');
+    if (season === currentSeason) { pre.checked = false; asOf.disabled = false; if (!asOf.value) asOf.value = todayIso; }
+    else { pre.checked = true; asOf.disabled = true; }
+  };
+  document.getElementById('season').addEventListener('change', defaultDate);
+  defaultDate();
   // The regular-season home-court bonus is fitted per season; the field shows the fit as its
   // placeholder and a typed value replaces it. Playoff games keep the archive's 100.
   let advRequest = 0;
@@ -139,7 +156,9 @@
       document.getElementById('note').textContent = `${r.information_cutoff_note} Games used: ${r.games_played}; regular-season games simulated: ${r.games_remaining}; qualification format: ${r.qualification}. ${r.iterations.toLocaleString()} simulated seasons in ${r.elapsed_ms} ms.${provenance(p.season)} ${r.absences_applied ? ` ${r.absences_applied} absence${r.absences_applied === 1 ? '' : 's'} priced in${r.absences_sampled ? `, ${r.absences_sampled} with the worth drawn from its uncertainty in every simulated season` : ''}; see the Players page.` : p.use_injury_report ? ' The injury report priced nothing: no report is stored for this season, or no listed player has a worth; see the Players page.' : ''}`;
       const cols = [
         { label: 'Team', value: t => `${t.code} · ${t.name}`, left: true }, { label: 'Conf', value: 'conference', left: true }, { label: 'Elo', value: t => num(t.elo_as_of, 0) },
-        ...(r.absences_applied ? [{ label: 'Out (Elo)', value: t => t.absence_penalty ? `−${num(t.absence_penalty, 0)}` : '', cls: t => t.absence_penalty ? 'bad' : '', title: 'Mean rating penalty over the remaining games from the injury report and the players marked out' }] : []),
+        ...(r.absences_applied && r.teams.length && 'absence_penalty_today' in r.teams[0] ? [
+          { label: `Elo on ${r.as_of}`, value: t => num(t.elo_as_of - t.absence_penalty_today, 0), cls: t => t.absence_penalty_today ? 'bad' : '', title: 'The rating the team plays at on the cutoff date: its Elo less the penalties of the absences that cover that date' },
+          { label: 'Out (Elo)', value: t => t.absence_penalty ? `−${num(t.absence_penalty, 0)}` : '', cls: t => t.absence_penalty ? 'bad' : '', title: 'Mean rating penalty over the remaining games from the injury report and the players marked out' }] : []),
         { label: 'Record', value: t => `${t.wins}-${t.losses}` }, { label: 'Exp. wins', value: t => num(t.expected_wins, 1) },
         { label: 'Top 6', value: t => pct(t.p_top6) }, { label: 'Play-in', value: t => pct(t.p_play_in) }, { label: 'Playoffs', value: t => pct(t.p_playoffs) },
         { label: '2nd round', value: t => pct(t.p_second_round) }, { label: 'Conf. finals', value: t => pct(t.p_conf_finals) }, { label: 'Finals', value: t => pct(t.p_finals) },
