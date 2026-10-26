@@ -112,12 +112,14 @@
     if (!k) return 'Player sync';
     if (k.kind === 'backfill') return `Box-score backfill of ${label(k.season)}`;
     if (k.kind === 'daily') return `Daily player sync of ${label(k.season)}`;
+    if (k.kind === 'all_players') return 'Player list load';
+    if (k.kind === 'active_players') return 'Roster refresh';
     return 'Injury report fetch';
   }
   function describePlayers(st) {
     const who = (st.trigger === 'scheduled' ? 'Scheduled ' : '') + playerKind(st.kind);
     const secs = d => `${Math.round((Date.now() - new Date(d)) / 1000)} s`;
-    const outcome = o => `${o.dates_fetched} date${o.dates_fetched === 1 ? '' : 's'}, ${o.lines.toLocaleString()} lines (${o.matched.toLocaleString()} matched, ${o.unmatched} unmatched), ${o.players_upserted} players${o.injury_report ? `; injury report of ${o.injury_report[0]} with ${o.injury_report[1]} lines` : ''}`;
+    const outcome = o => `${o.dates_fetched} date${o.dates_fetched === 1 ? '' : 's'}, ${o.lines.toLocaleString()} lines (${o.matched.toLocaleString()} matched, ${o.unmatched} unmatched), ${o.players_upserted} players${o.injury_report ? `; injury report of ${o.injury_report[0]} with ${o.injury_report[1]} lines` : ''}${o.players_loaded != null ? `; ${o.players_loaded.toLocaleString()} players loaded` : ''}${o.active_players != null ? `; ${o.active_players} players on rosters` : ''}`;
     switch (st.phase) {
       case 'fetching': {
         const wait = st.waiting_secs != null ? ` · ${st.rate_limited ? 'rate limited by the API, retrying' : 'next request'} in ${st.waiting_secs} s` : '';
@@ -133,11 +135,11 @@
     const season = document.getElementById('playerSeason').value;
     const d = await getJSON('/api/data/players' + (season ? `?season=${encodeURIComponent(season)}` : ''));
     const c = d.coverage;
-    document.getElementById('playerCoverage').innerHTML = `<div>Players</div><div>${c.players.toLocaleString()}</div><div>Box-score lines</div><div>${c.appearances.toLocaleString()}</div><div>Dates fetched</div><div>${c.dates_fetched.toLocaleString()}${c.first_date_fetched ? ` (${c.first_date_fetched} → ${c.last_date_fetched})` : ''}</div><div>Injury reports</div><div>${c.injury_report_dates} day${c.injury_report_dates === 1 ? '' : 's'}${c.last_injury_report ? `, latest ${c.last_injury_report}` : ''}</div>` + (d.season ? `<div>${label(d.season)}</div><div>${d.fetches.length} date${d.fetches.length === 1 ? '' : 's'} fetched, ${d.dates_missing} with played games and no box scores yet</div>` : '');
+    document.getElementById('playerCoverage').innerHTML = `<div>Players</div><div>${c.players.toLocaleString()} (${c.active_players} on current rosters)</div><div>Box-score lines</div><div>${c.appearances.toLocaleString()}</div><div>Dates fetched</div><div>${c.dates_fetched.toLocaleString()}${c.first_date_fetched ? ` (${c.first_date_fetched} → ${c.last_date_fetched})` : ''}</div><div>Injury reports</div><div>${c.injury_report_dates} day${c.injury_report_dates === 1 ? '' : 's'}${c.last_injury_report ? `, latest ${c.last_injury_report}` : ''}</div>` + (d.season ? `<div>${label(d.season)}</div><div>${d.fetches.length} date${d.fetches.length === 1 ? '' : 's'} fetched, ${d.dates_missing} with played games and no box scores yet</div>` : '');
     const configured = d.configured;
-    document.getElementById('playerBackfill').disabled = !configured; document.getElementById('playerInjuries').disabled = !configured;
+    ['playerBackfill', 'playerInjuries', 'playerRosters', 'playerLoadAll'].forEach(id => { document.getElementById(id).disabled = !configured; });
     document.getElementById('playerHint').textContent = configured
-      ? (d.daily_sync ? `The daily results sync is followed by the player sync: the season's unfetched dates, the last ${d.settling_days} days again, and today's injury report.` : 'No daily sync (RESULTS_SYNC_ENABLED or PLAYER_SYNC_ENABLED is false); the buttons fetch now.')
+      ? (d.daily_sync ? `The daily results sync is followed by the player sync: the season's unfetched dates, the last ${d.settling_days} days again, today's injury report and the rosters. Loading every player is a one-time step (one request per 100 players).` : 'No daily sync (RESULTS_SYNC_ENABLED or PLAYER_SYNC_ENABLED is false); the buttons fetch now.')
       : 'Not configured: set BALLDONTLIE_API_KEY in .env and restart the application.';
     document.getElementById('playerFetches').innerHTML = d.season ? table([
       { label: 'Date', value: 'game_date', left: true }, { label: 'Fetched', value: r => new Date(r.fetched_at).toLocaleString(), left: true }, { label: 'Lines', value: r => r.counts.lines },
@@ -164,6 +166,8 @@
     startPlayerSync('/api/data/players/backfill', { season });
   });
   document.getElementById('playerInjuries').addEventListener('click', () => startPlayerSync('/api/data/players/injuries', {}));
+  document.getElementById('playerRosters').addEventListener('click', () => startPlayerSync('/api/data/players/rosters', {}));
+  document.getElementById('playerLoadAll').addEventListener('click', () => startPlayerSync('/api/data/players/load', {}));
   document.getElementById('playerSeason').addEventListener('change', () => loadPlayers().catch(e => { const el = document.getElementById('playerStatus'); el.textContent = e.message; el.className = 'small bad'; }));
   let queryTimer = null;
   document.getElementById('playerQuery').addEventListener('input', () => {
@@ -175,7 +179,8 @@
         const r = await getJSON(`/api/players?q=${encodeURIComponent(q)}`);
         const rows = await Promise.all(r.players.map(async p => ({ ...p, detail: (await getJSON(`/api/players/${p.id}`)).seasons })));
         document.getElementById('playerResults').innerHTML = rows.length ? table([
-          { label: 'Player', value: p => `${p.first_name} ${p.last_name}`, left: true }, { label: 'Position', value: p => p.position || '', left: true }, { label: 'Height', value: p => p.height || '', left: true },
+          { label: 'Player', value: p => `${p.first_name} ${p.last_name}`, left: true }, { label: 'Team', value: p => p.team_code ? `${p.team_code}${p.active ? '' : ' (not on a roster)'}${p.jersey_number ? ` #${p.jersey_number}` : ''}` : (p.active ? 'active' : ''), left: true },
+          { label: 'Position', value: p => p.position || '', left: true }, { label: 'Height', value: p => p.height || '', left: true },
           { label: 'Draft', value: p => p.draft_year ? `${p.draft_year} #${p.draft_number || '?'}` : '', left: true }, { label: 'College / country', value: p => [p.college, p.country].filter(Boolean).join(' · '), left: true },
           { label: 'Seasons stored', value: p => p.detail.map(s => `${label(s.season)} ${s.team_code} ${s.games} g${s.playoff_games ? ` (${s.playoff_games} po)` : ''}`).join('; ') || 'no box-score lines yet', left: true },
           { label: 'JSON', value: p => `<a href="/api/players/${p.id}/games" target="_blank">game log</a>`, raw: true, left: true }], rows) : '<p class="muted small">No player with that name.</p>';

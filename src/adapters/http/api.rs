@@ -1345,6 +1345,16 @@ pub async fn players_injury_report(State(app): State<AppState>) -> ApiResult<Val
     start_player_sync(&app, PlayerSyncKind::InjuryReport)
 }
 
+/// Load the source's whole player list, in the background.
+pub async fn players_load_all(State(app): State<AppState>) -> ApiResult<Value> {
+    start_player_sync(&app, PlayerSyncKind::AllPlayers)
+}
+
+/// Refresh the current rosters, in the background.
+pub async fn players_refresh_active(State(app): State<AppState>) -> ApiResult<Value> {
+    start_player_sync(&app, PlayerSyncKind::ActivePlayers)
+}
+
 // ---------------------------------------------------------------------------------------
 // Game reports
 // ---------------------------------------------------------------------------------------

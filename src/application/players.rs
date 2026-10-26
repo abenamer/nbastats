@@ -32,6 +32,10 @@ pub struct PlayerSyncOutcome {
     pub players_upserted: i64,
     /// The injury report stored, when the run fetched one: its date and its line count.
     pub injury_report: Option<(NaiveDate, i64)>,
+    /// Players written from the source's whole player list, when the run loaded it.
+    pub players_loaded: Option<i64>,
+    /// Players on a current roster, when the run refreshed the rosters.
+    pub active_players: Option<i64>,
 }
 
 /// Progress of a run: the dates done and the fetch under way.
@@ -89,10 +93,15 @@ impl std::error::Error for Interrupted {
 pub enum PlayerSyncKind {
     /// Box scores of every unfetched date of the season.
     Backfill { season: SeasonYear },
-    /// The current season's unfetched and settling dates, then today's injury report.
+    /// The current season's unfetched and settling dates, today's injury report, then
+    /// the current rosters.
     Daily { season: SeasonYear },
     /// Today's injury report only.
     InjuryReport,
+    /// The source's whole player list.
+    AllPlayers,
+    /// The current rosters only.
+    ActivePlayers,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -306,7 +315,52 @@ pub async fn fetch_injury_report<P: PlayerSource, S: PlayerStore>(
     Ok(stored)
 }
 
-/// The daily run: the current season's box scores, then the injury report.
+/// Load the source's whole player list; returns how many players were written.
+pub async fn load_all_players<P: PlayerSource, S: PlayerStore>(
+    store: &S,
+    source: &P,
+    progress: &(dyn Fn(PlayerProgress) + Sync),
+) -> Result<i64, PlayerSyncError> {
+    let sink = |p: FetchProgress| {
+        progress(PlayerProgress {
+            lines: p.games as i64,
+            fetch: p,
+            ..Default::default()
+        })
+    };
+    let players = source.all_players(&sink).await?;
+    let written = store.save_players(source.name(), &players).await?;
+    info!(players = written, "player list stored");
+    Ok(written)
+}
+
+/// Refresh the current rosters; returns the active count.
+pub async fn refresh_active_players<P: PlayerSource, S: PlayerStore>(
+    store: &S,
+    source: &P,
+    progress: &(dyn Fn(PlayerProgress) + Sync),
+) -> Result<i64, PlayerSyncError> {
+    let sink = |p: FetchProgress| {
+        progress(PlayerProgress {
+            lines: p.games as i64,
+            fetch: p,
+            ..Default::default()
+        })
+    };
+    let players = source.active_players(&sink).await?;
+    // An empty roster list is a gap at the source, not a league without players: it must
+    // not mark every player inactive.
+    if players.is_empty() {
+        return Err(
+            SourceError::InvalidPayload("the source listed no active players".to_string()).into(),
+        );
+    }
+    let active = store.save_active_players(source.name(), &players).await?;
+    info!(active, "rosters stored");
+    Ok(active)
+}
+
+/// The daily run: the current season's box scores, the injury report, the rosters.
 pub async fn sync_daily<P: PlayerSource, S: PlayerStore>(
     store: &S,
     source: &P,
@@ -322,17 +376,20 @@ pub async fn sync_daily<P: PlayerSource, S: PlayerStore>(
             error: e.into(),
         })?;
     let mut done = fetch_dates(store, source, &dates, progress).await?;
+    let interrupted = |done: PlayerSyncOutcome, error| Interrupted {
+        dates_total: dates.len(),
+        done,
+        error,
+    };
     match fetch_injury_report(store, source, today, progress).await {
-        Ok(lines) => {
-            done.injury_report = Some((today, lines));
-            Ok(done)
-        }
-        Err(error) => Err(Interrupted {
-            dates_total: dates.len(),
-            done,
-            error,
-        }),
+        Ok(lines) => done.injury_report = Some((today, lines)),
+        Err(error) => return Err(interrupted(done, error)),
     }
+    match refresh_active_players(store, source, progress).await {
+        Ok(active) => done.active_players = Some(active),
+        Err(error) => return Err(interrupted(done, error)),
+    }
+    Ok(done)
 }
 
 /// Run one player sync while the caller holds the player lock, publishing progress to
@@ -361,6 +418,12 @@ pub async fn run_tracked<P: PlayerSource>(
         app.set_player_phase(current.with_progress(p));
     };
     let today = app.today();
+    // A run of one fetch has no dates to resume.
+    let alone = |error| Interrupted {
+        done: PlayerSyncOutcome::default(),
+        dates_total: 0,
+        error,
+    };
     let result = match kind {
         PlayerSyncKind::Backfill { season } => {
             backfill_season(&app.store, source, season, &progress).await
@@ -374,11 +437,21 @@ pub async fn run_tracked<P: PlayerSource>(
                 injury_report: Some((today, lines)),
                 ..Default::default()
             })
-            .map_err(|error| Interrupted {
-                done: PlayerSyncOutcome::default(),
-                dates_total: 0,
-                error,
-            }),
+            .map_err(alone),
+        PlayerSyncKind::AllPlayers => load_all_players(&app.store, source, &progress)
+            .await
+            .map(|n| PlayerSyncOutcome {
+                players_loaded: Some(n),
+                ..Default::default()
+            })
+            .map_err(alone),
+        PlayerSyncKind::ActivePlayers => refresh_active_players(&app.store, source, &progress)
+            .await
+            .map(|n| PlayerSyncOutcome {
+                active_players: Some(n),
+                ..Default::default()
+            })
+            .map_err(alone),
     };
     let finished_at = Utc::now();
     match &result {

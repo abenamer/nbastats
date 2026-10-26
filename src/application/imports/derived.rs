@@ -38,17 +38,22 @@ pub fn classify_non_playoff(season: SeasonYear, games: &[Game]) -> NonPlayoffCla
             *totals.entry(g.away_team_id).or_insert(0) += 1;
         }
     }
+    // A game the source marked as the Cup final keeps the type; the date rule finds the
+    // final of an archive season, where the totals are complete.
     let is_cup_final = |g: &Game| {
-        year >= 2024
-            && g.game_date.month() == 12
-            && per_date.get(&g.game_date) == Some(&1)
-            && totals.get(&g.home_team_id).copied().unwrap_or(0) >= 83
-            && totals.get(&g.away_team_id).copied().unwrap_or(0) >= 83
+        g.game_type == GameType::CupFinal
+            || (year >= 2024
+                && g.game_date.month() == 12
+                && per_date.get(&g.game_date) == Some(&1)
+                && totals.get(&g.home_team_id).copied().unwrap_or(0) >= 83
+                && totals.get(&g.away_team_id).copied().unwrap_or(0) >= 83)
     };
     if year == 2020 {
         let play_in_day = NaiveDate::from_ymd_opt(2020, 8, 15).expect("valid date");
         for g in games.iter().filter(|g| !g.is_playoff()) {
-            if g.game_date == play_in_day {
+            if is_cup_final(g) {
+                out.cup_final.push(g.id);
+            } else if g.game_date == play_in_day {
                 out.play_in.push(g.id);
             } else {
                 out.regular.push(g.id);
@@ -57,11 +62,13 @@ pub fn classify_non_playoff(season: SeasonYear, games: &[Game]) -> NonPlayoffCla
         return out;
     }
     if year < 2021 {
-        out.regular = games
-            .iter()
-            .filter(|g| !g.is_playoff())
-            .map(|g| g.id)
-            .collect();
+        for g in games.iter().filter(|g| !g.is_playoff()) {
+            if is_cup_final(g) {
+                out.cup_final.push(g.id);
+            } else {
+                out.regular.push(g.id);
+            }
+        }
         return out;
     }
     // Teams not in the play-in play exactly the regular-season length; anything beyond is play-in.

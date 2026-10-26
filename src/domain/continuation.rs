@@ -11,6 +11,7 @@ use chrono::NaiveDate;
 
 use crate::domain::elo;
 use crate::domain::ids::{FranchiseId, TeamId};
+use crate::domain::models::GameType;
 
 /// The rating of a franchise in its first season (the archive's rule for expansion teams and
 /// for the ABA's first season).
@@ -44,7 +45,9 @@ pub struct ResultGame {
     pub home: TeamId,
     pub away: TeamId,
     pub neutral: bool,
-    pub playoff: bool,
+    /// Regular, play-in, Cup final or playoff. Every type is rated the same way; the type
+    /// is kept so a stored game keeps it through a sync.
+    pub game_type: GameType,
     pub home_score: Option<i32>,
     pub away_score: Option<i32>,
 }
@@ -155,7 +158,7 @@ mod tests {
                 home: b,
                 away: a,
                 neutral: false,
-                playoff: false,
+                game_type: GameType::Regular,
                 home_score: None,
                 away_score: None,
             },
@@ -164,7 +167,7 @@ mod tests {
                 home: a,
                 away: b,
                 neutral: false,
-                playoff: false,
+                game_type: GameType::Regular,
                 home_score: Some(110),
                 away_score: Some(100),
             },
@@ -194,7 +197,7 @@ mod tests {
             home: TeamId::new(1),
             away: TeamId::new(9),
             neutral: false,
-            playoff: false,
+            game_type: GameType::Regular,
             home_score: Some(1),
             away_score: Some(0),
         };

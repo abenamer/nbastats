@@ -25,13 +25,13 @@ sources:
 | `MAX_ITERATIONS` | `5000000` | Upper limit for Monte Carlo iterations in one job. |
 | `MAX_WORK_UNITS` | `4000000000` | Upper limit for the estimated work of one job (iterations × per-iteration work). |
 | `ALLOWED_HOSTS` | `localhost,127.0.0.1,[::1]` | Host names accepted in the `Host` header. `*` accepts any. |
-| `BALLDONTLIE_API_KEY` | none | API key for the results sync and the player data. When unset, both are unavailable. Box scores and injury reports need a paid tier. |
+| `BALLDONTLIE_API_KEY` | none | API key for the results sync and the player data. When unset, both are unavailable. Box scores, rosters and injury reports need the ALL-STAR tier; see [Player data](/concepts/player-data.md). |
 | `BALLDONTLIE_BASE_URL` | `https://api.balldontlie.io/v1` | Base URL of the BALLDONTLIE API. |
-| `BALLDONTLIE_REQUESTS_PER_MINUTE` | `5` | Request pacing for the plan's quota. |
+| `BALLDONTLIE_REQUESTS_PER_MINUTE` | `5` | Request pacing for the plan's quota: 5 on the free tier, 60 on ALL-STAR, 600 on GOAT (the API's pricing page, read 2026-10-26). |
 | `RESULTS_SYNC_ENABLED` | `true` | Daily sync of the current season (needs the API key). |
 | `RESULTS_SYNC_TIME` | `04:00` | Wall-clock time of the daily sync, `HH:MM`. |
 | `RESULTS_SYNC_TIMEZONE` | `America/New_York` | IANA time zone of the daily sync. Daylight saving time is applied. |
-| `PLAYER_SYNC_ENABLED` | `true` | After the daily results sync, fetch the current season's box scores and today's injury report; see [Player data](/concepts/player-data.md). Needs the daily sync. |
+| `PLAYER_SYNC_ENABLED` | `true` | After the daily results sync, fetch the current season's box scores, today's injury report and the rosters; see [Player data](/concepts/player-data.md). Needs the daily sync. |
 | `OPENROUTER_API_KEY` | none | API key for the [question box](/concepts/question-box.md). When unset, the box is off. |
 | `OPENROUTER_MODEL` | `openai/gpt-4o-mini` | The model the box asks through OpenRouter; it must support tool calling. |
 | `OPENROUTER_BASE_URL` | `https://openrouter.ai/api/v1` | Base URL of the OpenAI-compatible chat API. |

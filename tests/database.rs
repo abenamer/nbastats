@@ -946,9 +946,72 @@ fn record(date: &str, home: &str, away: &str, score: Option<(i32, i32)>) -> Resu
         away_code: away.to_string(),
         neutral: false,
         playoff: false,
+        cup_final: false,
         home_score: score.map(|s| s.0),
         away_score: score.map(|s| s.1),
     }
+}
+
+/// A synced game the source marks as the NBA Cup final keeps that type through the
+/// derived rebuild (whose date rule needs complete totals) and through the next sync,
+/// whose window no longer holds it. A stored play-in game round-trips the same way.
+#[sqlx::test(migrations = "./migrations")]
+async fn cup_final_from_the_source_survives_the_rebuild_and_the_next_sync(pool: PgPool) {
+    use nba_elo_simulator::application::continuation;
+    let (store, _teams) = common::setup(pool).await;
+    imports::import_bytes(
+        &store,
+        common::FIXTURE.as_bytes(),
+        prov("mini_2016.csv"),
+        false,
+    )
+    .await
+    .unwrap();
+    let s2017 = SeasonYear::of(2017);
+    let mut final_game = record("2016-12-17", "GSW", "SAS", Some((100, 90)));
+    final_game.cup_final = true;
+    let first = FakeResults::with(vec![
+        record("2016-10-25", "GSW", "SAS", Some((100, 129))),
+        final_game,
+        record("2016-12-20", "DAL", "GSW", None),
+    ]);
+    continuation::sync_results(&store, &first, s2017, date("2016-12-18"), &|_| {})
+        .await
+        .unwrap();
+    let games = store.season_games(s2017).await.unwrap();
+    assert_eq!(
+        games[1].game_type,
+        GameType::CupFinal,
+        "stored as the Cup final"
+    );
+    assert_eq!(games[0].game_type, GameType::Regular);
+    // The next sync's fetch holds only the new result; the final is a stored game kept
+    // through the merge, and it keeps its type (the old mapping made it a playoff game).
+    let next = FakeResults::with(vec![record("2016-12-20", "DAL", "GSW", Some((95, 100)))]);
+    continuation::sync_results(&store, &next, s2017, date("2016-12-21"), &|_| {})
+        .await
+        .unwrap();
+    let games = store.season_games(s2017).await.unwrap();
+    assert_eq!(games.len(), 3);
+    assert_eq!(games[0].game_type, GameType::Regular);
+    assert_eq!(games[1].game_type, GameType::CupFinal);
+    assert!(games[2].is_played());
+    let summary = store
+        .seasons()
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|s| s.season == s2017)
+        .unwrap();
+    assert_eq!(summary.cup_final_game_count, 1);
+    assert_eq!(summary.playoff_game_count, 0);
+    let ts = store.team_seasons(s2017).await.unwrap();
+    let gsw = ts.iter().find(|t| t.code == "GSW").unwrap();
+    assert_eq!(
+        (gsw.wins, gsw.losses),
+        (1, 1),
+        "the Cup final is not in the record"
+    );
 }
 
 /// The application's Elo code re-rates an archive season to the archive's own numbers: the
@@ -994,7 +1057,7 @@ async fn elo_replay_reproduces_the_archive_ratings(pool: PgPool) {
             home: g.home_team_id,
             away: g.away_team_id,
             neutral: g.neutral,
-            playoff: g.game_type == GameType::Playoff,
+            game_type: g.game_type,
             home_score: g.home_score,
             away_score: g.away_score,
         })
@@ -1224,6 +1287,8 @@ mod players {
             draft_year: Some(2009),
             draft_round: Some(1),
             draft_number: Some(7),
+            jersey_number: Some("30".to_string()),
+            team_code: None,
         }
     }
 
@@ -1248,6 +1313,7 @@ mod players {
             fg3a: Some(10),
             ftm: Some(3),
             fta: Some(3),
+            plus_minus: Some(pts - 20),
         }
     }
 
@@ -1257,6 +1323,8 @@ mod players {
         fail_on: Mutex<Option<NaiveDate>>,
         asked: Mutex<Vec<NaiveDate>>,
         injuries: Vec<InjuryRecord>,
+        players: Vec<PlayerRecord>,
+        active: Vec<PlayerRecord>,
     }
 
     impl PlayerSource for FakePlayers {
@@ -1295,6 +1363,18 @@ mod players {
         ) -> Result<Vec<InjuryRecord>, SourceError> {
             Ok(self.injuries.clone())
         }
+        async fn all_players(
+            &self,
+            _progress: &dyn FetchProgressSink,
+        ) -> Result<Vec<PlayerRecord>, SourceError> {
+            Ok(self.players.clone())
+        }
+        async fn active_players(
+            &self,
+            _progress: &dyn FetchProgressSink,
+        ) -> Result<Vec<PlayerRecord>, SourceError> {
+            Ok(self.active.clone())
+        }
     }
 
     #[sqlx::test(migrations = "./migrations")]
@@ -1329,6 +1409,8 @@ mod players {
             fail_on: Mutex::new(Some(pending[2])),
             asked: Mutex::new(vec![]),
             injuries: vec![],
+            players: vec![],
+            active: vec![],
         };
         // The first run stops at its third date; the two dates before it stay stored.
         let err = players::backfill_season(&store, &fake, S2016, &|_| {})
@@ -1464,8 +1546,73 @@ mod players {
             .unwrap();
         assert_eq!((counts.matched, counts.unmatched), (0, 1));
 
+        // The player list and the rosters: every player stored, the listed ones active
+        // with their team, the rest inactive; a team the store does not know is left out.
+        let mut durant = person(200, "Kevin", "Durant");
+        durant.team_code = Some("PHO".to_string());
+        let mut curry_now = curry.clone();
+        curry_now.team_code = Some("GSW".to_string());
+        let mut nobody = person(5, "Un", "Known");
+        nobody.team_code = Some("ZZZ".to_string());
+        let written = store
+            .save_players(
+                "fake-players",
+                &[durant.clone(), curry_now.clone(), nobody.clone(), nobody],
+            )
+            .await
+            .unwrap();
+        assert_eq!(written, 3, "distinct players");
+        let active = store
+            .save_active_players("fake-players", &[curry_now, durant.clone()])
+            .await
+            .unwrap();
+        assert_eq!(active, 2);
+        let found = store.search_players("durant", 5).await.unwrap();
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].team_code.as_deref(), Some("PHO"));
+        assert!(found[0].active);
+        assert_eq!(found[0].jersey_number.as_deref(), Some("30"));
+        let unknown = store.search_players("un known", 5).await.unwrap();
+        assert_eq!(
+            unknown[0].team_code, None,
+            "team code the store does not know"
+        );
+        assert!(!unknown[0].active);
+        assert!(!store.player(james.id).await.unwrap().unwrap().active);
+        // A second roster without Durant clears him; his team stays as last listed.
+        let active = store
+            .save_active_players("fake-players", std::slice::from_ref(&curry))
+            .await
+            .unwrap();
+        assert_eq!(active, 1);
+        let d = store.search_players("durant", 5).await.unwrap().remove(0);
+        assert!(!d.active);
+        assert_eq!(d.team_code.as_deref(), Some("PHO"));
+        // An empty roster answer is refused, so a gap at the source clears nobody.
+        let empty = FakePlayers {
+            lines: vec![],
+            fail_on: Mutex::new(None),
+            asked: Mutex::new(vec![]),
+            injuries: vec![],
+            players: vec![],
+            active: vec![],
+        };
+        assert!(players::refresh_active_players(&store, &empty, &|_| {})
+            .await
+            .is_err());
+        assert!(store.search_players("curry", 5).await.unwrap()[0].active);
+        assert_eq!(
+            box_score[0].plus_minus,
+            Some(10),
+            "30 points: plus_minus = pts - 20"
+        );
+
         let coverage = store.player_coverage().await.unwrap();
-        assert_eq!(coverage.players, 4, "Rose, James, Love, Curry");
+        assert_eq!(
+            coverage.players, 6,
+            "Rose, James, Love, Curry, Durant, Un Known"
+        );
+        assert_eq!(coverage.active_players, 1);
         assert_eq!(coverage.appearances, 2);
         assert_eq!(coverage.dates_fetched as usize, pending.len());
         assert_eq!(coverage.first_date_fetched, Some(date(opening)));
@@ -1506,6 +1653,8 @@ mod players {
             fail_on: Mutex::new(None),
             asked: Mutex::new(vec![]),
             injuries: vec![],
+            players: vec![],
+            active: vec![],
         };
         let outcome = players::backfill_season(&store, &fake, s2017, &|_| {})
             .await
@@ -1578,6 +1727,8 @@ mod players {
                     description: None,
                 },
             ],
+            players: vec![],
+            active: vec![],
         };
         assert_eq!(store.latest_injury_report_date().await.unwrap(), None);
         let day1 = date("2026-01-15");

@@ -15,18 +15,30 @@ use crate::domain::ids::{PlayerId, SeasonYear, TeamId};
 
 use super::PostgresStore;
 
-/// Upsert the players and return their ids by source identifier.
+/// The store's team identifiers by code.
+async fn team_ids_by_code(conn: &mut PgConnection) -> StoreResult<HashMap<String, TeamId>> {
+    let rows: Vec<(String, TeamId)> = sqlx::query_as("SELECT code, id FROM teams")
+        .fetch_all(&mut *conn)
+        .await?;
+    Ok(rows.into_iter().collect())
+}
+
+/// Upsert the players and return their ids by source identifier. A blank field never
+/// overwrites a filled one; a current team the store does not know leaves the stored one.
 async fn upsert_players_in(
     conn: &mut PgConnection,
     source: &str,
     players: &[&PlayerRecord],
 ) -> StoreResult<HashMap<i64, PlayerId>> {
+    let teams = team_ids_by_code(conn).await?;
     let mut ids = HashMap::with_capacity(players.len());
     for p in players {
+        let team_id = p.team_code.as_deref().and_then(|c| teams.get(c)).copied();
         let (id,): (PlayerId,) = sqlx::query_as(
             "INSERT INTO players (source, source_id, first_name, last_name, position, height, weight,
-                                  college, country, draft_year, draft_round, draft_number, updated_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, now())
+                                  college, country, draft_year, draft_round, draft_number,
+                                  jersey_number, team_id, updated_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, now())
              ON CONFLICT (source, source_id) DO UPDATE SET
                 first_name = CASE WHEN EXCLUDED.first_name = '' THEN players.first_name ELSE EXCLUDED.first_name END,
                 last_name = CASE WHEN EXCLUDED.last_name = '' THEN players.last_name ELSE EXCLUDED.last_name END,
@@ -38,6 +50,8 @@ async fn upsert_players_in(
                 draft_year = COALESCE(EXCLUDED.draft_year, players.draft_year),
                 draft_round = COALESCE(EXCLUDED.draft_round, players.draft_round),
                 draft_number = COALESCE(EXCLUDED.draft_number, players.draft_number),
+                jersey_number = COALESCE(EXCLUDED.jersey_number, players.jersey_number),
+                team_id = COALESCE(EXCLUDED.team_id, players.team_id),
                 updated_at = now()
              RETURNING id",
         )
@@ -53,6 +67,8 @@ async fn upsert_players_in(
         .bind(p.draft_year)
         .bind(p.draft_round)
         .bind(p.draft_number)
+        .bind(&p.jersey_number)
+        .bind(team_id)
         .fetch_one(&mut *conn)
         .await?;
         ids.insert(p.source_id, id);
@@ -119,6 +135,7 @@ impl FromRow<'_, PgRow> for AppearanceRow {
             fg3a: r.try_get("fg3a")?,
             ftm: r.try_get("ftm")?,
             fta: r.try_get("fta")?,
+            plus_minus: r.try_get("plus_minus")?,
         }))
     }
 }
@@ -127,49 +144,47 @@ const APPEARANCE_SELECT: &str = "SELECT a.game_id, g.season, g.game_date, g.game
             CASE WHEN g.home_team_id = a.team_id THEN o.code ELSE h.code END AS opponent_code,
             g.home_team_id = a.team_id AS home,
             a.seconds, a.pts, a.reb, a.oreb, a.dreb, a.ast, a.stl, a.blk, a.tov, a.pf,
-            a.fgm, a.fga, a.fg3m, a.fg3a, a.ftm, a.fta
+            a.fgm, a.fga, a.fg3m, a.fg3a, a.ftm, a.fta, a.plus_minus
      FROM appearances a
      JOIN games g ON g.id = a.game_id
      JOIN teams t ON t.id = a.team_id
      JOIN teams h ON h.id = g.home_team_id
      JOIN teams o ON o.id = g.away_team_id";
 
-type PlayerRow = (
-    PlayerId,
-    String,
-    i64,
-    String,
-    String,
-    Option<String>,
-    Option<String>,
-    Option<String>,
-    Option<String>,
-    Option<String>,
-    Option<i32>,
-    Option<i32>,
-    Option<i32>,
-);
+/// One player row, with the current team's code joined in.
+struct PlayerRow(Player);
+
+impl FromRow<'_, PgRow> for PlayerRow {
+    fn from_row(r: &PgRow) -> Result<Self, sqlx::Error> {
+        Ok(PlayerRow(Player {
+            id: r.try_get("id")?,
+            source: r.try_get("source")?,
+            source_id: r.try_get("source_id")?,
+            first_name: r.try_get("first_name")?,
+            last_name: r.try_get("last_name")?,
+            position: r.try_get("position")?,
+            height: r.try_get("height")?,
+            weight: r.try_get("weight")?,
+            college: r.try_get("college")?,
+            country: r.try_get("country")?,
+            draft_year: r.try_get("draft_year")?,
+            draft_round: r.try_get("draft_round")?,
+            draft_number: r.try_get("draft_number")?,
+            jersey_number: r.try_get("jersey_number")?,
+            team_code: r.try_get("team_code")?,
+            active: r.try_get("active")?,
+        }))
+    }
+}
 
 const PLAYER_SELECT: &str =
-    "SELECT id, source, source_id, first_name, last_name, position, height, weight, college,
-            country, draft_year, draft_round, draft_number FROM players";
+    "SELECT p.id, p.source, p.source_id, p.first_name, p.last_name, p.position, p.height, p.weight,
+            p.college, p.country, p.draft_year, p.draft_round, p.draft_number, p.jersey_number,
+            t.code AS team_code, p.active
+     FROM players p LEFT JOIN teams t ON t.id = p.team_id";
 
 fn player_from_row(r: PlayerRow) -> Player {
-    Player {
-        id: r.0,
-        source: r.1,
-        source_id: r.2,
-        first_name: r.3,
-        last_name: r.4,
-        position: r.5,
-        height: r.6,
-        weight: r.7,
-        college: r.8,
-        country: r.9,
-        draft_year: r.10,
-        draft_round: r.11,
-        draft_number: r.12,
-    }
+    r.0
 }
 
 impl PlayerStore for PostgresStore {
@@ -212,13 +227,14 @@ impl PlayerStore for PostgresStore {
             let player_id = ids[&l.player.source_id];
             sqlx::query(
                 "INSERT INTO appearances (game_id, player_id, team_id, seconds, pts, reb, oreb, dreb, ast,
-                                          stl, blk, tov, pf, fgm, fga, fg3m, fg3a, ftm, fta)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
+                                          stl, blk, tov, pf, fgm, fga, fg3m, fg3a, ftm, fta, plus_minus)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
                  ON CONFLICT (game_id, player_id) DO UPDATE SET team_id = EXCLUDED.team_id,
                     seconds = EXCLUDED.seconds, pts = EXCLUDED.pts, reb = EXCLUDED.reb, oreb = EXCLUDED.oreb,
                     dreb = EXCLUDED.dreb, ast = EXCLUDED.ast, stl = EXCLUDED.stl, blk = EXCLUDED.blk,
                     tov = EXCLUDED.tov, pf = EXCLUDED.pf, fgm = EXCLUDED.fgm, fga = EXCLUDED.fga,
-                    fg3m = EXCLUDED.fg3m, fg3a = EXCLUDED.fg3a, ftm = EXCLUDED.ftm, fta = EXCLUDED.fta",
+                    fg3m = EXCLUDED.fg3m, fg3a = EXCLUDED.fg3a, ftm = EXCLUDED.ftm, fta = EXCLUDED.fta,
+                    plus_minus = EXCLUDED.plus_minus",
             )
             .bind(game_id)
             .bind(player_id)
@@ -239,6 +255,7 @@ impl PlayerStore for PostgresStore {
             .bind(l.fg3a)
             .bind(l.ftm)
             .bind(l.fta)
+            .bind(l.plus_minus)
             .execute(&mut *tx)
             .await?;
         }
@@ -405,6 +422,32 @@ impl PlayerStore for PostgresStore {
         Ok(date)
     }
 
+    async fn save_players(&self, source: &str, players: &[PlayerRecord]) -> StoreResult<i64> {
+        let mut tx = self.pool.begin().await?;
+        let distinct = distinct_players(players.iter());
+        upsert_players_in(&mut tx, source, &distinct).await?;
+        tx.commit().await?;
+        Ok(distinct.len() as i64)
+    }
+
+    async fn save_active_players(
+        &self,
+        source: &str,
+        players: &[PlayerRecord],
+    ) -> StoreResult<i64> {
+        let mut tx = self.pool.begin().await?;
+        let distinct = distinct_players(players.iter());
+        let ids = upsert_players_in(&mut tx, source, &distinct).await?;
+        let active: Vec<PlayerId> = ids.values().copied().collect();
+        sqlx::query("UPDATE players SET active = (id = ANY($1)) WHERE source = $2")
+            .bind(&active)
+            .bind(source)
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
+        Ok(active.len() as i64)
+    }
+
     async fn search_players(&self, query: &str, limit: i64) -> StoreResult<Vec<Player>> {
         // The escape character is one backslash, so a backslash, a percent sign and an
         // underscore in the query match themselves.
@@ -415,8 +458,8 @@ impl PlayerStore for PostgresStore {
             .replace('_', "\\_");
         let pattern = format!("%{escaped}%");
         let rows: Vec<PlayerRow> = sqlx::query_as(&format!(
-            "{PLAYER_SELECT} WHERE (first_name || ' ' || last_name) ILIKE $1 ESCAPE '\\'
-             ORDER BY last_name, first_name, id LIMIT $2"
+            "{PLAYER_SELECT} WHERE (p.first_name || ' ' || p.last_name) ILIKE $1 ESCAPE '\\'
+             ORDER BY p.last_name, p.first_name, p.id LIMIT $2"
         ))
         .bind(pattern)
         .bind(limit)
@@ -426,7 +469,7 @@ impl PlayerStore for PostgresStore {
     }
 
     async fn player(&self, id: PlayerId) -> StoreResult<Option<Player>> {
-        let row: Option<PlayerRow> = sqlx::query_as(&format!("{PLAYER_SELECT} WHERE id = $1"))
+        let row: Option<PlayerRow> = sqlx::query_as(&format!("{PLAYER_SELECT} WHERE p.id = $1"))
             .bind(id)
             .fetch_optional(&self.pool)
             .await?;
@@ -492,13 +535,15 @@ impl PlayerStore for PostgresStore {
             i64,
             i64,
             i64,
+            i64,
             Option<NaiveDate>,
             Option<NaiveDate>,
             i64,
             Option<NaiveDate>,
         );
         let row: Row = sqlx::query_as(
-            "SELECT (SELECT count(*) FROM players), (SELECT count(*) FROM appearances),
+            "SELECT (SELECT count(*) FROM players), (SELECT count(*) FROM players WHERE active),
+                    (SELECT count(*) FROM appearances),
                     (SELECT count(*) FROM box_score_fetches),
                     (SELECT min(game_date) FROM box_score_fetches),
                     (SELECT max(game_date) FROM box_score_fetches),
@@ -509,12 +554,13 @@ impl PlayerStore for PostgresStore {
         .await?;
         Ok(PlayerCoverage {
             players: row.0,
-            appearances: row.1,
-            dates_fetched: row.2,
-            first_date_fetched: row.3,
-            last_date_fetched: row.4,
-            injury_report_dates: row.5,
-            last_injury_report: row.6,
+            active_players: row.1,
+            appearances: row.2,
+            dates_fetched: row.3,
+            first_date_fetched: row.4,
+            last_date_fetched: row.5,
+            injury_report_dates: row.6,
+            last_injury_report: row.7,
         })
     }
 }

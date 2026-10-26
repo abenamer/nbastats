@@ -1,5 +1,8 @@
 # Bundle update log
 
+## 2026-10-26
+* **Update**: [Player data](/concepts/player-data.md) lists every ALL-STAR data set the application uses, from the API's OpenAPI document and pricing page, and the GOAT endpoints it does not. The player list and the rosters join the box scores and the injury report. Plus/minus, jersey number and current team are stored. The Cup final is recognised from the game's Cup stage, and a synced game keeps its type. The schema, API and configuration references, the import runbook, [Elo continuation](/concepts/elo-continuation.md), the [Security model](/concepts/security.md) and the terms Active player, Appearance, Player source and Player sync follow.
+
 ## 2026-10-25
 * **New**: [Player data](/concepts/player-data.md) describes the players, the box-score lines and the daily injury reports from the BALLDONTLIE API, the matching to the stored games and the resumable backfill. The schema, API and configuration references, the [Security model](/concepts/security.md), the [Persistence model](/concepts/persistence.md), the import runbook, [ADR 0001](/decisions/0001-ports-at-three-boundaries.md) (twelve ports), the [Application overview](/concepts/application.md) and the index follow. The terms Appearance, Box-score fetch, Injury report, Player source, Player sync and Settling window are defined.
 

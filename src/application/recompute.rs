@@ -15,7 +15,7 @@ use crate::domain::continuation::{
     rate_games, season_start, ContinuationError, RatedGame, ResultGame,
 };
 use crate::domain::ids::{FranchiseId, SeasonYear, TeamId};
-use crate::domain::models::{EloSource, Game, GameType, Team};
+use crate::domain::models::{EloSource, Game, Team};
 
 use super::imports::derived;
 use super::ports::{GameRating, GameStore, StoreError};
@@ -42,7 +42,7 @@ pub fn as_result_game(g: &Game) -> ResultGame {
         home: g.home_team_id,
         away: g.away_team_id,
         neutral: g.neutral,
-        playoff: g.game_type != GameType::Regular,
+        game_type: g.game_type,
         home_score: g.home_score,
         away_score: g.away_score,
     }
