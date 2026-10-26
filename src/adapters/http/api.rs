@@ -1671,6 +1671,7 @@ pub async fn ask(State(app): State<AppState>, Json(body): Json<AskBody>) -> ApiR
         .regular;
     let answer = ask::answer(
         &app.store,
+        &*app,
         model,
         &body.question,
         app.today(),

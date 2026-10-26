@@ -15,7 +15,7 @@ The maintainer wants a StatMuse-like box that answers questions about the stored
 ## Decision
 
 * One port, `LanguageModel`, with one method: send a conversation and tool definitions, receive text or tool calls. One adapter, `OpenRouterModel`, speaks the OpenAI-compatible chat API, so the base URL and the model are configuration and any compatible service works.
-* The model reads the database through seven read-only tools that the use case runs against the existing store ports. The model has no write path and no SQL.
+* The model reads the database through seven read-only tools that the use case runs against the existing store ports. The model has no write path and no SQL. (2026-10-26: six player tools joined them, run through the application's caches; see [Question box](/concepts/question-box.md).)
 * The box answers only questions about the stored data. The system prompt forbids everything else, and the use case replaces an answer without a lookup by a fixed refusal, so the model's own knowledge never reaches the page.
 * Every question is bounded: model calls, tool calls, result size, time and concurrency.
 * The default model is a small, cheap hosted model; the operator chooses another by configuration.
