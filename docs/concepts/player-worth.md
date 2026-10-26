@@ -23,7 +23,7 @@ A player is absent from a game when he played for the team earlier and later in 
 
 # Measure
 
-1. Every played game has a residual: the actual margin minus the margin the pre-game ratings expected. The expectation uses 28 Elo points per point of margin and the ratings' own home bonus of 100. The residual holds everything the ratings did not know, the line-ups included.
+1. Every played game has a residual: the actual margin minus the margin the pre-game ratings expected. The expectation uses 28 Elo points per point of margin and the ratings' own home bonus of 100. The 28 is FiveThirtyEight's rule for the ratings the application replays: a rating gap of 28 is a one-point spread, so the home bonus of 100 is about 3.5 points. It is one constant for every era, although a point of margin meant more in the low-scoring seasons. The residual holds everything the ratings did not know, the line-ups included.
 2. The residuals of the games with an absence are regressed on the absences of both sides. A home absence enters with a minus sign, an away absence with a plus sign. Each player's coefficient is what his team loses per game without him, in points.
 3. The regression has a prior that pulls every coefficient toward zero (ridge regression). Its strength is the ratio of the residual variance to the prior variance of a worth. The prior spread is estimated from the data. It is the spread of the raw with/without differences of the players with at least five absences and five games played. The noise those differences carry is taken out, and the result is bounded between 1 and 6 points. With fewer than ten such players the default of 3 points stands. The page says which.
 4. Each worth has a standard error from the same regression. The page shows the worth in Elo (the points times 28), the error, and the raw means with and without the player.
@@ -54,7 +54,7 @@ The season engine subtracts each team's penalties from its rating for the simula
 
 * The estimate is noisy by nature and honest about it: read the error beside the worth. A worth without an error is not shown.
 * The ratings adapt during an absence, because the K-factor moves them game by game. This understates the worth of a player out for a long stretch.
-* Injuries cluster, and a team that lost one player often lost others. The regression shares the gap, but it cannot see a player who never sits.
+* Injuries cluster, and a team that lost one player often lost others. The regression shares the gap, but it cannot see a player who never sits. The [box-score worth](box-score-worth.md) is the second estimate for him, from his production.
 * The report is a snapshot. A return date is the source's expectation. A player listed as day-to-day who then misses a month is priced for three days.
 * Only the simulated regular-season games take the penalty. The play-in and the playoffs run at the full ratings. A player out for the season still counts for his team in April.
 * Nothing here changes a rating. A later change may use the worth in the ratings themselves.

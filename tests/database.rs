@@ -1814,7 +1814,8 @@ mod players {
     #[sqlx::test(migrations = "./migrations")]
     async fn player_worth_and_availability_read_the_store(pool: PgPool) {
         use nba_elo_simulator::application::worth as app_worth;
-        use nba_elo_simulator::domain::worth;
+        use nba_elo_simulator::domain::{bpm, worth};
+        use std::collections::HashMap;
         let (store, teams) = common::setup(pool).await;
         imports::import_bytes(
             &store,
@@ -1867,6 +1868,27 @@ mod players {
             20,
             "the DNP lines"
         );
+        // The full lines for the box-score worth: every statistic comes back as stored,
+        // and a null stays null.
+        let full = store.season_box_lines(S2016).await.unwrap();
+        assert_eq!(full.len(), games.len());
+        let played_line = full.iter().find(|l| l.seconds == Some(2100)).unwrap();
+        assert_eq!(
+            (
+                played_line.pts,
+                played_line.oreb,
+                played_line.stl,
+                played_line.fga
+            ),
+            (Some(25), Some(1), Some(1), Some(20))
+        );
+        assert_eq!(full.iter().filter(|l| l.seconds.is_none()).count(), 5);
+        assert!(full.iter().all(|l| l.team_id == gsw));
+        // One team's lines only: no game is covered, and the table says why.
+        let box_table = bpm::table(S2016, &games, &full, &HashMap::new());
+        assert_eq!(box_table.games, 0);
+        assert!(box_table.players.is_empty());
+        assert!(box_table.note.as_deref().unwrap().contains("both teams"));
         let t = worth::table(
             S2016,
             &store.season_games(S2016).await.unwrap(),

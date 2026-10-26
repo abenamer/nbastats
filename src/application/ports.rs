@@ -918,6 +918,11 @@ pub trait PlayerStore: Send + Sync {
         &self,
         season: SeasonYear,
     ) -> StoreResult<Vec<crate::domain::worth::Line>>;
+    /// Every line of a season with its full statistics, for the box-score worth.
+    async fn season_box_lines(
+        &self,
+        season: SeasonYear,
+    ) -> StoreResult<Vec<crate::domain::bpm::BoxLine>>;
     /// The players with these identifiers, in no particular order.
     async fn players_by_id(&self, ids: &[PlayerId]) -> StoreResult<Vec<Player>>;
     async fn player_coverage(&self) -> StoreResult<PlayerCoverage>;

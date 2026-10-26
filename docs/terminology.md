@@ -21,6 +21,8 @@ These are project-specific technical terms. They are not a reproduction of the A
 | Active player | A player the last roster refresh listed on a team. Stored as the `active` flag with the current team; every other player of the source is inactive. |
 | Appearance | One player's box-score line in one stored game: team, seconds played, the counting statistics and plus/minus. Stored in `appearances`, keyed by game and player. |
 | Bargaining period | A run of NBA/BAA seasons under one collective bargaining agreement, from the first season the agreement applied to. The table of periods and their changes is curated in `domain::cba`; see [Rule periods and bargaining periods](/concepts/periods.md). |
+| Box Plus/Minus (BPM) | A player's value in points per 100 possessions above a league-average player, from his box score weighted by his estimated position and offensive role, with his team's players summing to the team's adjusted efficiency. Daniel Myers's published version 2.0, computed by the application. See [Box-score worth](/concepts/box-score-worth.md). |
+| Box worth | BPM above replacement, times the player's share of the floor in the games he plays, times the team's possessions per game over 100, times 28 Elo per point. The box-score counterpart of the player worth, per game he plays. |
 | Box-score fetch | The record that one date's box scores were fetched: the source, the time and the counts of lines received, matched and unmatched. A backfill skips the dates that have one. |
 | Bracket | The 16 playoff slots and their pairings. Slots 0 to 7 are the East, 8 to 15 the West. |
 | Champion z | The champion's pre-playoff rating above the league mean in standard deviations of that season's ratings; averaged over a group's seasons with a champion in the group records. Part of the parity profile. |
@@ -60,8 +62,10 @@ These are project-specific technical terms. They are not a reproduction of the A
 | Mean Elo | The mean season-end rating across a league in a season, averaged over a group's seasons. A check that the ratings hold their level between periods. |
 | NBA Cup | The in-season tournament, from 2023-24: six groups of five, a knockout of eight, a final on a neutral floor. The application keeps the dates of each Cup and derives the groups from the games on the group nights; see the [NBA Cup forecast](/concepts/nba-cup.md). |
 | Parity profile | Season by season, the champion, the two finalists, the four conference finalists and the playoff field against their league: the gap to the league mean of the pre-playoff ratings in Elo points and in standard deviations (z), with the champion's rank; the mean z over a group of seasons is its parity figure. Computed in `domain::parity`. |
+| PER | John Hollinger's Player Efficiency Rating: a per-minute sum of box-score events, pace-adjusted, with the league mean scaled to 15. Shown for recognition only. |
 | Play-in | The games that decide seeds 7 and 8 (2020-21 and later), or the 8 seed (2019-20). |
 | Player era | The seasons a listed player was active, from the curated table in `domain::players`; a season belongs to every listed player active in it. |
+| Possession | One team's turn with the ball. Estimated per game from both teams' shots, free throws, offensive rebounds, misses and turnovers; the unit the box-score rates are per 100 of. |
 | Port | A trait in `application::ports` that the application requires from the outside world. |
 | Projection | A placeholder season: the previous season's matchups one year later, no scores, reverted ratings. |
 | Player source | The `PlayerSource` port: the box-score lines of one date, the current injury report, the whole player list and the current rosters from the BALLDONTLIE API. The adapter is `BalldontlieSource`, the same as the results source. |
@@ -80,10 +84,11 @@ These are project-specific technical terms. They are not a reproduction of the A
 | Series score | The score of one played playoff series: the probability a model gave the actual winner against the actual loser with the actual home court, read as a two-sided Brier score, a log loss and whether the favourite won. Fifteen a season; defined in `domain::backtesting`. |
 | Seed | Playoff position 1 to 8 inside a conference. |
 | Series | A best-of-five or best-of-seven playoff matchup. A `SeriesState` is either in progress or decided. |
-| Residual (game) | The actual margin minus the margin the pre-game ratings expected, at 28 Elo per point with the ratings' home bonus. |
+| Residual (game) | The actual margin minus the margin the pre-game ratings expected, at 28 Elo per point (FiveThirtyEight's spread rule for these ratings) with the ratings' home bonus. |
 | Settling window | The last 2 days before today. The daily player sync fetches their box scores again, because a date fetched while a game was on holds partial lines. |
 | Store | The `PostgresStore` adapter, which implements every store port. |
 | Threshold (K) | The title count that counts as a dynasty in the Alpha Simulator: the results report how often a franchise wins K or more titles. |
 | Team | A team code and era, such as SEA or OKC. Identified by `TeamId`. |
 | Themed era | A curated span of NBA/BAA seasons named for how the game was played or followed (the Reddit NBA era, the three-point dominance era); a season belongs to every theme active in it. |
+| VORP | Value Over Replacement Player: BPM above the replacement level of -2.0 points per 100 possessions, times the player's share of the floor, times his team's games over 82. Times 2.7 it is wins over replacement. |
 | Title HHI | The Herfindahl-Hirschman index of a group's titles: the sum of each champion's squared share. 1.0 when one franchise won every title; lower when the titles spread out. |
