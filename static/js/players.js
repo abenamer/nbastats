@@ -74,6 +74,68 @@
       setStatus(status, '');
     } catch (e) { setStatus(status, e.message, true); rows = []; boxRows = []; boxByPlayer = new Map(); renderWorth(); renderBox(null); }
   }
+  // Return from absence: a report over a range of seasons, run on request.
+  const returnStatus = document.getElementById('returnStatus');
+  const seasonOptions = Array.from(document.getElementById('season').options).map(o => parseInt(o.value));
+  const latestSeason = seasonOptions.length ? Math.max(...seasonOptions) : new Date().getFullYear();
+  document.getElementById('returnTo').value = latestSeason;
+  document.getElementById('returnFrom').value = latestSeason - 9;
+  const opt = (v, d) => (v == null ? '' : num(v, d));
+  // A value that rounds to zero reads as 0, not -0.
+  const flat = (v, d) => (Math.abs(v) < 0.5 * 10 ** -d ? 0 : v);
+  const optSigned = (v, d) => (v == null ? '' : signed(flat(v, d), d));
+  const withSe = (v, se, d) => (v == null ? '' : `${signed(flat(v, d), d)}${se == null ? '' : ` ± ${num(se, d)}`}`);
+  const dropCls = v => (v == null ? '' : v < 0 ? 'bad' : v > 0 ? 'good' : '');
+  function renderReturn(r) {
+    const seasonsRead = r.seasons.length;
+    const skipped = r.skipped.length ? ` ${r.skipped.length} season${r.skipped.length > 1 ? 's' : ''} skipped (${r.skipped.slice(0, 4).map(s => `${labelOf(s.season)}: ${s.reason}`).join('; ')}${r.skipped.length > 4 ? '; …' : ''}).` : '';
+    document.getElementById('returnNote').textContent = r.note
+      ? `${r.note}${skipped}`
+      : `${labelOf(r.from)} to ${labelOf(r.to)}: ${seasonsRead} season${seasonsRead > 1 ? 's' : ''} read, ${r.events_total.toLocaleString()} return events, ${r.controls_total.toLocaleString()} control samples.${skipped} Worth is the box worth per game played, in Elo (${num(r.parameters.elo_per_point, 0)} per point of margin). Drop is the worth after the return minus the worth before, averaged over the events, with the standard error of that mean. Control drop is the same drop over every clean forty-game stretch of a regular player in the same bracket: what two windows show without an injury. Effect is the drop minus the control drop; its error combines both. A group needs many events before a difference of a few Elo means anything.`;
+    const group = c => c.bracket == null && c.length == null ? 'All events' : c.bracket == null ? c.length : c.length == null ? c.bracket : `${c.bracket}, ${c.length}`;
+    document.getElementById('returnCells').innerHTML = r.cells.length ? table([
+      { label: 'Group', value: group, left: true },
+      { label: 'Events', value: 'events' },
+      { label: 'Worth before', value: c => optSigned(c.pre_worth, 0), title: 'Mean box worth per game played in the twenty team games before the run, Elo' },
+      { label: 'First 10 back', value: c => optSigned(c.early_worth, 0), title: 'Mean box worth per game played in the first ten team games from the return' },
+      { label: 'Next 10', value: c => optSigned(c.late_worth, 0), title: 'Mean box worth per game played in the next ten team games, over the events that had them' },
+      { label: 'Drop, first 10', value: c => withSe(c.drop_early, c.drop_early_se, 0), cls: c => dropCls(c.drop_early), title: 'Mean of (first ten back minus before), with its standard error' },
+      { label: 'Drop, next 10', value: c => optSigned(c.drop_late, 0), cls: c => dropCls(c.drop_late) },
+      { label: 'Controls', value: 'controls', title: 'Control samples in the brackets of the group\'s events: clean forty-game stretches of regular players' },
+      { label: 'Control drop', value: c => optSigned(c.control_drop_early, 0), title: 'The same drop over the control samples, each event taking its bracket\'s mean: what two windows show without an injury' },
+      { label: 'Effect, first 10', value: c => withSe(c.effect_early, c.effect_early_se, 0), cls: c => dropCls(c.effect_early), title: 'Drop minus control drop, with the error of both' },
+      { label: 'Effect, next 10', value: c => optSigned(c.effect_late, 0), cls: c => dropCls(c.effect_late) },
+      { label: 'BPM before', value: c => optSigned(c.pre_bpm, 1) },
+      { label: 'BPM first 10', value: c => optSigned(c.early_bpm, 1) },
+      { label: 'BPM next 10', value: c => optSigned(c.late_bpm, 1) },
+      { label: 'Min before', value: c => opt(c.pre_minutes, 1), title: 'Minutes per game played' },
+      { label: 'Min first 10', value: c => opt(c.early_minutes, 1) },
+      { label: 'Min next 10', value: c => opt(c.late_minutes, 1) },
+      { label: 'Played, first 10', value: c => c.early_availability == null ? '' : num(100 * c.early_availability, 0) + '%', title: 'Games played over team games in the window' },
+      { label: 'Played, next 10', value: c => c.late_availability == null ? '' : num(100 * c.late_availability, 0) + '%' }], r.cells) : '';
+    document.getElementById('returnEventRows').innerHTML = r.events ? (r.events.length ? '<h3>Events</h3>' + table([
+      { label: 'Season', value: e => labelOf(e.season), left: true }, { label: 'Player', value: 'name', left: true }, { label: 'Team', value: 'team_code', left: true },
+      { label: 'Missed', value: 'missed' }, { label: 'From', value: 'first_missed', left: true }, { label: 'Back', value: 'returned', left: true },
+      { label: 'Bracket', value: 'bracket', left: true }, { label: 'Length', value: 'length', left: true },
+      { label: 'Worth before', value: e => optSigned(e.pre.worth_elo, 0) }, { label: 'First 10 back', value: e => optSigned(e.early.worth_elo, 0) },
+      { label: 'Next 10', value: e => e.late ? optSigned(e.late.worth_elo, 0) : '' },
+      { label: 'Min before', value: e => num(e.pre.minutes_per_game, 1) }, { label: 'Min first 10', value: e => num(e.early.minutes_per_game, 1) },
+      { label: 'Played, first 10', value: e => `${e.early.played}/${e.early.team_games}` }, { label: 'Played, next 10', value: e => e.late ? `${e.late.played}/${e.late.team_games}` : '' }], r.events) : '') : '';
+  }
+  async function runReturn() {
+    const from = parseInt(document.getElementById('returnFrom').value), to = parseInt(document.getElementById('returnTo').value);
+    if (!Number.isInteger(from) || !Number.isInteger(to)) { setStatus(returnStatus, 'enter two season end years', true); return; }
+    if (from > to) { setStatus(returnStatus, 'from must not be after to', true); return; }
+    const events = document.getElementById('returnEvents').checked;
+    setStatus(returnStatus, 'reading the seasons… (the first run of a range computes every season\'s box table)');
+    document.getElementById('returnRun').disabled = true;
+    try {
+      renderReturn(await getJSON(`/api/research/return-curve?from=${from}&to=${to}&events=${events}`));
+      setStatus(returnStatus, '');
+    } catch (e) { setStatus(returnStatus, e.message, true); }
+    document.getElementById('returnRun').disabled = false;
+  }
+  document.getElementById('returnRun').addEventListener('click', runReturn);
   document.getElementById('season').addEventListener('change', load);
   document.getElementById('filter').addEventListener('input', () => { renderWorth(); renderBox(boxTable); });
   document.getElementById('allRows').addEventListener('change', () => { renderWorth(); renderBox(boxTable); });

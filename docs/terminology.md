@@ -28,6 +28,7 @@ These are project-specific technical terms. They are not a reproduction of the A
 | Champion z | The champion's pre-playoff rating above the league mean in standard deviations of that season's ratings; averaged over a group's seasons with a champion in the group records. Part of the parity profile. |
 | Competition format | A period of the postseason and in-season structure: early playoffs, the 16-team field, best-of-seven throughout, the play-in era, the NBA Cup era. Curated in `domain::eras`. |
 | Composition root | `src/main.rs`. The one place that creates the concrete adapters and wires them to the application. |
+| Control sample | Forty team games of a regular player with no run of five, clear of the windows around any run of his, read in the same three windows as a return event and placed in a bracket by the same rule: what two windows show without an injury, for players like these. |
 | Cup final | The NBA Cup (in-season tournament) final. An extra game that does not count in the standings. |
 | Current season | The season the daily sync targets: ends next year from September to December, ends this year from January to August. |
 | Decade | Ten seasons grouped by the start year of the season: 1959-60 belongs to the 1950s. |
@@ -84,6 +85,7 @@ These are project-specific technical terms. They are not a reproduction of the A
 | Series score | The score of one played playoff series: the probability a model gave the actual winner against the actual loser with the actual home court, read as a two-sided Brier score, a log loss and whether the favourite won. Fifteen a season; defined in `domain::backtesting`. |
 | Seed | Playoff position 1 to 8 inside a conference. |
 | Series | A best-of-five or best-of-seven playoff matchup. A `SeriesState` is either in progress or decided. |
+| Return event | A run of five or more of a team's games that a regular player did not play, with a played game before and after, with twenty team games before the run and ten after the return. The unit of the return-from-absence report. |
 | Residual (game) | The actual margin minus the margin the pre-game ratings expected, at 28 Elo per point (FiveThirtyEight's spread rule for these ratings) with the ratings' home bonus. |
 | Settling window | The last 2 days before today. The daily player sync fetches their box scores again, because a date fetched while a game was on holds partial lines. |
 | Store | The `PostgresStore` adapter, which implements every store port. |

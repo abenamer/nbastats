@@ -12,6 +12,7 @@ pub mod jobs;
 pub mod players;
 pub mod ports;
 pub mod recompute;
+pub mod recovery;
 pub mod reports;
 pub mod results_sync;
 pub mod scheduler;

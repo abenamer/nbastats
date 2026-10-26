@@ -71,6 +71,9 @@ pub struct App {
     /// One backward reading of a title record at a time (seconds of exact brackets); the
     /// rest get status 429.
     pub strength_slot: tokio::sync::Semaphore,
+    /// One return-from-absence report at a time (it may read every season's lines); the
+    /// rest get status 429.
+    pub research_slot: tokio::sync::Semaphore,
     /// Held while a results sync runs (manual or scheduled); at most one at a time.
     pub sync_lock: Arc<tokio::sync::Mutex<()>>,
     sync_phase: std::sync::Mutex<SyncPhase>,
@@ -91,6 +94,9 @@ pub struct App {
     pub(crate) worths: RwLock<HashMap<SeasonYear, Arc<crate::domain::worth::WorthTable>>>,
     /// The box-score worth of each season, likewise.
     pub(crate) box_tables: RwLock<HashMap<SeasonYear, Arc<crate::domain::bpm::BoxTable>>>,
+    /// The return events and control samples of each season, likewise.
+    pub(crate) return_seasons:
+        RwLock<HashMap<SeasonYear, Arc<crate::domain::recovery::SeasonReturns>>>,
     /// Counts the cache invalidations, so a load that began before one is not cached after it.
     pub(crate) cache_generation: AtomicU64,
     teams: RwLock<Option<Arc<HashMap<TeamId, Team>>>>,
@@ -117,6 +123,7 @@ impl App {
             reports,
             report_slot: tokio::sync::Semaphore::new(1),
             strength_slot: tokio::sync::Semaphore::new(1),
+            research_slot: tokio::sync::Semaphore::new(1),
             sync_lock: Arc::new(tokio::sync::Mutex::new(())),
             sync_phase: std::sync::Mutex::new(SyncPhase::Idle),
             player_lock: Arc::new(tokio::sync::Mutex::new(())),
@@ -129,6 +136,7 @@ impl App {
             home_advantages: RwLock::new(HashMap::new()),
             worths: RwLock::new(HashMap::new()),
             box_tables: RwLock::new(HashMap::new()),
+            return_seasons: RwLock::new(HashMap::new()),
             cache_generation: AtomicU64::new(0),
             teams: RwLock::new(None),
         }
@@ -264,6 +272,10 @@ impl App {
             .unwrap_or_else(|e| e.into_inner())
             .clear();
         self.box_tables
+            .write()
+            .unwrap_or_else(|e| e.into_inner())
+            .clear();
+        self.return_seasons
             .write()
             .unwrap_or_else(|e| e.into_inner())
             .clear();

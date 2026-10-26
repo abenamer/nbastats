@@ -22,7 +22,7 @@ use crate::application::ports::{
 };
 use crate::application::reports::{self, Fetching, PlayedGame, ReportError};
 use crate::application::state::SeasonLoadError;
-use crate::application::{boxscore, dashboard, dynasty, worth};
+use crate::application::{boxscore, dashboard, dynasty, recovery, worth};
 use crate::application::{results_sync, scheduler};
 use crate::config::APP_VERSION;
 use crate::domain::backtesting::BacktestParams;
@@ -1122,6 +1122,75 @@ pub async fn season_box_worth(
         "wins_per_vorp": crate::domain::bpm::WINS_PER_VORP,
         "elo_per_point": crate::domain::worth::ELO_PER_POINT,
         "players": rows,
+    })))
+}
+
+/// Every value is text, so a bad value answers with a JSON message, not axum's plain text.
+#[derive(Debug, Deserialize)]
+pub struct ReturnQuery {
+    pub from: Option<String>,
+    pub to: Option<String>,
+    /// `true` includes the event rows; off by default, the cells are the report.
+    pub events: Option<String>,
+}
+
+/// The return-from-absence report over a range of seasons: what regular players delivered
+/// after a run of missed games, against before, grouped by their BPM and the run's length,
+/// with the control samples of each bracket. Without a range, the ten season years ending
+/// at the latest stored season. One report at a time; a second answers 429.
+pub async fn return_curve(
+    State(app): State<AppState>,
+    Query(q): Query<ReturnQuery>,
+) -> ApiResult<Value> {
+    let season_arg = |name: &str, raw: Option<String>| -> Result<Option<SeasonYear>, ApiError> {
+        raw.map(|s| {
+            s.parse::<SeasonYear>()
+                .map_err(|e| ApiError::bad_request(format!("{name}: {e}")))
+        })
+        .transpose()
+    };
+    let (from_arg, to_arg) = (season_arg("from", q.from)?, season_arg("to", q.to)?);
+    let include = match q.events.as_deref().map(str::trim) {
+        None | Some("") | Some("false") | Some("0") => false,
+        Some("true") | Some("1") => true,
+        Some(_) => return Err(ApiError::bad_request("events must be true or false")),
+    };
+    let latest = app
+        .store
+        .seasons()
+        .await?
+        .iter()
+        .map(|s| s.season)
+        .max()
+        .ok_or_else(|| ApiError::not_found("no seasons stored"))?;
+    let to = to_arg.unwrap_or(latest);
+    let from = from_arg.unwrap_or_else(|| {
+        SeasonYear::try_new(to.end_year() - (recovery::DEFAULT_SEASONS as i32 - 1)).unwrap_or(to)
+    });
+    if from > to {
+        return Err(ApiError::bad_request("from must not be after to"));
+    }
+    if to.seasons_since(from) > recovery::MAX_SEASONS {
+        return Err(ApiError::bad_request(format!(
+            "a report covers at most {} seasons",
+            recovery::MAX_SEASONS
+        )));
+    }
+    let _slot = app.research_slot.try_acquire().map_err(|_| {
+        ApiError::Busy("a return report is being computed; ask again in a moment".to_string())
+    })?;
+    let r = recovery::report(&app, from, to).await?;
+    Ok(Json(json!({
+        "from": r.from,
+        "to": r.to,
+        "parameters": r.parameters,
+        "seasons": r.seasons,
+        "skipped": r.skipped,
+        "cells": r.cells,
+        "events_total": r.events.len(),
+        "controls_total": r.controls,
+        "events": if include { json!(r.events) } else { Value::Null },
+        "note": r.note,
     })))
 }
 
