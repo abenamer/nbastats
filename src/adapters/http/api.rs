@@ -22,7 +22,7 @@ use crate::application::ports::{
 };
 use crate::application::reports::{self, Fetching, PlayedGame, ReportError};
 use crate::application::state::SeasonLoadError;
-use crate::application::{dashboard, dynasty, worth};
+use crate::application::{boxscore, dashboard, dynasty, worth};
 use crate::application::{results_sync, scheduler};
 use crate::config::APP_VERSION;
 use crate::domain::backtesting::BacktestParams;
@@ -1079,6 +1079,34 @@ pub async fn season_player_worth(
     })))
 }
 
+/// Every player's box-score worth in a season: BPM 2.0, VORP, PER and the Elo equivalent.
+pub async fn season_box_worth(
+    State(app): State<AppState>,
+    Path(season): Path<SeasonYear>,
+) -> ApiResult<Value> {
+    let (t, rows) = boxscore::named_table(&app, season)
+        .await
+        .map_err(season_load_error)?;
+    Ok(Json(json!({
+        "season": t.season,
+        "model": t.model,
+        "games": t.games,
+        "games_without_lines": t.games_without_lines,
+        "teams_without_minutes": t.teams_without_minutes,
+        "coverage": t.coverage,
+        "bpm_available": t.bpm_available,
+        "per_available": t.per_available,
+        "per_partial": t.per_partial,
+        "league": t.league,
+        "teams": t.teams,
+        "note": t.note,
+        "replacement_level": crate::domain::bpm::REPLACEMENT_LEVEL,
+        "wins_per_vorp": crate::domain::bpm::WINS_PER_VORP,
+        "elo_per_point": crate::domain::worth::ELO_PER_POINT,
+        "players": rows,
+    })))
+}
+
 /// The latest injury report priced for a season: the penalties a forecast would apply.
 pub async fn season_availability(
     State(app): State<AppState>,
@@ -1099,23 +1127,37 @@ pub async fn player_worth(State(app): State<AppState>, Path(id): Path<i32>) -> A
         .await?
         .ok_or_else(|| ApiError::not_found(format!("no player {id}")))?;
     let mut seasons = Vec::new();
+    let mut box_seasons = Vec::new();
+    let mut seen = Vec::new();
     for s in app.store.player_seasons(id).await? {
-        if seasons.iter().any(|(y, _)| *y == s.season) {
+        if seen.contains(&s.season) {
             continue;
         }
+        seen.push(s.season);
         match worth::table(&app, s.season).await {
             Ok(t) => {
                 if let Some(w) = t.players.iter().find(|w| w.player_id == id) {
-                    seasons.push((s.season, w.clone()));
+                    seasons.push(w.clone());
                 }
             }
+            Err(SeasonLoadError::NoGames(_)) => continue,
+            Err(SeasonLoadError::Store(e)) => return Err(e.into()),
+        }
+        match boxscore::table(&app, s.season).await {
+            Ok(t) => box_seasons.extend(
+                t.players
+                    .iter()
+                    .filter(|p| p.player_id == id)
+                    .map(|p| json!({ "season": s.season, "row": p })),
+            ),
             Err(SeasonLoadError::NoGames(_)) => {}
             Err(SeasonLoadError::Store(e)) => return Err(e.into()),
         }
     }
     Ok(Json(json!({
         "player": player,
-        "seasons": seasons.iter().map(|(_, w)| w).collect::<Vec<_>>(),
+        "seasons": seasons,
+        "box_seasons": box_seasons,
     })))
 }
 

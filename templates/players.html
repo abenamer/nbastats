@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% block content %}
-<p class="lead">What a player is worth to his team's rating, from the games he missed. Each game's residual (the actual margin minus the margin the pre-game ratings expected) is regressed on the absences of both teams, with a prior that pulls every worth toward zero. The latest injury report priced the same way is what the Season Forecast takes off a team when you tick <em>Use the injury report</em>.</p>
+<p class="lead">What a player is worth to his team's rating, two ways. <strong>Worth</strong> reads the games he missed: each game's residual (the actual margin minus the margin the pre-game ratings expected) is regressed on the absences of both teams, with a prior that pulls every worth toward zero. <strong>Box</strong> reads his box score: Box Plus/Minus 2.0 and VORP from the season's lines, converted to the same Elo scale. The latest injury report priced with the first is what the Season Forecast takes off a team when you tick <em>Use the injury report</em>.</p>
 <section class="controls">
   <label>Season <select id="season">{% for s in seasons %}<option value="{{ s.season }}">{{ s.label }}</option>{% endfor %}</select></label>
   <label>Filter <input id="filter" type="search" placeholder="name or team" style="width:12rem"></label>
@@ -12,5 +12,6 @@
   <div class="panel"><h2>Player worth</h2><div id="worth" class="table-wrap"></div></div>
   <div class="panel"><h2>Out today</h2><p class="muted small" id="availabilityNote"></p><div id="availability" class="table-wrap"></div></div>
 </section>
+<section class="panel"><h2>Box-score worth</h2><p class="muted small" id="boxNote"></p><div id="box" class="table-wrap"></div></section>
 {% endblock %}
 {% block scripts %}<script src="/static/js/players.js?v={{ layout.assets }}" defer></script>{% endblock %}

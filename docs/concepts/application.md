@@ -47,7 +47,7 @@ Every table sorts on a header click: numbers as numbers, text as text, blanks la
 | Alpha Simulator | `/alpha` | The [alpha lottery](/concepts/alpha-engine.md): how often a title run happens by chance under assumed franchise strengths. Editable strengths, a franchise of interest, a fading-strength mode, scenario save, load and compare, exact validation, and the record read backwards into an implied alpha and an implied strength against the real playoff fields; the page explains its inputs and results, and the runbook [Run an alpha scenario](/runbooks/alpha-scenario.md) walks through three questions. |
 | Playoff Simulator | `/playoffs` | Historical bracket, exact and Monte Carlo probabilities, actual results. |
 | Season Forecast | `/season` | Every team's probability to reach the play-in, the playoffs, each round and the title, with the injury report priced in on request. |
-| Players | `/players` | Every player's worth in Elo from the games his team played without him, and the latest injury report priced for the forecast. |
+| Players | `/players` | Every player's worth in Elo from the games his team played without him, his box-score worth (BPM 2.0, VORP, PER) on the same scale, and the latest injury report priced for the forecast. |
 | Dynasty Lab | `/dynasty` | Expected versus actual titles and significance estimates. |
 | Validation | `/validation` | Backtest results, calibration plots, baselines and assumptions. |
 | Data | `/data` | Imports, coverage, refresh controls, database health and version; the player data (box-score backfill, injury report, player search). |
