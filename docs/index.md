@@ -28,6 +28,7 @@ This project follows the [REAS engineering standard](https://github.com/abenamer
 * [Player data](concepts/player-data.md) - Where the players, their box-score lines and the daily injury reports come from, how they match the stored games, and how a backfill resumes.
 * [Player worth and availability](concepts/player-worth.md) - How a player is valued in Elo points from the games his team played without him, and how the injury report becomes a forecast penalty.
 * [Box-score worth](concepts/box-score-worth.md) - How a player is valued from his box score with Box Plus/Minus 2.0, VORP and PER, on the same Elo scale.
+* [Return from absence](concepts/return-from-absence.md) - A report of what regular players deliver after a run of missed games against before, by their BPM and the run's length, with a matched control; it changes no forecast.
 * [Persistence model](concepts/persistence.md) - Which state is durable, where it lives and which commands keep it.
 * [Security model](concepts/security.md) - Threat model of the local-only deployment and the controls in place.
 * [Rule periods and bargaining periods](concepts/periods.md) - The period tables that group seasons on the Records page, with what each period changed.

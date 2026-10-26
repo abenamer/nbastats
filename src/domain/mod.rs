@@ -13,6 +13,7 @@ pub mod parity;
 pub mod players;
 pub mod playoffs;
 pub mod records;
+pub mod recovery;
 pub mod reference;
 pub mod simulation;
 pub mod strength;

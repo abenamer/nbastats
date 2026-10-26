@@ -1,6 +1,7 @@
 # Bundle update log
 
 ## 2026-10-26
+* **New**: [Return from absence](/concepts/return-from-absence.md) defines the return event, the three windows, the brackets and lengths, the control samples and the cells of the report, and says that it changes no forecast. The [Application overview](/concepts/application.md), the API reference and the index follow. The terms Return event and Control sample are defined.
 * **Update**: [Question box](/concepts/question-box.md): the availability and team-games tools say when a Cup-season schedule still lacks its December games; the [NBA Cup forecast](/concepts/nba-cup.md) states the 80-game rule.
 * **Update**: [Season forecast engine](/concepts/season-engine.md) states that an absence moves the simulated standings and not the simulated rating (version 1.5), the Elo-at-cutoff figure and the page's date default. [Player worth](/concepts/player-worth.md), the API and jobs references follow.
 * **Update**: [Question box](/concepts/question-box.md) lists the six player tools, the widened scope and what now leaves the computer. It gives an example answer about a team with everyone healthy. The [Security model](/concepts/security.md), [ADR 0005](/decisions/0005-question-box-via-openrouter.md), the [Application overview](/concepts/application.md), the API reference and the term Lookup follow.
