@@ -65,16 +65,18 @@ Command line alternative, for an external scheduler:
 
 ## Player data
 
-With a BALLDONTLIE tier that serves box scores, the application also stores every player's line in every stored game and the league's injury report, day by day; see [Player data](/concepts/player-data.md).
+With the BALLDONTLIE ALL-STAR tier (set `BALLDONTLIE_REQUESTS_PER_MINUTE=60`), the application also stores the player data: every player's line in every stored game, the league's injury report day by day, the source's player list and the current rosters. See [Player data](/concepts/player-data.md).
 
 * On the Data page, enter the season end year and click **Backfill box scores**. The run walks the dates with a played game and no fetch yet. A run that stops resumes on the next click with the dates left.
 * Click **Fetch today's injury report** to store the current report under today's date.
-* After each daily results sync that completed, the application fetches the current season's unfetched dates, the last 2 days again, and today's injury report. Set `PLAYER_SYNC_ENABLED=false` to turn this off and keep the buttons.
-* The free tier serves no box scores: the run fails with the API's status, the page says so, and the game results are not affected.
+* Click **Load every player** once to store the source's whole player list (one request per 100 players), and **Refresh rosters** to mark who is on a roster today.
+* After each daily results sync that completed, the application fetches the current season's unfetched dates, the last 2 days again, today's injury report and the rosters. Set `PLAYER_SYNC_ENABLED=false` to turn this off and keep the buttons.
+* The free tier serves no box scores, rosters or injury reports: the run fails with the API's status, the page says so, and the game results are not affected.
 
 Command line alternative:
 
-    docker compose exec nba-app nba-elo-simulator backfill-players 2026 --injuries
+    docker compose exec nba-app nba-elo-simulator backfill-players 2026 --injuries --rosters
+    docker compose exec nba-app nba-elo-simulator backfill-players 2026 --all-players
 
 ## Import results and the schedule
 

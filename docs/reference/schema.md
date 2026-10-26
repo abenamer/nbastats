@@ -11,6 +11,9 @@ sources:
   - id: players
     resource: /migrations/0005_players.sql
     title: Player tables
+  - id: rosters
+    resource: /migrations/0006_player_rosters.sql
+    title: Rosters and plus/minus
 ---
 
 # Reference tables
@@ -51,11 +54,11 @@ Added by migration `0005_players`; see [Player data](/concepts/player-data.md).
 
 | Table | Key | Content |
 |-------|-----|---------|
-| `players` | (source, source_id) | Name, position, height, weight, college, country, draft year, round and pick; `updated_at`. |
-| `appearances` | (game, player) | One player's line in one game: team, seconds, points, rebounds (total, offensive, defensive), assists, steals, blocks, turnovers, fouls, field goals, three-pointers and free throws made and attempted. Deleted with the game. |
+| `players` | (source, source_id) | Name, position, height, weight, college, country, draft year, round and pick; `jersey_number`, `team_id` (current team) and `active` from migration `0006`; `updated_at`. |
+| `appearances` | (game, player) | One player's line in one game: team, seconds, points, rebounds (total, offensive, defensive), assists, steals, blocks, turnovers, fouls, field goals, three-pointers and free throws made and attempted, `plus_minus` (migration `0006`). Deleted with the game. |
 | `box_score_fetches` | game date | Source, time of the fetch, lines received, matched and unmatched. |
 | `injury_reports` | (report date, player) | Team, status, expected return date, description, time of the fetch. |
 
 # Indexes
 
-Games are indexed by (season, date), by (season, Elo source), by home team and by away team. Jobs are indexed by status and by kind. The parameters column has a GIN index for containment queries. Appearances are indexed by player and by team; injury reports by player.
+Games are indexed by (season, date), by (season, Elo source), by home team and by away team. Jobs are indexed by status and by kind. The parameters column has a GIN index for containment queries. Appearances are indexed by player and by team; injury reports by player; players by current team.

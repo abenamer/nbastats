@@ -25,12 +25,14 @@
   <p class="muted small">CSV layout: <code>date,home,away,home_score,away_score,neutral,playoff</code>. Leave the scores empty for games not yet played. Team codes as in the Elo Explorer (OKC, GSW, …). Uploading again replaces the season's games that did not come from the archive; archive games always stand.</p>
 </section>
 <section class="panel"><h2>Players, box scores and injury reports</h2>
-  <p class="small">Player data comes from the BALLDONTLIE API: every player's box-score line in every stored game (minutes, points, rebounds, assists, steals, blocks, turnovers, fouls, shooting), matched to the game by date and team, and the league's injury report, kept day by day. Box scores need a BALLDONTLIE tier that serves them; the free tier does not. A backfill walks the dates of a season that have a played game and no fetch yet, so a run that stops resumes where it stopped. After the daily results sync the application fetches the last days' box scores and today's injury report.</p>
+  <p class="small">Player data comes from the BALLDONTLIE API (the ALL-STAR tier or above). It holds every player's box-score line in every stored game (minutes, points, rebounds, assists, steals, blocks, turnovers, fouls, shooting, plus/minus), matched to the game by date and team. It holds the league's injury report day by day, the source's whole player list and the current rosters. A backfill walks the dates of a season that have a played game and no fetch yet, so a run that stops resumes where it stopped. After the daily results sync the application fetches the last days' box scores, today's injury report and the rosters.</p>
   <div id="playerCoverage" class="kv"></div>
   <div class="row">
     <label>Season (end year) <input id="playerSeason" type="number" min="1947" max="2100" style="width:6rem"></label>
     <button id="playerBackfill">Backfill box scores</button>
     <button id="playerInjuries">Fetch today's injury report</button>
+    <button id="playerRosters">Refresh rosters</button>
+    <button id="playerLoadAll">Load every player</button>
     <span id="playerHint" class="muted small"></span>
   </div>
   <div id="playerStatus" class="small" style="margin:.5rem 0"></div>

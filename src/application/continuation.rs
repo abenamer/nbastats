@@ -159,7 +159,13 @@ fn resolve_games(
                 home: h.id,
                 away: a.id,
                 neutral: r.neutral,
-                playoff: r.playoff,
+                game_type: if r.playoff {
+                    GameType::Playoff
+                } else if r.cup_final {
+                    GameType::CupFinal
+                } else {
+                    GameType::Regular
+                },
                 home_score: r.home_score,
                 away_score: r.away_score,
             }),
@@ -220,11 +226,7 @@ async fn store_rated<S: GameStore + ImportLog>(
             home: r.game.home,
             away: r.game.away,
             neutral: r.game.neutral,
-            game_type: if r.game.playoff {
-                GameType::Playoff
-            } else {
-                GameType::Regular
-            },
+            game_type: r.game.game_type,
             home_score: r.game.home_score,
             away_score: r.game.away_score,
             home_elo_pre: r.home_elo_pre,
@@ -348,6 +350,7 @@ impl From<&ResultRow> for ResultRecord {
             away_code: r.away.clone(),
             neutral: r.neutral,
             playoff: r.playoff,
+            cup_final: false,
             home_score: r.home_score,
             away_score: r.away_score,
         }
@@ -490,7 +493,7 @@ pub async fn project_season<S: GameStore + ImportLog>(
             home: g.home_team_id,
             away: g.away_team_id,
             neutral: g.neutral,
-            playoff: false,
+            game_type: GameType::Regular,
             home_score: None,
             away_score: None,
         })

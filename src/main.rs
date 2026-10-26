@@ -63,6 +63,12 @@ enum Command {
         /// Also store today's injury report
         #[arg(long)]
         injuries: bool,
+        /// Also load the source's whole player list (every player, active or not)
+        #[arg(long)]
+        all_players: bool,
+        /// Also refresh the current rosters (which players are active, and where)
+        #[arg(long)]
+        rosters: bool,
     },
     /// Container health check: GET /healthz on the bound address (exit 0 when healthy)
     Healthcheck,
@@ -192,7 +198,12 @@ async fn main() -> anyhow::Result<()> {
             println!("{}", serde_json::to_string_pretty(&outcome)?);
             Ok(())
         }
-        Command::BackfillPlayers { season, injuries } => {
+        Command::BackfillPlayers {
+            season,
+            injuries,
+            all_players,
+            rosters,
+        } => {
             let season = SeasonYear::try_new(season)?;
             let results = results.ok_or_else(|| {
                 anyhow::anyhow!(
@@ -226,6 +237,14 @@ async fn main() -> anyhow::Result<()> {
                 let lines =
                     players::fetch_injury_report(&store, &results, today, &progress).await?;
                 outcome.injury_report = Some((today, lines));
+            }
+            if all_players {
+                outcome.players_loaded =
+                    Some(players::load_all_players(&store, &results, &progress).await?);
+            }
+            if rosters {
+                outcome.active_players =
+                    Some(players::refresh_active_players(&store, &results, &progress).await?);
             }
             println!("{}", serde_json::to_string_pretty(&outcome)?);
             Ok(())

@@ -270,6 +270,9 @@ struct ApiGame {
     visitor_team_score: i32,
     home_team: ApiTeam,
     visitor_team: ApiTeam,
+    /// The NBA Cup stage, for Cup games only (`Championship` is the final).
+    #[serde(default)]
+    ist_stage: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -298,8 +301,17 @@ fn parse_date(s: &str) -> Option<NaiveDate> {
     NaiveDate::parse_from_str(day, "%Y-%m-%d").ok()
 }
 
+/// Whether a Cup stage names the final (`Championship` in the API's document), which does
+/// not count in the standings. The stage is given from the 2025-26 season on.
+fn is_cup_final(stage: Option<&str>) -> bool {
+    stage
+        .map(str::trim)
+        .is_some_and(|s| s.eq_ignore_ascii_case("championship"))
+}
+
 /// Parse one page of `GET /games`. A game counts as played only when its status is `Final`;
-/// every other game becomes a scheduled game without scores.
+/// every other game becomes a scheduled game without scores. A game whose Cup stage is the
+/// final is the Cup final.
 pub fn parse_games_page(body: &[u8]) -> Result<ParsedPage, SourceError> {
     let page: GamesPage =
         serde_json::from_slice(body).map_err(|e| SourceError::InvalidPayload(e.to_string()))?;
@@ -314,6 +326,7 @@ pub fn parse_games_page(body: &[u8]) -> Result<ParsedPage, SourceError> {
             away_code: dataset_code(&g.visitor_team.abbreviation),
             neutral: false,
             playoff: g.postseason,
+            cup_final: is_cup_final(g.ist_stage.as_deref()),
             home_score: played.then_some(g.home_team_score),
             away_score: played.then_some(g.visitor_team_score),
         });
@@ -365,14 +378,20 @@ mod tests {
        "home_team":{"id":3,"abbreviation":"BKN"},"visitor_team":{"id":4,"abbreviation":"CHA"}},
       {"id":3,"date":"2026-04-20","season":2025,"status":"Final","postseason":true,
        "home_team_score":101,"visitor_team_score":99,
-       "home_team":{"id":24,"abbreviation":"PHX"},"visitor_team":{"id":14,"abbreviation":"LAL"}}
+       "home_team":{"id":24,"abbreviation":"PHX"},"visitor_team":{"id":14,"abbreviation":"LAL"}},
+      {"id":4,"date":"2025-12-16","season":2025,"status":"Final","postseason":false,"ist_stage":"Championship",
+       "home_team_score":110,"visitor_team_score":100,
+       "home_team":{"id":21,"abbreviation":"OKC"},"visitor_team":{"id":17,"abbreviation":"MIL"}},
+      {"id":5,"date":"2025-12-13","season":2025,"status":"Final","postseason":false,"ist_stage":"West Semifinal",
+       "home_team_score":105,"visitor_team_score":100,
+       "home_team":{"id":21,"abbreviation":"OKC"},"visitor_team":{"id":24,"abbreviation":"PHX"}}
     ],"meta":{"next_cursor":3,"per_page":100}}"#;
 
     #[test]
     fn parses_played_scheduled_and_postseason_games() {
         let page = parse_games_page(PAGE.as_bytes()).unwrap();
         assert_eq!(page.next_cursor, Some(3));
-        assert_eq!(page.records.len(), 3);
+        assert_eq!(page.records.len(), 5);
         let g = &page.records[0];
         assert_eq!(g.date, NaiveDate::from_ymd_opt(2025, 10, 21).unwrap());
         assert_eq!((g.home_code.as_str(), g.away_code.as_str()), ("OKC", "HOU"));
@@ -385,6 +404,11 @@ mod tests {
         let p = &page.records[2];
         assert_eq!(p.home_code, "PHO");
         assert!(p.playoff);
+        assert!(!p.cup_final);
+        // The Cup final is marked; a Cup semifinal is a regular-season game.
+        assert!(page.records[3].cup_final && !page.records[3].playoff);
+        assert!(!page.records[4].cup_final);
+        assert!(!g.cup_final);
     }
 
     #[test]
@@ -416,6 +440,8 @@ mod tests {
 const INJURIES_PATH: &str = "player_injuries";
 const STATS_PATH: &str = "stats";
 const TEAMS_PATH: &str = "teams";
+const PLAYERS_PATH: &str = "players";
+const ACTIVE_PLAYERS_PATH: &str = "players/active";
 
 impl BalldontlieSource {
     /// One request to `path` with `query`, paced and retried like a games page.
@@ -481,6 +507,43 @@ impl BalldontlieSource {
         }
     }
 
+    /// Every page of a players endpoint, with each player's team resolved.
+    async fn players_from(
+        &self,
+        path: &str,
+        progress: &dyn FetchProgressSink,
+    ) -> Result<Vec<PlayerRecord>, SourceError> {
+        let teams = self.team_codes(progress).await?;
+        let mut players = Vec::new();
+        let mut cursor: Option<i64> = None;
+        for requests in 0..MAX_PAGES {
+            let mut query = vec![("per_page", PER_PAGE.to_string())];
+            if let Some(c) = cursor {
+                query.push(("cursor", c.to_string()));
+            }
+            let so_far = FetchProgress {
+                requests,
+                games: players.len(),
+                ..Default::default()
+            };
+            let body = self.get(path, &query, progress, so_far).await?;
+            let page = parse_players_page(&body, &teams)?;
+            players.extend(page.players);
+            progress.report(FetchProgress {
+                requests: requests + 1,
+                games: players.len(),
+                ..Default::default()
+            });
+            match page.next_cursor {
+                Some(c) => cursor = Some(c),
+                None => return Ok(players),
+            }
+        }
+        Err(SourceError::InvalidPayload(format!(
+            "more than {MAX_PAGES} pages of players"
+        )))
+    }
+
     /// The source's team identifiers by abbreviation, fetched once.
     async fn team_codes(
         &self,
@@ -539,6 +602,20 @@ impl PlayerSource for BalldontlieSource {
         Err(SourceError::InvalidPayload(format!(
             "more than {MAX_PAGES} pages of box scores for one date"
         )))
+    }
+
+    async fn all_players(
+        &self,
+        progress: &dyn FetchProgressSink,
+    ) -> Result<Vec<PlayerRecord>, SourceError> {
+        self.players_from(PLAYERS_PATH, progress).await
+    }
+
+    async fn active_players(
+        &self,
+        progress: &dyn FetchProgressSink,
+    ) -> Result<Vec<PlayerRecord>, SourceError> {
+        self.players_from(ACTIVE_PLAYERS_PATH, progress).await
     }
 
     async fn injury_report(
@@ -601,10 +678,44 @@ struct ApiPlayer {
     #[serde(default)]
     draft_number: Option<i32>,
     #[serde(default)]
+    jersey_number: Option<String>,
+    /// The current team, as the spec gives it.
+    #[serde(default)]
+    team: Option<ApiPlayerTeam>,
+    /// The current team's identifier, as older payloads gave it.
+    #[serde(default)]
     team_id: Option<i64>,
 }
 
+#[derive(Debug, Deserialize)]
+struct ApiPlayerTeam {
+    #[serde(default)]
+    id: Option<i64>,
+    #[serde(default)]
+    abbreviation: Option<String>,
+}
+
 impl ApiPlayer {
+    /// The player's current team in the dataset's codes: from the team object, else from
+    /// the team identifier through `teams`.
+    fn team_code(&self, teams: &HashMap<i64, String>) -> Option<String> {
+        if let Some(code) = self
+            .team
+            .as_ref()
+            .and_then(|t| t.abbreviation.as_deref())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            return Some(dataset_code(code));
+        }
+        self.team
+            .as_ref()
+            .and_then(|t| t.id)
+            .or(self.team_id)
+            .and_then(|id| teams.get(&id))
+            .cloned()
+    }
+
     fn record(&self) -> PlayerRecord {
         let clean = |s: &Option<String>| {
             s.as_deref()
@@ -624,6 +735,16 @@ impl ApiPlayer {
             draft_year: self.draft_year,
             draft_round: self.draft_round,
             draft_number: self.draft_number,
+            jersey_number: clean(&self.jersey_number),
+            team_code: None,
+        }
+    }
+
+    /// The record with the current team resolved.
+    fn record_with_team(&self, teams: &HashMap<i64, String>) -> PlayerRecord {
+        PlayerRecord {
+            team_code: self.team_code(teams),
+            ..self.record()
         }
     }
 }
@@ -672,6 +793,8 @@ struct ApiStat {
     ftm: Option<i32>,
     #[serde(default)]
     fta: Option<i32>,
+    #[serde(default)]
+    plus_minus: Option<i32>,
     player: ApiPlayer,
     team: ApiStatTeam,
     game: ApiStatGame,
@@ -736,10 +859,42 @@ pub fn parse_stats_page(body: &[u8]) -> Result<ParsedStats, SourceError> {
             fg3a: s.fg3a,
             ftm: s.ftm,
             fta: s.fta,
+            plus_minus: s.plus_minus,
         });
     }
     Ok(ParsedStats {
         lines,
+        next_cursor: page.meta.next_cursor,
+    })
+}
+
+#[derive(Debug, Deserialize)]
+struct PlayersPage {
+    data: Vec<ApiPlayer>,
+    #[serde(default)]
+    meta: Meta,
+}
+
+#[derive(Debug, Default, PartialEq)]
+pub struct ParsedPlayers {
+    pub players: Vec<PlayerRecord>,
+    pub next_cursor: Option<i64>,
+}
+
+/// Parse one page of `GET /players` or `GET /players/active`, with each player's current
+/// team resolved.
+pub fn parse_players_page(
+    body: &[u8],
+    teams: &HashMap<i64, String>,
+) -> Result<ParsedPlayers, SourceError> {
+    let page: PlayersPage =
+        serde_json::from_slice(body).map_err(|e| SourceError::InvalidPayload(e.to_string()))?;
+    Ok(ParsedPlayers {
+        players: page
+            .data
+            .iter()
+            .map(|p| p.record_with_team(teams))
+            .collect(),
         next_cursor: page.meta.next_cursor,
     })
 }
@@ -790,8 +945,9 @@ pub struct ParsedInjuries {
     pub next_cursor: Option<i64>,
 }
 
-/// Parse one page of `GET /player_injuries`. A line whose player has no team the source
-/// names is dropped: the report is by team.
+/// Parse one page of `GET /player_injuries`. The team comes from the player's team object
+/// (the spec), else from his team identifier through `teams`. A line whose player has no
+/// team is dropped: the report is by team.
 pub fn parse_injuries_page(
     body: &[u8],
     teams: &HashMap<i64, String>,
@@ -800,11 +956,11 @@ pub fn parse_injuries_page(
         serde_json::from_slice(body).map_err(|e| SourceError::InvalidPayload(e.to_string()))?;
     let mut records = Vec::with_capacity(page.data.len());
     for i in page.data {
-        let Some(team_code) = i.player.team_id.and_then(|id| teams.get(&id)).cloned() else {
+        let Some(team_code) = i.player.team_code(teams) else {
             continue;
         };
         records.push(InjuryRecord {
-            player: i.player.record(),
+            player: i.player.record_with_team(teams),
             team_code,
             status: i
                 .status
@@ -844,7 +1000,7 @@ mod player_tests {
     }
 
     const STATS: &str = r#"{"data":[
-      {"id":1,"min":"34:12","fgm":9,"fga":20,"fg3m":5,"fg3a":12,"ftm":7,"fta":8,"oreb":1,"dreb":4,"reb":5,"ast":7,"stl":1,"blk":0,"turnover":3,"pf":2,"pts":30,
+      {"id":1,"min":"34:12","fgm":9,"fga":20,"fg3m":5,"fg3a":12,"ftm":7,"fta":8,"oreb":1,"dreb":4,"reb":5,"ast":7,"stl":1,"blk":0,"turnover":3,"pf":2,"pts":30,"plus_minus":-4,
        "player":{"id":115,"first_name":"Stephen","last_name":"Curry","position":"G","height":"6-2","weight":"185","jersey_number":"30","college":"Davidson","country":"USA","draft_year":2009,"draft_round":1,"draft_number":7,"team_id":10},
        "team":{"id":10,"abbreviation":"GSW","full_name":"Golden State Warriors"},
        "game":{"id":5,"date":"2019-06-13","season":2018,"status":"Final","home_team_id":10,"visitor_team_id":28,"postseason":true}},
@@ -870,11 +1026,15 @@ mod player_tests {
         assert_eq!(c.player.last_name, "Curry");
         assert_eq!(c.player.draft_number, Some(7));
         assert_eq!(
-            (c.seconds, c.pts, c.tov, c.fg3m),
-            (Some(2052), Some(30), Some(3), Some(5))
+            (c.seconds, c.pts, c.tov, c.fg3m, c.plus_minus),
+            (Some(2052), Some(30), Some(3), Some(5), Some(-4))
         );
+        assert_eq!(c.player.jersey_number.as_deref(), Some("30"));
         let d = &page.lines[1];
-        assert_eq!((d.seconds, d.pts, d.reb), (None, Some(0), None));
+        assert_eq!(
+            (d.seconds, d.pts, d.reb, d.plus_minus),
+            (None, Some(0), None, None)
+        );
         let k = &page.lines[2];
         assert_eq!(k.team_code, "TOR");
         assert_eq!(k.player.position, None);
@@ -890,17 +1050,19 @@ mod player_tests {
         assert_eq!(teams[&4], "CHO");
         let page = parse_injuries_page(
             br#"{"data":[
-              {"player":{"id":115,"first_name":"Stephen","last_name":"Curry","team_id":10},"return_date":"2026-11-02","description":"Right knee; out","status":"Out"},
+              {"player":{"id":115,"first_name":"Stephen","last_name":"Curry","team":{"id":10,"abbreviation":"GSW","full_name":"Golden State Warriors"}},"return_date":"2026-11-02","description":"Right knee; out","status":"Out"},
               {"player":{"id":7,"first_name":"Nobody","last_name":"Traded","team_id":99},"status":"Day-To-Day"},
-              {"player":{"id":8,"first_name":"Blank","last_name":"Status","team_id":4},"status":"  "}
+              {"player":{"id":8,"first_name":"Blank","last_name":"Status","team_id":4},"status":"  "},
+              {"player":{"id":9,"first_name":"No","last_name":"Team","team":{"id":null,"abbreviation":""}},"status":"Out"}
             ],"meta":{"per_page":100}}"#,
             &teams,
         )
         .unwrap();
         assert_eq!(page.next_cursor, None);
-        assert_eq!(page.records.len(), 2);
+        assert_eq!(page.records.len(), 2, "no team: dropped");
         let c = &page.records[0];
         assert_eq!((c.team_code.as_str(), c.status.as_str()), ("GSW", "Out"));
+        assert_eq!(c.player.team_code.as_deref(), Some("GSW"));
         assert_eq!(c.return_date, NaiveDate::from_ymd_opt(2026, 11, 2));
         assert_eq!(c.description.as_deref(), Some("Right knee; out"));
         assert_eq!(
@@ -910,5 +1072,34 @@ mod player_tests {
             ),
             ("CHO", "Unknown")
         );
+    }
+
+    #[test]
+    fn parses_players_with_their_current_team() {
+        let teams = parse_teams_page(br#"{"data":[{"id":4,"abbreviation":"CHA"}]}"#).unwrap();
+        let page = parse_players_page(
+            br#"{"data":[
+              {"id":115,"first_name":" Stephen ","last_name":"Curry","position":"G","jersey_number":"30","team":{"id":10,"abbreviation":"GSW"}},
+              {"id":7,"first_name":"Old","last_name":"Timer","team_id":4},
+              {"id":8,"first_name":"Free","last_name":"Agent","jersey_number":"","team":{"id":0,"abbreviation":""}}
+            ],"meta":{"next_cursor":8,"per_page":100}}"#,
+            &teams,
+        )
+        .unwrap();
+        assert_eq!(page.next_cursor, Some(8));
+        assert_eq!(page.players.len(), 3);
+        let c = &page.players[0];
+        assert_eq!(
+            (c.first_name.as_str(), c.jersey_number.as_deref()),
+            ("Stephen", Some("30"))
+        );
+        assert_eq!(c.team_code.as_deref(), Some("GSW"));
+        assert_eq!(
+            page.players[1].team_code.as_deref(),
+            Some("CHO"),
+            "by identifier"
+        );
+        assert_eq!(page.players[2].team_code, None);
+        assert_eq!(page.players[2].jersey_number, None);
     }
 }

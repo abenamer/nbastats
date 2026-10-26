@@ -56,19 +56,21 @@ sources:
 | `POST /api/data/results` | Multipart upload in the results layout. Fields: `file`, `season`. Archive games of the season stand; the season's ratings are computed again. |
 | `DELETE /api/data/seasons/{season}` | Remove a season without archive games. Status 400 for a season with archive games. |
 | `POST /api/data/sync` | Start a background sync of a season from BALLDONTLIE; archive games stand and only the games the archive does not have are added. Body: `{"season": 2026}`. Returns at once. Status 400 when `BALLDONTLIE_API_KEY` is not set, 409 when a sync is already running. |
-| `GET /api/data/sync/status` | State of the last or current sync: `idle`, `fetching` (season, trigger, requests, games, seconds until the next request), `done` (outcome) or `failed` (error). |
-| `GET /api/data/players?season=2026` | Player data coverage: `coverage` (players, lines, dates fetched with the first and last, injury-report days with the latest), and for the season given its `fetches` (date, time, lines, matched, unmatched, players) and `dates_missing` (played dates without a fetch); `configured` (a results source exists), `daily_sync` (the daily player sync is on) and `settling_days`. See [Player data](/concepts/player-data.md). |
-| `GET /api/data/players/status` | State of the last or current player sync: `idle`, `fetching` (kind, trigger, dates total and done, current date, lines, requests, seconds until the next request), `done` (outcome: dates fetched, lines, matched, unmatched, players, injury report) or `failed` (error, and the outcome stored before the failure). |
+| `GET /api/data/sync/status` | State of the last or current sync: `idle`, `fetching` (season, trigger, requests, games, seconds until the next request), `done` (outcome) or `failed` (error). A synced game whose Cup stage is the final is stored as a Cup final. |
+| `GET /api/data/players?season=2026` | Player data coverage. `coverage` holds the players, `active_players`, lines, dates fetched with the first and last, and injury-report days with the latest. For the season given, `fetches` lists each date with its time, lines, matched, unmatched and players, and `dates_missing` counts the played dates without a fetch. `configured` says a results source exists, `daily_sync` that the daily player sync is on, and `settling_days` the window. See [Player data](/concepts/player-data.md). |
+| `GET /api/data/players/status` | State of the last or current player sync: `idle`, `fetching` (kind, trigger, dates total and done, current date, lines, requests, seconds until the next request), `done` (outcome: dates fetched, lines, matched, unmatched, players, `injury_report`, `players_loaded`, `active_players`) or `failed` (error, and the outcome stored before the failure). |
 | `POST /api/data/players/backfill` | Start a background fetch of the box scores of every unfetched date of a season. Body: `{"season": 2026}`. Status 400 when `BALLDONTLIE_API_KEY` is not set, 409 when a player sync is already running. |
 | `POST /api/data/players/injuries` | Start a background fetch of today's injury report. No body. Status 400 and 409 as above. |
+| `POST /api/data/players/load` | Start a background load of the source's whole player list (every player, active or not). No body. Status 400 and 409 as above. |
+| `POST /api/data/players/rosters` | Start a background refresh of the current rosters: the listed players become active, the others inactive. No body. Status 400 and 409 as above. |
 
 # Players
 
 | Method and path | Function |
 |-----------------|----------|
 | `GET /api/players?q=curry` | Players whose name contains `q` (case-insensitive, at least two characters, at most 80), at most 25, by last name. Status 400 for a shorter query. |
-| `GET /api/players/{id}` | One player and his `seasons`: for each season and team, the games, the playoff games, the seconds and the points. Status 404 for an unknown identifier. |
-| `GET /api/players/{id}/games?season=2026` | The player's box-score lines in the season, in game order, each with the game's date, type, team, opponent, side and the full stat line. Without `season`, the latest season stored for the player. |
+| `GET /api/players/{id}` | One player (with `jersey_number`, the current `team_code` and `active`) and his `seasons`: for each season and team, the games, the playoff games, the seconds and the points. Status 404 for an unknown identifier. |
+| `GET /api/players/{id}/games?season=2026` | The player's box-score lines in the season, in game order, each with the game's date, type, team, opponent, side and the full stat line (`plus_minus` included). Without `season`, the latest season stored for the player. |
 | `GET /api/games/{id}/box-score` | Every stored line of one game: the home team's lines first, each team by seconds played. |
 | `GET /api/injuries?date=2026-01-15` | The injury report stored for the date: player, team, status, expected return, description. Without `date`, the latest report stored; `date` is null when none is. |
 

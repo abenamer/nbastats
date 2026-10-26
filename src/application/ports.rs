@@ -428,6 +428,8 @@ pub struct ResultRecord {
     pub away_code: String,
     pub neutral: bool,
     pub playoff: bool,
+    /// The NBA Cup final, which does not count in the standings.
+    pub cup_final: bool,
     pub home_score: Option<i32>,
     pub away_score: Option<i32>,
 }
@@ -678,6 +680,9 @@ pub struct PlayerRecord {
     pub draft_year: Option<i32>,
     pub draft_round: Option<i32>,
     pub draft_number: Option<i32>,
+    pub jersey_number: Option<String>,
+    /// The player's current team as the source lists it, in the dataset's code convention.
+    pub team_code: Option<String>,
 }
 
 /// One player's line in a box score, with the game named by its date and the player's
@@ -707,6 +712,7 @@ pub struct BoxScoreLine {
     pub fg3a: Option<i32>,
     pub ftm: Option<i32>,
     pub fta: Option<i32>,
+    pub plus_minus: Option<i32>,
 }
 
 /// One line of the injury report: a player, his team, his status and the return date when
@@ -736,6 +742,16 @@ pub trait PlayerSource: Send + Sync {
         &self,
         progress: &dyn FetchProgressSink,
     ) -> Result<Vec<InjuryRecord>, SourceError>;
+    /// Every player the source lists, active or not.
+    async fn all_players(
+        &self,
+        progress: &dyn FetchProgressSink,
+    ) -> Result<Vec<PlayerRecord>, SourceError>;
+    /// The players on a current roster, each with his team.
+    async fn active_players(
+        &self,
+        progress: &dyn FetchProgressSink,
+    ) -> Result<Vec<PlayerRecord>, SourceError>;
 }
 
 /// A stored player.
@@ -754,6 +770,11 @@ pub struct Player {
     pub draft_year: Option<i32>,
     pub draft_round: Option<i32>,
     pub draft_number: Option<i32>,
+    pub jersey_number: Option<String>,
+    /// The current team the source lists, when the store knows the team.
+    pub team_code: Option<String>,
+    /// Listed by the last roster refresh.
+    pub active: bool,
 }
 
 /// A stored box-score line, joined to its game.
@@ -784,6 +805,7 @@ pub struct Appearance {
     pub fg3a: Option<i32>,
     pub ftm: Option<i32>,
     pub fta: Option<i32>,
+    pub plus_minus: Option<i32>,
 }
 
 /// What one date's box-score fetch stored: the lines matched to a stored game, and the
@@ -821,6 +843,8 @@ pub struct InjuryLine {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Default)]
 pub struct PlayerCoverage {
     pub players: i64,
+    /// Players the last roster refresh listed.
+    pub active_players: i64,
     pub appearances: i64,
     pub dates_fetched: i64,
     pub first_date_fetched: Option<NaiveDate>,
@@ -851,6 +875,12 @@ pub trait PlayerStore: Send + Sync {
     ) -> StoreResult<i64>;
     async fn injury_report(&self, date: NaiveDate) -> StoreResult<Vec<InjuryLine>>;
     async fn latest_injury_report_date(&self) -> StoreResult<Option<NaiveDate>>;
+    /// Upsert players in one transaction; returns how many were written.
+    async fn save_players(&self, source: &str, players: &[PlayerRecord]) -> StoreResult<i64>;
+    /// Upsert the roster players and mark them active, and every other player of the
+    /// source inactive, in one transaction. Returns the active count.
+    async fn save_active_players(&self, source: &str, players: &[PlayerRecord])
+        -> StoreResult<i64>;
     /// Players whose name contains `query` (case-insensitive), at most `limit`.
     async fn search_players(&self, query: &str, limit: i64) -> StoreResult<Vec<Player>>;
     async fn player(&self, id: PlayerId) -> StoreResult<Option<Player>>;

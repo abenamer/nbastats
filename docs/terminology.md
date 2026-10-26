@@ -17,7 +17,8 @@ These are project-specific technical terms. They are not a reproduction of the A
 | Term | Meaning |
 | --- | --- |
 | Alpha | Strength weight of a franchise in Engine A. The title probability is alpha divided by the sum of all alphas. |
-| Appearance | One player's box-score line in one stored game: team, seconds played and the counting statistics. Stored in `appearances`, keyed by game and player. |
+| Active player | A player the last roster refresh listed on a team. Stored as the `active` flag with the current team; every other player of the source is inactive. |
+| Appearance | One player's box-score line in one stored game: team, seconds played, the counting statistics and plus/minus. Stored in `appearances`, keyed by game and player. |
 | Bargaining period | A run of NBA/BAA seasons under one collective bargaining agreement, from the first season the agreement applied to. The table of periods and their changes is curated in `domain::cba`; see [Rule periods and bargaining periods](/concepts/periods.md). |
 | Box-score fetch | The record that one date's box scores were fetched: the source, the time and the counts of lines received, matched and unmatched. A backfill skips the dates that have one. |
 | Bracket | The 16 playoff slots and their pairings. Slots 0 to 7 are the East, 8 to 15 the West. |
@@ -62,8 +63,8 @@ These are project-specific technical terms. They are not a reproduction of the A
 | Player era | The seasons a listed player was active, from the curated table in `domain::players`; a season belongs to every listed player active in it. |
 | Port | A trait in `application::ports` that the application requires from the outside world. |
 | Projection | A placeholder season: the previous season's matchups one year later, no scores, reverted ratings. |
-| Player source | The `PlayerSource` port: the box-score lines of one date and the current injury report from the BALLDONTLIE API. The adapter is `BalldontlieSource`, the same as the results source. |
-| Player sync | One run of the player data fetch: a backfill of a season, the daily run (unfetched dates, the settling dates, the injury report) or an injury report alone. One at a time. |
+| Player source | The `PlayerSource` port: the box-score lines of one date, the current injury report, the whole player list and the current rosters from the BALLDONTLIE API. The adapter is `BalldontlieSource`, the same as the results source. |
+| Player sync | One run of the player data fetch. It is a backfill of a season, the daily run (unfetched dates, the settling dates, the injury report, the rosters), an injury report, a roster refresh or a load of the player list. One at a time. |
 | Projected bracket | The most likely playoff bracket of a season forecast. Each seed goes in turn to the team that held it most often in the simulated seasons among the teams not yet placed. The bracket is priced exactly at the cutoff date's ratings and shown with the share of simulated seasons that had this exact seeding and this field. It is one bracket of very many, not the forecast. |
 | Question box | The panel on the Dashboard that answers a plain-language question from the stored data through a language model with read-only tools, and declines every other question with a fixed sentence. |
 | Reference rating | The archive's rating before or after an archive game, kept beside the application's rating for validation. |
