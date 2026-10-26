@@ -225,6 +225,25 @@ pub struct DataPage {
     pub layout: Layout,
 }
 
+#[derive(Template)]
+#[template(path = "players.html")]
+pub struct PlayersPage {
+    pub layout: Layout,
+    pub seasons: Vec<Season>,
+}
+
+pub async fn players(State(app): State<AppState>) -> Response {
+    let seasons = season_list(&app)
+        .await
+        .into_iter()
+        .filter(|s| s.season >= SeasonYear::FIRST_MODERN)
+        .collect();
+    render(PlayersPage {
+        layout: Layout::new("Players", "players"),
+        seasons,
+    })
+}
+
 pub async fn data(State(_app): State<AppState>) -> Response {
     render(DataPage {
         layout: Layout::new("Data Management", "data"),

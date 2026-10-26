@@ -1,6 +1,7 @@
 # Bundle update log
 
 ## 2026-10-26
+* **New**: [Player worth and availability](/concepts/player-worth.md) defines the worth of a player from his team's games without him and the pricing of the injury report into the season forecast. The [Season forecast engine](/concepts/season-engine.md) gains the Availability section, the API and jobs references, the [Application overview](/concepts/application.md) and the index follow. The terms Absence, Player worth and Residual (game) are defined.
 * **Update**: [Player data](/concepts/player-data.md) describes the run over every season and the background backfill loop (`PLAYER_BACKFILL_FROM`). The API and configuration references, the import runbook and the term Player sync follow.
 * **Update**: [Player data](/concepts/player-data.md) lists every ALL-STAR data set the application uses, from the API's OpenAPI document and pricing page, and the GOAT endpoints it does not. The player list and the rosters join the box scores and the injury report. Plus/minus, jersey number and current team are stored. The Cup final is recognised from the game's Cup stage, and a synced game keeps its type. The schema, API and configuration references, the import runbook, [Elo continuation](/concepts/elo-continuation.md), the [Security model](/concepts/security.md) and the terms Active player, Appearance, Player source and Player sync follow.
 

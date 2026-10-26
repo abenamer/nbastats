@@ -912,6 +912,14 @@ pub trait PlayerStore: Send + Sync {
     async fn player_seasons(&self, id: PlayerId) -> StoreResult<Vec<PlayerSeason>>;
     /// Every line of one stored game.
     async fn game_appearances(&self, game_id: i64) -> StoreResult<Vec<Appearance>>;
+    /// Every line of a season, reduced to who was on the box score and whether he played:
+    /// minutes above zero, or counting stats when the minutes are unknown.
+    async fn season_lines(
+        &self,
+        season: SeasonYear,
+    ) -> StoreResult<Vec<crate::domain::worth::Line>>;
+    /// The players with these identifiers, in no particular order.
+    async fn players_by_id(&self, ids: &[PlayerId]) -> StoreResult<Vec<Player>>;
     async fn player_coverage(&self) -> StoreResult<PlayerCoverage>;
 }
 

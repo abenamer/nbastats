@@ -17,6 +17,7 @@ These are project-specific technical terms. They are not a reproduction of the A
 | Term | Meaning |
 | --- | --- |
 | Alpha | Strength weight of a franchise in Engine A. The title probability is alpha divided by the sum of all alphas. |
+| Absence | A game of a player's team between his first and last game for it in the season that he did not play. The unit the worth is measured on; also, in a forecast, a rating penalty for a team over a span of dates. |
 | Active player | A player the last roster refresh listed on a team. Stored as the `active` flag with the current team; every other player of the source is inactive. |
 | Appearance | One player's box-score line in one stored game: team, seconds played, the counting statistics and plus/minus. Stored in `appearances`, keyed by game and player. |
 | Bargaining period | A run of NBA/BAA seasons under one collective bargaining agreement, from the first season the agreement applied to. The table of periods and their changes is curated in `domain::cba`; see [Rule periods and bargaining periods](/concepts/periods.md). |
@@ -64,6 +65,7 @@ These are project-specific technical terms. They are not a reproduction of the A
 | Port | A trait in `application::ports` that the application requires from the outside world. |
 | Projection | A placeholder season: the previous season's matchups one year later, no scores, reverted ratings. |
 | Player source | The `PlayerSource` port: the box-score lines of one date, the current injury report, the whole player list and the current rosters from the BALLDONTLIE API. The adapter is `BalldontlieSource`, the same as the results source. |
+| Player worth | What a team loses per game without a player, in points of margin and in Elo, from the ridge regression of the game residuals on the absences; with a standard error. See [Player worth](/concepts/player-worth.md). |
 | Player sync | One run of the player data fetch. It is a backfill of a season or of every season, the daily run, an injury report, a roster refresh or a load of the player list. The daily run covers the unfetched dates, the settling dates, the injury report and the rosters. One at a time. |
 | Projected bracket | The most likely playoff bracket of a season forecast. Each seed goes in turn to the team that held it most often in the simulated seasons among the teams not yet placed. The bracket is priced exactly at the cutoff date's ratings and shown with the share of simulated seasons that had this exact seeding and this field. It is one bracket of very many, not the forecast. |
 | Question box | The panel on the Dashboard that answers a plain-language question from the stored data through a language model with read-only tools, and declines every other question with a fixed sentence. |
@@ -78,6 +80,7 @@ These are project-specific technical terms. They are not a reproduction of the A
 | Series score | The score of one played playoff series: the probability a model gave the actual winner against the actual loser with the actual home court, read as a two-sided Brier score, a log loss and whether the favourite won. Fifteen a season; defined in `domain::backtesting`. |
 | Seed | Playoff position 1 to 8 inside a conference. |
 | Series | A best-of-five or best-of-seven playoff matchup. A `SeriesState` is either in progress or decided. |
+| Residual (game) | The actual margin minus the margin the pre-game ratings expected, at 28 Elo per point with the ratings' home bonus. |
 | Settling window | The last 2 days before today. The daily player sync fetches their box scores again, because a date fetched while a game was on holds partial lines. |
 | Store | The `PostgresStore` adapter, which implements every store port. |
 | Threshold (K) | The title count that counts as a dynasty in the Alpha Simulator: the results report how often a franchise wins K or more titles. |

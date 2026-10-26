@@ -47,6 +47,10 @@ The forecast is a distribution over thousands of brackets, not one bracket. The 
 
 Two heat maps show the distribution the bracket is drawn from: each team's chance of each regular-season position in its conference, and of each playoff seed after the play-in when the season has one. The season model version is `elo-season-1.1` from this change; a result stored under 1.0 has no projected bracket.
 
+# Availability
+
+A forecast may carry absences: a rating penalty per team over a span of dates, from the latest injury report priced by each player's worth; see [Player worth and availability](player-worth.md). The engine subtracts a team's penalties from its rating for the simulated regular-season games the span covers, for the result only; the play-in and the playoffs run at the full ratings. The team table shows each team's mean penalty over its remaining games, and the result counts the absences applied. The season model version is `elo-season-1.3` from this change.
+
 # Information cutoff
 
 Only games on or before the cutoff date inform the forecast. A cutoff inside the playoffs is moved back to the day before the first playoff game. The integration test `forecasts_never_use_future_information` checks that a forecast does not change when later games are removed from the input.
