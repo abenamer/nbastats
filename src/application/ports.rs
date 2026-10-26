@@ -839,6 +839,21 @@ pub struct InjuryLine {
     pub description: Option<String>,
 }
 
+/// One season's box-score coverage: the dates with a played game, and how many of them
+/// have a fetch record.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct SeasonBackfill {
+    pub season: SeasonYear,
+    pub dates_total: i64,
+    pub dates_fetched: i64,
+}
+
+impl SeasonBackfill {
+    pub fn is_complete(&self) -> bool {
+        self.dates_fetched >= self.dates_total
+    }
+}
+
 /// Counts of the player tables, for the Data page.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Default)]
 pub struct PlayerCoverage {
@@ -866,6 +881,9 @@ pub trait PlayerStore: Send + Sync {
     /// The dates in `season` that have a played game in the store and no box-score fetch.
     async fn dates_without_box_scores(&self, season: SeasonYear) -> StoreResult<Vec<NaiveDate>>;
     async fn box_score_fetches(&self, season: SeasonYear) -> StoreResult<Vec<BoxScoreFetch>>;
+    /// Every season with a played game: its played dates and how many are fetched, oldest
+    /// first.
+    async fn backfill_progress(&self) -> StoreResult<Vec<SeasonBackfill>>;
     /// Replace the injury report of `date` in one transaction, upserting the players seen.
     async fn save_injury_report(
         &self,

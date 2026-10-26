@@ -1298,11 +1298,14 @@ pub async fn players_data(
         ),
         None => (vec![], 0),
     };
+    let backfill = app.store.backfill_progress().await?;
     Ok(Json(json!({
         "coverage": coverage,
         "season": season,
         "fetches": fetches,
         "dates_missing": dates_missing,
+        "backfill": backfill,
+        "backfill_from": app.config.player_backfill_from,
         "configured": app.results.is_some(),
         "daily_sync": app.sync_schedule.is_some() && app.config.player_sync_enabled,
         "settling_days": players::SETTLING_DAYS,
@@ -1338,6 +1341,37 @@ pub async fn players_backfill(
             season: body.season,
         },
     )
+}
+
+#[derive(Deserialize)]
+pub struct BackfillAllBody {
+    /// The first season to fetch; the earliest stored season when absent.
+    pub from: Option<SeasonYear>,
+}
+
+/// Fetch the box scores of every unfetched date of every season from `from` to the
+/// current season, newest first, in the background.
+pub async fn players_backfill_all(
+    State(app): State<AppState>,
+    Json(body): Json<BackfillAllBody>,
+) -> ApiResult<Value> {
+    let from = match body.from {
+        Some(s) => s,
+        None => app
+            .store
+            .backfill_progress()
+            .await?
+            .first()
+            .map(|s| s.season)
+            .unwrap_or(SeasonYear::MIN),
+    };
+    let to = scheduler::current_season(app.today());
+    if from > to {
+        return Err(ApiError::bad_request(format!(
+            "from must be a season up to the current one ({to})"
+        )));
+    }
+    start_player_sync(&app, PlayerSyncKind::BackfillAll { from, to })
 }
 
 /// Fetch and store today's injury report, in the background.

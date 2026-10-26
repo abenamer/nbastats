@@ -30,12 +30,14 @@
   <div class="row">
     <label>Season (end year) <input id="playerSeason" type="number" min="1947" max="2100" style="width:6rem"></label>
     <button id="playerBackfill">Backfill box scores</button>
+    <button id="playerBackfillAll">Backfill every season</button>
     <button id="playerInjuries">Fetch today's injury report</button>
     <button id="playerRosters">Refresh rosters</button>
     <button id="playerLoadAll">Load every player</button>
     <span id="playerHint" class="muted small"></span>
   </div>
   <div id="playerStatus" class="small" style="margin:.5rem 0"></div>
+  <div id="playerBackfillSummary" class="small muted" style="margin:.5rem 0"></div>
   <div class="row"><label>Find a player <input id="playerQuery" type="search" placeholder="at least two letters of the name" style="width:16rem"></label></div>
   <div id="playerResults" class="table-wrap"></div>
   <details><summary class="small">Dates fetched for that season</summary><div id="playerFetches" class="table-wrap"></div></details>

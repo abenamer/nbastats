@@ -111,6 +111,7 @@
   function playerKind(k) {
     if (!k) return 'Player sync';
     if (k.kind === 'backfill') return `Box-score backfill of ${label(k.season)}`;
+    if (k.kind === 'backfill_all') return `Box-score backfill of every season ${label(k.from)} to ${label(k.to)}`;
     if (k.kind === 'daily') return `Daily player sync of ${label(k.season)}`;
     if (k.kind === 'all_players') return 'Player list load';
     if (k.kind === 'active_players') return 'Roster refresh';
@@ -123,8 +124,9 @@
     switch (st.phase) {
       case 'fetching': {
         const wait = st.waiting_secs != null ? ` · ${st.rate_limited ? 'rate limited by the API, retrying' : 'next request'} in ${st.waiting_secs} s` : '';
+        const season = st.season ? ` ${label(st.season)} (season ${st.seasons_done + 1} of ${st.seasons_total}),` : '';
         const dates = st.dates_total ? ` date ${st.dates_done + 1} of ${st.dates_total}${st.current_date ? ` (${st.current_date})` : ''},` : '';
-        return `⏳ ${who}:${dates} ${st.requests} request${st.requests === 1 ? '' : 's'}, ${st.lines.toLocaleString()} lines so far${wait} · running ${secs(st.started_at)}`;
+        return `⏳ ${who}:${season}${dates} ${st.requests} request${st.requests === 1 ? '' : 's'}, ${st.lines.toLocaleString()} lines so far${wait} · running ${secs(st.started_at)}`;
       }
       case 'done': return `✓ ${who} finished ${new Date(st.finished_at).toLocaleString()}: ${outcome(st.outcome)}.`;
       case 'failed': return `✗ ${who} failed ${new Date(st.finished_at).toLocaleString()}: ${st.error}${st.outcome.dates_fetched ? ` Stored before the failure: ${outcome(st.outcome)}.` : ''}`;
@@ -137,7 +139,13 @@
     const c = d.coverage;
     document.getElementById('playerCoverage').innerHTML = `<div>Players</div><div>${c.players.toLocaleString()} (${c.active_players} on current rosters)</div><div>Box-score lines</div><div>${c.appearances.toLocaleString()}</div><div>Dates fetched</div><div>${c.dates_fetched.toLocaleString()}${c.first_date_fetched ? ` (${c.first_date_fetched} → ${c.last_date_fetched})` : ''}</div><div>Injury reports</div><div>${c.injury_report_dates} day${c.injury_report_dates === 1 ? '' : 's'}${c.last_injury_report ? `, latest ${c.last_injury_report}` : ''}</div>` + (d.season ? `<div>${label(d.season)}</div><div>${d.fetches.length} date${d.fetches.length === 1 ? '' : 's'} fetched, ${d.dates_missing} with played games and no box scores yet</div>` : '');
     const configured = d.configured;
-    ['playerBackfill', 'playerInjuries', 'playerRosters', 'playerLoadAll'].forEach(id => { document.getElementById(id).disabled = !configured; });
+    ['playerBackfill', 'playerBackfillAll', 'playerInjuries', 'playerRosters', 'playerLoadAll'].forEach(id => { document.getElementById(id).disabled = !configured; });
+    const left = d.backfill.filter(b => b.dates_fetched < b.dates_total);
+    const datesLeft = left.reduce((n, b) => n + b.dates_total - b.dates_fetched, 0);
+    const loop = d.backfill_from ? ` The background backfill from ${label(d.backfill_from)} is on (PLAYER_BACKFILL_FROM) and runs season by season until nothing is left.` : (configured ? ' Set PLAYER_BACKFILL_FROM to a season end year to let the application backfill every season on its own, across restarts.' : '');
+    document.getElementById('playerBackfillSummary').textContent = d.backfill.length
+      ? (left.length ? `Box scores still missing in ${left.length} of ${d.backfill.length} seasons (${datesLeft.toLocaleString()} dates): ${left.slice(-6).map(b => `${label(b.season)} ${b.dates_fetched}/${b.dates_total}`).join(', ')}${left.length > 6 ? ', …' : ''}.` : `Every played date of all ${d.backfill.length} seasons has its box scores.`) + loop
+      : '';
     document.getElementById('playerHint').textContent = configured
       ? (d.daily_sync ? `The daily results sync is followed by the player sync: the season's unfetched dates, the last ${d.settling_days} days again, today's injury report and the rosters. Loading every player is a one-time step (one request per 100 players).` : 'No daily sync (RESULTS_SYNC_ENABLED or PLAYER_SYNC_ENABLED is false); the buttons fetch now.')
       : 'Not configured: set BALLDONTLIE_API_KEY in .env and restart the application.';
@@ -165,6 +173,7 @@
     if (!season) { document.getElementById('playerStatus').textContent = 'Enter the season to backfill.'; return; }
     startPlayerSync('/api/data/players/backfill', { season });
   });
+  document.getElementById('playerBackfillAll').addEventListener('click', () => startPlayerSync('/api/data/players/backfill-all', {}));
   document.getElementById('playerInjuries').addEventListener('click', () => startPlayerSync('/api/data/players/injuries', {}));
   document.getElementById('playerRosters').addEventListener('click', () => startPlayerSync('/api/data/players/rosters', {}));
   document.getElementById('playerLoadAll').addEventListener('click', () => startPlayerSync('/api/data/players/load', {}));

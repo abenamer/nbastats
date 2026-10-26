@@ -1,6 +1,7 @@
 # Bundle update log
 
 ## 2026-10-26
+* **Update**: [Player data](/concepts/player-data.md) describes the run over every season and the background backfill loop (`PLAYER_BACKFILL_FROM`). The API and configuration references, the import runbook and the term Player sync follow.
 * **Update**: [Player data](/concepts/player-data.md) lists every ALL-STAR data set the application uses, from the API's OpenAPI document and pricing page, and the GOAT endpoints it does not. The player list and the rosters join the box scores and the injury report. Plus/minus, jersey number and current team are stored. The Cup final is recognised from the game's Cup stage, and a synced game keeps its type. The schema, API and configuration references, the import runbook, [Elo continuation](/concepts/elo-continuation.md), the [Security model](/concepts/security.md) and the terms Active player, Appearance, Player source and Player sync follow.
 
 ## 2026-10-25
