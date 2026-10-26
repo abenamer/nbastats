@@ -31,7 +31,7 @@ use crate::domain::eras::{
     self, Dimension, Facet, GroupQuery, Scope, DYNASTY_GAP, DYNASTY_TITLES, MAX_DIMENSIONS,
     MAX_FACETS,
 };
-use crate::domain::ids::{PlayerId, SeasonYear};
+use crate::domain::ids::{PlayerId, SeasonYear, TeamId};
 use crate::domain::models::{JobKind, SimulationJob};
 use crate::domain::playoffs::bracket::ModelSpec;
 use crate::domain::playoffs::season::SeasonParams;
@@ -840,13 +840,16 @@ pub async fn submit_playoff(
 }
 
 /// A season forecast request: the parameters, a name, and whether to price the latest
-/// injury report into the forecast.
+/// injury report into the forecast, and `sample_worth` to draw each absence's penalty from
+/// its standard error in every simulated season (else the errors are dropped).
 #[derive(Deserialize)]
 pub struct SeasonRequest {
     #[serde(flatten)]
     pub named: Named<SeasonParams>,
     #[serde(default)]
     pub use_injury_report: bool,
+    #[serde(default)]
+    pub sample_worth: bool,
 }
 
 pub async fn submit_season(
@@ -859,13 +862,28 @@ pub async fn submit_season(
     if params.regular_home_advantage.is_none() {
         params.regular_home_advantage = Some(app.home_advantage(params.season).await?.regular);
     }
+    // The given parameters are checked before any work is done for them.
+    params.validate(limits(&app).max_iterations)?;
     // The injury report becomes absences in the stored parameters, so the forecast says
-    // what it priced in.
-    if body.use_injury_report && params.absences.is_empty() {
-        params.absences = worth::availability(&app, params.season)
+    // what it priced in. An absence given for a player replaces his report line; the rest
+    // of the report is added.
+    if body.use_injury_report {
+        let given = params.absences.len();
+        let report = worth::availability(&app, params.season)
             .await
             .map_err(season_load_error)?
             .absences;
+        params.absences = worth::merge_with_report(params.absences, report);
+        if params.absences.len() > crate::domain::worth::MAX_ABSENCES {
+            return Err(ApiError::bad_request(format!(
+                "the injury report adds {} absences to the {given} given; at most {} in all",
+                params.absences.len() - given,
+                crate::domain::worth::MAX_ABSENCES
+            )));
+        }
+    }
+    if !body.sample_worth {
+        worth::fix_penalties(&mut params.absences);
     }
     queue(&app, SeasonJob(params), body.named.name).await
 }
@@ -1126,9 +1144,10 @@ pub async fn player_worth(State(app): State<AppState>, Path(id): Path<i32>) -> A
         .player(id)
         .await?
         .ok_or_else(|| ApiError::not_found(format!("no player {id}")))?;
-    let mut seasons = Vec::new();
+    let mut seasons: Vec<Value> = Vec::new();
     let mut box_seasons = Vec::new();
     let mut seen = Vec::new();
+    let mut team_ids: Vec<TeamId> = Vec::new();
     for s in app.store.player_seasons(id).await? {
         if seen.contains(&s.season) {
             continue;
@@ -1137,7 +1156,11 @@ pub async fn player_worth(State(app): State<AppState>, Path(id): Path<i32>) -> A
         match worth::table(&app, s.season).await {
             Ok(t) => {
                 if let Some(w) = t.players.iter().find(|w| w.player_id == id) {
-                    seasons.push(w.clone());
+                    team_ids.extend(w.teams.iter().copied());
+                    // The row names its season, which the worth itself does not carry.
+                    let mut row = json!(w);
+                    row["season"] = json!(s.season);
+                    seasons.push(row);
                 }
             }
             Err(SeasonLoadError::NoGames(_)) => continue,
@@ -1154,10 +1177,27 @@ pub async fn player_worth(State(app): State<AppState>, Path(id): Path<i32>) -> A
             Err(SeasonLoadError::Store(e)) => return Err(e.into()),
         }
     }
+    // The team codes of every team the rows refer to, so a page can name them.
+    let teams = app.teams().await?;
+    let mut codes = serde_json::Map::new();
+    let mut name = |id: TeamId| {
+        if let Some(t) = teams.get(&id) {
+            codes.insert(id.as_i32().to_string(), json!(t.code));
+        }
+    };
+    for t in team_ids {
+        name(t);
+    }
+    for b in &box_seasons {
+        if let Some(id) = b["row"]["team_id"].as_i64() {
+            name(TeamId::new(id as i32));
+        }
+    }
     Ok(Json(json!({
         "player": player,
         "seasons": seasons,
         "box_seasons": box_seasons,
+        "teams": codes,
     })))
 }
 

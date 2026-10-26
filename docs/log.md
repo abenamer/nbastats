@@ -1,6 +1,7 @@
 # Bundle update log
 
 ## 2026-10-26
+* **Update**: [Season forecast engine](/concepts/season-engine.md) describes the absences drawn from their standard error and version 1.4; [Player worth](/concepts/player-worth.md) gains the section Players marked out; the API and jobs references, the [Application overview](/concepts/application.md) and the term Absence follow.
 * **New**: [Box-score worth](/concepts/box-score-worth.md) defines the second estimate of a player's worth, from his box score: Box Plus/Minus 2.0, VORP and PER, the Elo scale, the choices the published method left open and the coverage by era. [Player worth](/concepts/player-worth.md), the API reference, the [Application overview](/concepts/application.md) and the index follow. The terms Box Plus/Minus, Box worth, PER, Possession and VORP are defined.
 * **New**: [Player worth and availability](/concepts/player-worth.md) defines the worth of a player from his team's games without him and the pricing of the injury report into the season forecast. The [Season forecast engine](/concepts/season-engine.md) gains the Availability section, the API and jobs references, the [Application overview](/concepts/application.md) and the index follow. The terms Absence, Player worth and Residual (game) are defined.
 * **Update**: [Player data](/concepts/player-data.md) describes the run over every season and the background backfill loop (`PLAYER_BACKFILL_FROM`). The API and configuration references, the import runbook and the term Player sync follow.

@@ -513,6 +513,10 @@ pub struct Absence {
     pub elo: f64,
     #[serde(default)]
     pub player_id: Option<PlayerId>,
+    /// The standard error of the penalty. Above zero, the season engine draws the penalty
+    /// of each simulated season from it; at zero the penalty is fixed.
+    #[serde(default)]
+    pub se_elo: f64,
 }
 
 impl Absence {
@@ -529,6 +533,8 @@ pub struct ReportedAbsence {
     pub status: AbsenceStatus,
     pub return_date: Option<NaiveDate>,
     pub worth_elo: f64,
+    /// The standard error of the worth, in Elo; zero when the estimate has none.
+    pub se_elo: f64,
 }
 
 /// The penalties of a report dated `report_date`. A line lasts until the day before the
@@ -554,24 +560,59 @@ pub fn absences_from_report(
                 return None;
             }
             let elo = (r.worth_elo * r.status.weight()).min(MAX_ABSENCE_ELO);
+            let se_elo = (r.se_elo.max(0.0) * r.status.weight()).min(MAX_ABSENCE_ELO);
             (elo > 0.0).then_some(Absence {
                 team_id: r.team_id,
                 from: report_date,
                 to,
                 elo,
                 player_id: Some(r.player_id),
+                se_elo,
             })
         })
         .collect()
 }
 
-/// The penalty of `team` on `date`: the sum of its absences that cover the date.
+/// The penalty of `team` on `date`: the sum of its absences that cover the date. An
+/// absence with a standard error counts its expected drawn penalty, see
+/// [`expected_penalty`].
 pub fn penalty(absences: &[Absence], team: TeamId, date: NaiveDate) -> f64 {
     absences
         .iter()
         .filter(|a| a.team_id == team && a.covers(date))
-        .map(|a| a.elo)
+        .map(|a| expected_penalty(a.elo, a.se_elo))
         .sum()
+}
+
+/// The mean of a penalty drawn from a normal distribution around `elo` with standard error
+/// `se`, held between zero and the cap: what the engine applies on average. A small
+/// estimate with a large error is pulled upward, because the draw stops at zero. With no
+/// error it is `elo` itself.
+pub fn expected_penalty(elo: f64, se: f64) -> f64 {
+    if se <= 0.0 {
+        return elo.clamp(0.0, MAX_ABSENCE_ELO);
+    }
+    let a = (0.0 - elo) / se;
+    let b = (MAX_ABSENCE_ELO - elo) / se;
+    elo * (normal_cdf(b) - normal_cdf(a))
+        + se * (normal_pdf(a) - normal_pdf(b))
+        + MAX_ABSENCE_ELO * (1.0 - normal_cdf(b))
+}
+
+fn normal_pdf(x: f64) -> f64 {
+    (-0.5 * x * x).exp() / (2.0 * std::f64::consts::PI).sqrt()
+}
+
+/// The standard normal distribution function, by Abramowitz and Stegun 7.1.26 (error
+/// below 1.5e-7).
+fn normal_cdf(x: f64) -> f64 {
+    let z = x / std::f64::consts::SQRT_2;
+    let t = 1.0 / (1.0 + 0.3275911 * z.abs());
+    let poly = t
+        * (0.254829592
+            + t * (-0.284496736 + t * (1.421413741 + t * (-1.453152027 + t * 1.061405429))));
+    let erf = 1.0 - poly * (-z * z).exp();
+    0.5 * (1.0 + if z < 0.0 { -erf } else { erf })
 }
 
 #[cfg(test)]
@@ -889,7 +930,19 @@ mod tests {
             status,
             return_date: None,
             worth_elo: 100.0,
+            se_elo: 0.0,
         };
+        // The error follows the status weight, then the cap, as the penalty does.
+        let mut noisy = line(AbsenceStatus::Questionable);
+        noisy.se_elo = 100.0;
+        let a = absences_from_report(&[noisy], d(1), d(99));
+        assert_eq!((a[0].elo, a[0].se_elo), (50.0, 50.0));
+        let mut capped = line(AbsenceStatus::Out);
+        capped.se_elo = 1000.0;
+        assert_eq!(
+            absences_from_report(&[capped], d(1), d(99))[0].se_elo,
+            MAX_ABSENCE_ELO
+        );
         assert!(absences_from_report(&[line(AbsenceStatus::Available)], d(1), d(99)).is_empty());
         assert!(absences_from_report(&[line(AbsenceStatus::Unknown)], d(1), d(99)).is_empty());
         assert_eq!(
@@ -909,6 +962,7 @@ mod tests {
                 status: AbsenceStatus::Out,
                 return_date: Some(d(15)),
                 worth_elo: 120.0,
+                se_elo: 0.0,
             },
             ReportedAbsence {
                 player_id: PlayerId::new(2),
@@ -916,6 +970,7 @@ mod tests {
                 status: AbsenceStatus::Questionable,
                 return_date: None,
                 worth_elo: 60.0,
+                se_elo: 0.0,
             },
             ReportedAbsence {
                 player_id: PlayerId::new(3),
@@ -923,6 +978,7 @@ mod tests {
                 status: AbsenceStatus::OutForSeason,
                 return_date: None,
                 worth_elo: 900.0,
+                se_elo: 0.0,
             },
             // Back already, worthless, or a return date in the past: no penalty.
             ReportedAbsence {
@@ -931,6 +987,7 @@ mod tests {
                 status: AbsenceStatus::Out,
                 return_date: Some(d(10)),
                 worth_elo: 50.0,
+                se_elo: 0.0,
             },
             ReportedAbsence {
                 player_id: PlayerId::new(5),
@@ -938,6 +995,7 @@ mod tests {
                 status: AbsenceStatus::Out,
                 return_date: None,
                 worth_elo: -20.0,
+                se_elo: 0.0,
             },
         ];
         let out = absences_from_report(&reported, report, d(40));
@@ -953,5 +1011,32 @@ mod tests {
         assert_eq!(penalty(&out, team, d(14)), 120.0 + MAX_ABSENCE_ELO);
         assert_eq!(penalty(&out, team, d(15)), MAX_ABSENCE_ELO);
         assert_eq!(penalty(&out, TeamId::new(2), d(10)), 0.0);
+    }
+
+    #[test]
+    fn the_expected_penalty_is_the_mean_of_the_held_draw() {
+        // Reference values from numerical integration of clamp(N(elo, se), 0, 400).
+        for (elo, se, want) in [
+            (0.0, 60.0, 23.9),
+            (20.0, 70.0, 39.1),
+            (60.0, 60.0, 65.0),
+            (100.0, 100.0, 108.3),
+            (150.0, 60.0, 150.1),
+            (380.0, 60.0, 364.7),
+        ] {
+            let got = expected_penalty(elo, se);
+            assert!((got - want).abs() < 0.1, "{elo} ± {se}: {got} vs {want}");
+        }
+        assert_eq!(expected_penalty(150.0, 0.0), 150.0);
+        assert_eq!(expected_penalty(-20.0, 0.0), 0.0);
+        let a = Absence {
+            team_id: TeamId::new(1),
+            from: d(1),
+            to: d(5),
+            elo: 0.0,
+            player_id: None,
+            se_elo: 60.0,
+        };
+        assert!((penalty(&[a], TeamId::new(1), d(3)) - 23.9).abs() < 0.1);
     }
 }

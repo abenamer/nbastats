@@ -1909,6 +1909,7 @@ mod players {
         // The injury report priced: Out with a return date, for the Warriors.
         let worth_elo = w.worth_elo;
         let reported = vec![worth::ReportedAbsence {
+            se_elo: 0.0,
             player_id: w.player_id,
             team_id: gsw,
             status: worth::AbsenceStatus::Out,

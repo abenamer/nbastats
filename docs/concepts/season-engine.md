@@ -49,7 +49,9 @@ Two heat maps show the distribution the bracket is drawn from: each team's chanc
 
 # Availability
 
-A forecast may carry absences: a rating penalty per team over a span of dates, from the latest injury report priced by each player's worth; see [Player worth and availability](player-worth.md). The engine subtracts a team's penalties from its rating for the simulated regular-season games the span covers, for the result only; the play-in and the playoffs run at the full ratings. The team table shows each team's mean penalty over its remaining games, and the result counts the absences applied. The season model version is `elo-season-1.3` from this change.
+A forecast may carry absences: a rating penalty per team over a span of dates. They come from the latest injury report priced by each player's worth, or from players the user marks out; see [Player worth and availability](player-worth.md). The engine subtracts a team's penalties from its rating for the simulated regular-season games the span covers, for the result only. The play-in and the playoffs run at the full ratings. The team table shows each team's mean penalty over its remaining games, and the result counts the absences applied. Two absences of one team add up; two absences of one player with overlapping spans are refused.
+
+An absence may carry the standard error of its penalty. When it does, every simulated season draws the penalty from a normal distribution around the estimate, held between zero and the cap. The forecast's spread then reflects how little is known about the worth. The reported penalty is the mean of that held draw. For an estimate well inside the range it equals the estimate. An estimate within about two errors of zero is pulled upward, because the draw stops at zero. An estimate of 0 with an error of 60 applies about 24 Elo on average. An error of zero gives the fixed penalty, and the same seed then gives the same forecast as before. The result counts the absences sampled. The season model version is `elo-season-1.4` from this change (1.3 introduced the absences).
 
 # Information cutoff
 

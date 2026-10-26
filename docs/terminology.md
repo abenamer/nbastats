@@ -17,7 +17,7 @@ These are project-specific technical terms. They are not a reproduction of the A
 | Term | Meaning |
 | --- | --- |
 | Alpha | Strength weight of a franchise in Engine A. The title probability is alpha divided by the sum of all alphas. |
-| Absence | A game of a player's team between his first and last game for it in the season that he did not play. The unit the worth is measured on; also, in a forecast, a rating penalty for a team over a span of dates. |
+| Absence | A game of a player's team between his first and last game for it in the season that he did not play. The unit the worth is measured on; also, in a forecast, a rating penalty for a team over a span of dates, with an optional standard error the engine draws from. |
 | Active player | A player the last roster refresh listed on a team. Stored as the `active` flag with the current team; every other player of the source is inactive. |
 | Appearance | One player's box-score line in one stored game: team, seconds played, the counting statistics and plus/minus. Stored in `appearances`, keyed by game and player. |
 | Bargaining period | A run of NBA/BAA seasons under one collective bargaining agreement, from the first season the agreement applied to. The table of periods and their changes is curated in `domain::cba`; see [Rule periods and bargaining periods](/concepts/periods.md). |

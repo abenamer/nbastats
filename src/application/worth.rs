@@ -8,11 +8,13 @@ use std::sync::Arc;
 use chrono::NaiveDate;
 use serde::Serialize;
 
+use crate::domain::bpm::BoxTable;
 use crate::domain::ids::{PlayerId, SeasonYear, TeamId};
 use crate::domain::worth::{
     self, Absence, AbsenceStatus, PlayerWorth, ReportedAbsence, WorthParams, WorthTable,
 };
 
+use super::boxscore;
 use super::ports::{GameLog, Player, PlayerStore, StoreError};
 use super::state::{App, SeasonLoadError};
 
@@ -39,9 +41,14 @@ pub struct CurrentAbsence {
     pub status: AbsenceStatus,
     pub status_text: String,
     pub return_date: Option<NaiveDate>,
-    /// The worth used, in Elo, and the season it comes from; `None` without an estimate.
+    /// The worth used, in Elo, its standard error and the season it comes from; `None`
+    /// without an estimate.
     pub worth_elo: Option<f64>,
+    pub se_elo: Option<f64>,
     pub worth_season: Option<SeasonYear>,
+    /// Which estimate priced the line: the player worth from the missed games, or the
+    /// box-score worth when the first is missing or within one error of zero.
+    pub worth_source: Option<WorthSource>,
     /// The penalty the forecast applies, when any: the worth weighted by the status.
     pub penalty_elo: Option<f64>,
     pub until: Option<NaiveDate>,
@@ -155,23 +162,118 @@ async fn lookback_tables(
     Ok(out)
 }
 
+/// The box-score tables of the season and the `WORTH_LOOKBACK` before it, latest first;
+/// a season without games or without usable box scores is left out.
+async fn box_lookback_tables(
+    app: &App,
+    season: SeasonYear,
+) -> Result<Vec<(SeasonYear, Arc<BoxTable>)>, SeasonLoadError> {
+    let mut out = Vec::new();
+    let mut s = Some(season);
+    for _ in 0..=WORTH_LOOKBACK {
+        let Some(current) = s else { break };
+        match boxscore::table(app, current).await {
+            Ok(t) if t.bpm_available => out.push((current, t)),
+            Ok(_) | Err(SeasonLoadError::NoGames(_)) => {}
+            Err(e) => return Err(e),
+        }
+        s = current.previous();
+    }
+    Ok(out)
+}
+
 /// The estimate to price a player with, among the tables given: the one with the
 /// smallest standard error, so a season with one absence does not displace a full
 /// season before it. Ties go to the latest season.
 pub fn pick_estimate(
     tables: &[(SeasonYear, Arc<WorthTable>)],
     player: PlayerId,
-) -> Option<(f64, SeasonYear)> {
+) -> Option<Estimate> {
     tables
         .iter()
         .filter_map(|(season, t)| {
             t.players
                 .iter()
                 .find(|w| w.player_id == player)
-                .map(|w| (w.se_points, *season, w.worth_elo))
+                .map(|w| (w.se_points, *season, w.worth_elo, w.se_elo))
         })
         .min_by(|a, b| a.0.total_cmp(&b.0).then(b.1.cmp(&a.1)))
-        .map(|(_, season, elo)| (elo, season))
+        .map(|(_, season, elo, se_elo)| Estimate {
+            elo,
+            se_elo,
+            season,
+            source: WorthSource::Worth,
+        })
+}
+
+/// The worth estimate a report line is priced with.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Estimate {
+    pub elo: f64,
+    pub se_elo: f64,
+    pub season: SeasonYear,
+    pub source: WorthSource,
+}
+
+/// Where a worth estimate comes from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WorthSource {
+    /// The regression on the games the team played without the player.
+    Worth,
+    /// Box Plus/Minus over replacement, per game played; it has no standard error.
+    Box,
+}
+
+/// The box-score estimate for a player among the tables given (latest season first): the
+/// box worth of his stint with the most minutes in the latest season that has one.
+pub fn pick_box_estimate(
+    tables: &[(SeasonYear, Arc<BoxTable>)],
+    player: PlayerId,
+) -> Option<Estimate> {
+    tables.iter().find_map(|(season, t)| {
+        t.players
+            .iter()
+            .filter(|p| p.player_id == player)
+            .max_by(|a, b| a.minutes.total_cmp(&b.minutes))
+            .map(|p| Estimate {
+                elo: p.worth_elo,
+                se_elo: 0.0,
+                season: *season,
+                source: WorthSource::Box,
+            })
+    })
+}
+
+/// The estimate to price a player with: the player worth when it stands at least one
+/// standard error from zero, else the box-score worth when there is one, else whichever
+/// exists.
+pub fn choose_estimate(worth: Option<Estimate>, boxed: Option<Estimate>) -> Option<Estimate> {
+    match (worth, boxed) {
+        (Some(w), Some(b)) if w.elo.abs() < w.se_elo => Some(b),
+        (Some(w), _) => Some(w),
+        (None, b) => b,
+    }
+}
+
+/// The absences a forecast takes when the injury report is used beside absences given by
+/// hand: a given absence for a player replaces his report line; the rest of the report is
+/// added after the given ones.
+pub fn merge_with_report(mut given: Vec<Absence>, report: Vec<Absence>) -> Vec<Absence> {
+    let players: Vec<PlayerId> = given.iter().filter_map(|a| a.player_id).collect();
+    given.extend(
+        report
+            .into_iter()
+            .filter(|a| a.player_id.is_none_or(|p| !players.contains(&p))),
+    );
+    given
+}
+
+/// Fix every penalty at its estimate: no error, no draw.
+pub fn fix_penalties(absences: &mut [Absence]) {
+    for a in absences {
+        a.se_elo = 0.0;
+    }
 }
 
 /// A report older than this before the season's first game, or dated after its last game,
@@ -217,6 +319,7 @@ pub async fn availability(app: &App, season: SeasonYear) -> Result<Availability,
         ));
     }
     let tables = lookback_tables(app, season).await?;
+    let box_tables = box_lookback_tables(app, season).await?;
     let report = app.store.injury_report(report_date).await?;
     let teams = app.store.team_code_map().await?;
     let mut lines = Vec::with_capacity(report.len());
@@ -226,13 +329,17 @@ pub async fn availability(app: &App, season: SeasonYear) -> Result<Availability,
             continue;
         };
         let status = AbsenceStatus::parse(&l.status);
-        let found = pick_estimate(&tables, l.player_id);
-        let entry = found.map(|(w, _)| ReportedAbsence {
+        let found = choose_estimate(
+            pick_estimate(&tables, l.player_id),
+            pick_box_estimate(&box_tables, l.player_id),
+        );
+        let entry = found.map(|e| ReportedAbsence {
             player_id: l.player_id,
             team_id: team.id,
             status,
             return_date: l.return_date,
-            worth_elo: w,
+            worth_elo: e.elo,
+            se_elo: e.se_elo,
         });
         let applied = entry
             .as_ref()
@@ -247,8 +354,10 @@ pub async fn availability(app: &App, season: SeasonYear) -> Result<Availability,
             status,
             status_text: l.status.clone(),
             return_date: l.return_date,
-            worth_elo: found.map(|(w, _)| w),
-            worth_season: found.map(|(_, s)| s),
+            worth_elo: found.map(|e| e.elo),
+            se_elo: found.map(|e| e.se_elo),
+            worth_season: found.map(|e| e.season),
+            worth_source: found.map(|e| e.source),
             penalty_elo: one.map(|a| a.elo),
             until: one.map(|a| a.to),
         });
@@ -317,9 +426,115 @@ mod tests {
         ];
         assert_eq!(
             pick_estimate(&tables, PlayerId::new(1)),
-            Some((120.0, SeasonYear::of(2025)))
+            Some(Estimate {
+                elo: 120.0,
+                se_elo: 1.2 * 28.0,
+                season: SeasonYear::of(2025),
+                source: WorthSource::Worth,
+            })
         );
         assert_eq!(pick_estimate(&tables, PlayerId::new(2)), None);
         assert_eq!(pick_estimate(&[], PlayerId::new(1)), None);
+    }
+
+    fn absence(player: Option<i32>, elo: f64, se: f64) -> Absence {
+        let d = |day: u32| NaiveDate::from_ymd_opt(2026, 1, day).unwrap();
+        Absence {
+            team_id: TeamId::new(1),
+            from: d(1),
+            to: d(20),
+            elo,
+            player_id: player.map(PlayerId::new),
+            se_elo: se,
+        }
+    }
+
+    #[test]
+    fn a_given_absence_replaces_the_players_report_line_and_the_rest_is_added() {
+        let given = vec![absence(Some(1), 100.0, 40.0), absence(None, 30.0, 0.0)];
+        let report = vec![absence(Some(1), 50.0, 10.0), absence(Some(2), 20.0, 5.0)];
+        let mut merged = merge_with_report(given, report);
+        assert_eq!(merged.len(), 3);
+        assert_eq!(
+            merged.iter().map(|a| a.elo).collect::<Vec<_>>(),
+            vec![100.0, 30.0, 20.0]
+        );
+        fix_penalties(&mut merged);
+        assert!(merged.iter().all(|a| a.se_elo == 0.0));
+        assert_eq!(merged[0].elo, 100.0);
+    }
+
+    #[test]
+    fn the_box_estimate_takes_the_longest_stint_of_the_latest_season() {
+        use crate::domain::bpm::{BoxTable, Coverage, LeagueBox, PlayerBox};
+        let row = |team: i32, minutes: f64, elo: f64| PlayerBox {
+            player_id: PlayerId::new(1),
+            team_id: TeamId::new(team),
+            games: 10,
+            minutes,
+            minutes_share: 0.5,
+            position: 3.0,
+            offensive_role: 3.0,
+            pts_per_100: 20.0,
+            raw_bpm: 0.0,
+            bpm: 0.0,
+            obpm: 0.0,
+            dbpm: 0.0,
+            vorp: 0.0,
+            wins: 0.0,
+            per: None,
+            worth_points: elo / 28.0,
+            worth_elo: elo,
+            turnovers_imputed: false,
+        };
+        let table = |season: i32, players: Vec<PlayerBox>| {
+            (
+                SeasonYear::of(season),
+                Arc::new(BoxTable {
+                    season: SeasonYear::of(season),
+                    model: "test",
+                    games: 1,
+                    games_without_lines: 0,
+                    teams_without_minutes: 0,
+                    coverage: Coverage::default(),
+                    bpm_available: true,
+                    per_available: false,
+                    per_partial: false,
+                    league: LeagueBox::default(),
+                    teams: vec![],
+                    players,
+                    note: None,
+                }),
+            )
+        };
+        let tables = vec![
+            table(2026, vec![row(1, 300.0, 15.0), row(2, 900.0, 45.0)]),
+            table(2025, vec![row(1, 2000.0, 80.0)]),
+        ];
+        let e = pick_box_estimate(&tables, PlayerId::new(1)).unwrap();
+        assert_eq!(
+            (e.elo, e.se_elo, e.season),
+            (45.0, 0.0, SeasonYear::of(2026))
+        );
+        assert_eq!(e.source, WorthSource::Box);
+        assert_eq!(pick_box_estimate(&tables, PlayerId::new(9)), None);
+    }
+
+    #[test]
+    fn the_box_estimate_steps_in_when_the_worth_is_within_one_error_of_zero() {
+        let est = |elo: f64, se: f64, source| Estimate {
+            elo,
+            se_elo: se,
+            season: SeasonYear::of(2025),
+            source,
+        };
+        let noisy = est(-16.0, 70.0, WorthSource::Worth);
+        let clear = est(60.0, 20.0, WorthSource::Worth);
+        let boxed = est(40.0, 0.0, WorthSource::Box);
+        assert_eq!(choose_estimate(Some(noisy), Some(boxed)), Some(boxed));
+        assert_eq!(choose_estimate(Some(clear), Some(boxed)), Some(clear));
+        assert_eq!(choose_estimate(Some(noisy), None), Some(noisy));
+        assert_eq!(choose_estimate(None, Some(boxed)), Some(boxed));
+        assert_eq!(choose_estimate(None, None), None);
     }
 }
