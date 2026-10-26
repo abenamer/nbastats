@@ -1106,12 +1106,54 @@ async fn question_box_tools_read_the_store(pool: PgPool) {
     .await
     .unwrap();
 
-    let tools = Tools::new(&store, 100.0);
+    let tools = Tools::new(&store, &ask::NoPlayers, 100.0);
     let call = |name: &str, args: Value| ToolCall {
         id: name.to_string(),
         name: name.to_string(),
         arguments: args,
     };
+    // The player tools answer an error the model can read when no player data is wired in,
+    // and the dispatch checks its arguments before calling them.
+    let none = tools
+        .call(call("team_availability", json!({ "team": "GSW" })))
+        .await
+        .unwrap();
+    assert!(none["error"].as_str().unwrap().contains("not available"));
+    let short = tools
+        .call(call("find_player", json!({ "name": "J" })))
+        .await
+        .unwrap();
+    assert!(short["error"].as_str().unwrap().contains("two characters"));
+    let bad = tools
+        .call(call("player_worth", json!({ "player_id": -3 })))
+        .await
+        .unwrap();
+    assert!(bad["error"].as_str().unwrap().contains("positive"));
+    let bad_date = tools
+        .call(call("injury_report", json!({ "date": "yesterday" })))
+        .await
+        .unwrap();
+    assert!(bad_date["error"].as_str().unwrap().contains("YYYY-MM-DD"));
+    let bad_estimate = tools
+        .call(call(
+            "season_worth_leaders",
+            json!({ "season": 2016, "estimate": "per" }),
+        ))
+        .await
+        .unwrap();
+    assert!(bad_estimate["error"]
+        .as_str()
+        .unwrap()
+        .contains("worth or box"));
+    // The forecast comparison runs once per question, but a call that did not run (here,
+    // the no-players answer) spends nothing, so a corrected call still reaches the lookups.
+    for _ in 0..2 {
+        let r = tools
+            .call(call("forecast_effect", json!({ "team": "GSW" })))
+            .await
+            .unwrap();
+        assert!(r["error"].as_str().unwrap().contains("not available"));
+    }
     let seasons = tools.call(call("list_seasons", json!({}))).await.unwrap();
     assert_eq!(seasons["count"], 1);
     assert_eq!(seasons["seasons"][0]["season"], 2016);
@@ -1199,9 +1241,16 @@ async fn question_box_tools_read_the_store(pool: PgPool) {
         },
     ]));
     let today = NaiveDate::from_ymd_opt(2026, 10, 23).unwrap();
-    let a = ask::answer(&store, &model, " who won in 2016? ", today, 100.0)
-        .await
-        .unwrap();
+    let a = ask::answer(
+        &store,
+        &ask::NoPlayers,
+        &model,
+        " who won in 2016? ",
+        today,
+        100.0,
+    )
+    .await
+    .unwrap();
     assert!(!a.declined);
     assert_eq!(a.steps[0].summary, "1 row");
     // Arguments the adapter could not parse come back as an error the model can correct.
@@ -1212,7 +1261,7 @@ async fn question_box_tools_read_the_store(pool: PgPool) {
     assert!(raw["error"].as_str().unwrap().contains("not valid JSON"));
     assert_eq!(a.question, "who won in 2016?");
     assert!(matches!(
-        ask::answer(&store, &model, "   ", today, 100.0).await,
+        ask::answer(&store, &ask::NoPlayers, &model, "   ", today, 100.0).await,
         Err(ask::AskError::Empty)
     ));
 }

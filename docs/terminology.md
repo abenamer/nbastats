@@ -57,7 +57,7 @@ These are project-specific technical terms. They are not a reproduction of the A
 | Injury report | The source's list of players with a status (out, day-to-day, questionable), the expected return date and a description, stored once per day under the day it was fetched. |
 | Language model | A chat model with tool calling behind the `LanguageModel` port; the `OpenRouterModel` adapter calls it through OpenRouter's OpenAI-compatible API. |
 | League size | The number of teams of one league (NBA/BAA or ABA) in one season. |
-| Lookup | One tool call the language model makes to read the store (tool, arguments, rows). The question box lists the lookups under each answer. |
+| Lookup | One tool call the language model makes to read the stored data (tool, arguments, rows). It goes through a store port or the application's caches. The question box lists the lookups under each answer. |
 | Matchup (greatest, clanker) | A played game ranked by the combined Elo of the two teams before tip-off: the 20 highest are the greatest matchups; the lowest of each era, per league, is its clanker. |
 | Mean Elo | The mean season-end rating across a league in a season, averaged over a group's seasons. A check that the ratings hold their level between periods. |
 | NBA Cup | The in-season tournament, from 2023-24: six groups of five, a knockout of eight, a final on a neutral floor. The application keeps the dates of each Cup and derives the groups from the games on the group nights; see the [NBA Cup forecast](/concepts/nba-cup.md). |

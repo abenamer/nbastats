@@ -28,7 +28,7 @@ The code follows the REAS ports-and-adapters layout. The path of an operation is
 | Layer | Location | Content |
 |-------|----------|---------|
 | Domain | `src/domain` | Identifier newtypes, models and state machines, reference data, Elo mathematics, Engines A, B and C, backtesting. No Axum, SQLx or HTTP. |
-| Application | `src/application` | Ports (`ports.rs`), use cases (imports, recompute, continuation, jobs, dashboard, dynasty, ask) and shared state (`state.rs`). |
+| Application | `src/application` | Ports (`ports.rs`), use cases (imports, recompute, continuation, jobs, dashboard, dynasty, ask and its player lookups, players, worth, boxscore) and shared state (`state.rs`). |
 | Adapters | `src/adapters` | `postgres::PostgresStore` (store ports), `dataset::HttpDatasetSource` (download port), `balldontlie::BalldontlieSource` (results port), `openrouter::OpenRouterModel` (language model port), `http` (Axum router, API, pages), `csv` (parsers). |
 | Composition root | `src/main.rs` | Creates the adapters, wires `App`, starts the runner and the server. |
 
@@ -46,7 +46,7 @@ Every table sorts on a header click: numbers as numbers, text as text, blanks la
 | Franchise History | `/franchise` | A franchise's Elo after every game across all its seasons, drawn in the franchise's uniform colours (the darker colour as the line, the lighter as the area under it), with stars at NBA titles, hollow circles at lost Finals, rating bands, and an optional second franchise for comparison. |
 | Alpha Simulator | `/alpha` | The [alpha lottery](/concepts/alpha-engine.md): how often a title run happens by chance under assumed franchise strengths. Editable strengths, a franchise of interest, a fading-strength mode, scenario save, load and compare, exact validation, and the record read backwards into an implied alpha and an implied strength against the real playoff fields; the page explains its inputs and results, and the runbook [Run an alpha scenario](/runbooks/alpha-scenario.md) walks through three questions. |
 | Playoff Simulator | `/playoffs` | Historical bracket, exact and Monte Carlo probabilities, actual results. |
-| Season Forecast | `/season` | Every team's probability to reach the play-in, the playoffs, each round and the title. On request it prices in the injury report or players marked out, with their worth drawn from its uncertainty if asked. |
+| Season Forecast | `/season` | Every team's probability to reach the play-in, the playoffs, each round and the title. On request it prices in the injury report or players marked out. Their worth can be drawn from its uncertainty. |
 | Players | `/players` | Every player's worth in Elo from the games his team played without him, his box-score worth (BPM 2.0, VORP, PER) on the same scale, and the latest injury report priced for the forecast. |
 | Dynasty Lab | `/dynasty` | Expected versus actual titles and significance estimates. |
 | Validation | `/validation` | Backtest results, calibration plots, baselines and assumptions. |
