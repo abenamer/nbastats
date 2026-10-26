@@ -111,6 +111,28 @@ impl Dates {
     }
 }
 
+/// Regular-season games per team in a full NBA season.
+pub const GAMES_PER_TEAM: usize = 82;
+
+/// How many regular-season games a team's stored schedule still lacks in a Cup season: the
+/// league publishes 80 games per team and adds the two Cup-week games in December, once the
+/// knockout field is known. `None` outside the Cup era or for a full schedule.
+pub fn games_to_be_scheduled(season: SeasonYear, on_schedule: usize) -> Option<usize> {
+    if season < CUP_SEASONS[0].season || on_schedule >= GAMES_PER_TEAM {
+        return None;
+    }
+    Some(GAMES_PER_TEAM - on_schedule)
+}
+
+/// The sentence a tool result carries when a Cup-season schedule is short, or nothing.
+pub fn schedule_note(season: SeasonYear, on_schedule: usize) -> Option<String> {
+    games_to_be_scheduled(season, on_schedule).map(|n| {
+        format!(
+            "The stored schedule holds {on_schedule} regular-season games; the league adds {n} NBA Cup-week game(s) in December, once the knockout field is known."
+        )
+    })
+}
+
 pub fn dates_for(season: SeasonYear) -> Option<Dates> {
     CUP_SEASONS
         .iter()
@@ -399,7 +421,21 @@ pub fn exact(p: impl Fn(usize, usize, Option<bool>) -> f64) -> [[f64; 3]; CUP_SL
 
 #[cfg(test)]
 mod tests {
+
     use super::*;
+
+    #[test]
+    fn a_cup_season_schedule_short_of_82_names_the_games_to_come() {
+        assert_eq!(games_to_be_scheduled(SeasonYear::of(2027), 80), Some(2));
+        assert_eq!(games_to_be_scheduled(SeasonYear::of(2027), 82), None);
+        assert_eq!(games_to_be_scheduled(SeasonYear::of(2027), 83), None);
+        // Before the Cup a short schedule is just a short schedule.
+        assert_eq!(games_to_be_scheduled(SeasonYear::of(2016), 80), None);
+        assert!(schedule_note(SeasonYear::of(2027), 80)
+            .unwrap()
+            .contains("adds 2 NBA Cup-week"));
+        assert_eq!(schedule_note(SeasonYear::of(2027), 82), None);
+    }
 
     fn conferences() -> Vec<Conference> {
         (0..30)

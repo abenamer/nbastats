@@ -6,6 +6,7 @@
 use chrono::NaiveDate;
 use serde_json::{json, Value};
 
+use crate::domain::cup;
 use crate::domain::ids::{PlayerId, SeasonYear, TeamId};
 use crate::domain::models::{Game, GameType};
 use crate::domain::playoffs::season::{self as engine, SeasonForecast, SeasonParams};
@@ -85,8 +86,9 @@ pub fn rating_now(games: &[Game], team: TeamId) -> Option<(f64, NaiveDate, bool)
 }
 
 /// The penalties of a team's absences: today, and on average over the regular-season games
-/// it has not played yet that fall after today (how many of them there are), the games a
-/// forecast from today simulates.
+/// on the stored schedule it has not played yet, dated today or later (how many of them
+/// there are): the games a forecast from today simulates. A game dated today without a
+/// result is still to be played, whatever the hour.
 pub fn penalty_summary(
     absences: &[worth::Absence],
     games: &[Game],
@@ -99,7 +101,7 @@ pub fn penalty_summary(
         .filter(|g| {
             g.game_type == GameType::Regular
                 && !g.is_played()
-                && g.game_date > today
+                && g.game_date >= today
                 && (g.home_team_id == team || g.away_team_id == team)
         })
         .map(|g| g.game_date)
@@ -352,6 +354,11 @@ impl PlayerLookups for App {
             .collect();
         let (today_penalty, mean_penalty, remaining) =
             penalty_summary(&a.absences, &data.games, team_id, today);
+        let on_schedule = data
+            .games
+            .iter()
+            .filter(|g| g.game_type == GameType::Regular && g.involves(team_id))
+            .count();
         let Some(rating) = rating_now(&data.games, team_id) else {
             return Ok(error(format!(
                 "{code} is not in the {} season",
@@ -368,8 +375,11 @@ impl PlayerLookups for App {
             "rating_with_absences_today": rating.map(|(e, _, _)| round(e - today_penalty, 0)),
             "everyone_healthy_gain_elo": round(today_penalty, 0),
             "mean_penalty_remaining_games_elo": round(mean_penalty, 0),
-            "remaining_games_counted": "unplayed regular-season games dated after today, the games a forecast from today simulates",
+            "remaining_games_counted": "regular-season games on the stored schedule with no result, dated today or later: the games a forecast from today simulates",
             "remaining_regular_season_games": remaining,
+            "regular_season_games_on_schedule": on_schedule,
+            "regular_season_games_played": data.games.iter().filter(|g| g.game_type == GameType::Regular && g.is_played() && g.involves(team_id)).count(),
+            "schedule_note": cup::schedule_note(season, on_schedule),
             "lines": lines,
             "note": a.note.unwrap_or_else(|| "A penalty is what the team plays without on a game date; the rating itself does not change. Lines without a penalty have returned, have no worth estimate, or have a worth at or below zero.".to_string()),
         }))
@@ -599,10 +609,10 @@ mod tests {
             se_elo: 0.0,
         }];
         let (today, mean, n) = penalty_summary(&absences, &games, TeamId::new(1), d(24));
-        // The unplayed game dated today is not "remaining": a forecast from today does not
-        // simulate it. Of the two later games, one falls in the span.
-        assert_eq!((today, n), (60.0, 2));
-        assert!((mean - 30.0).abs() < 1e-9);
+        // The unplayed game dated today is still to be played, so it counts with the two
+        // later ones; two of the three fall in the span.
+        assert_eq!((today, n), (60.0, 3));
+        assert!((mean - 40.0).abs() < 1e-9);
         let (today, mean, _) = penalty_summary(&absences, &games, TeamId::new(2), d(24));
         assert_eq!((today, mean), (0.0, 0.0));
     }
