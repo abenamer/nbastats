@@ -57,7 +57,8 @@ pub enum PlayerSyncError {
 }
 
 /// A run that stopped before its end. What it stored stays stored; the next run resumes
-/// with the dates left.
+/// with the dates left. Returned boxed: it carries the outcome so far (136 bytes), which
+/// clippy's `result_large_err` refuses in a plain `Result`.
 #[derive(Debug)]
 pub struct Interrupted {
     pub done: PlayerSyncOutcome,
@@ -182,7 +183,7 @@ async fn fetch_dates<P: PlayerSource, S: PlayerStore>(
     source: &P,
     dates: &[NaiveDate],
     progress: &(dyn Fn(PlayerProgress) + Sync),
-) -> Result<PlayerSyncOutcome, Interrupted> {
+) -> Result<PlayerSyncOutcome, Box<Interrupted>> {
     let mut done = PlayerSyncOutcome::default();
     let mut requests = 0u32;
     for (i, &date) in dates.iter().enumerate() {
@@ -220,11 +221,11 @@ async fn fetch_dates<P: PlayerSource, S: PlayerStore>(
                 }
             }
             Err(error) => {
-                return Err(Interrupted {
+                return Err(Box::new(Interrupted {
                     done,
                     dates_total: dates.len(),
                     error,
-                });
+                }));
             }
         }
     }
@@ -247,15 +248,14 @@ pub async fn backfill_season<P: PlayerSource, S: PlayerStore>(
     source: &P,
     season: SeasonYear,
     progress: &(dyn Fn(PlayerProgress) + Sync),
-) -> Result<PlayerSyncOutcome, Interrupted> {
-    let dates = store
-        .dates_without_box_scores(season)
-        .await
-        .map_err(|e| Interrupted {
+) -> Result<PlayerSyncOutcome, Box<Interrupted>> {
+    let dates = store.dates_without_box_scores(season).await.map_err(|e| {
+        Box::new(Interrupted {
             done: PlayerSyncOutcome::default(),
             dates_total: 0,
             error: e.into(),
-        })?;
+        })
+    })?;
     info!(%season, dates = dates.len(), "box-score backfill: dates to fetch");
     fetch_dates(store, source, &dates, progress).await
 }
@@ -367,19 +367,21 @@ pub async fn sync_daily<P: PlayerSource, S: PlayerStore>(
     season: SeasonYear,
     today: NaiveDate,
     progress: &(dyn Fn(PlayerProgress) + Sync),
-) -> Result<PlayerSyncOutcome, Interrupted> {
-    let dates = daily_dates(store, season, today)
-        .await
-        .map_err(|e| Interrupted {
+) -> Result<PlayerSyncOutcome, Box<Interrupted>> {
+    let dates = daily_dates(store, season, today).await.map_err(|e| {
+        Box::new(Interrupted {
             done: PlayerSyncOutcome::default(),
             dates_total: 0,
             error: e.into(),
-        })?;
+        })
+    })?;
     let mut done = fetch_dates(store, source, &dates, progress).await?;
-    let interrupted = |done: PlayerSyncOutcome, error| Interrupted {
-        dates_total: dates.len(),
-        done,
-        error,
+    let interrupted = |done: PlayerSyncOutcome, error| {
+        Box::new(Interrupted {
+            dates_total: dates.len(),
+            done,
+            error,
+        })
     };
     match fetch_injury_report(store, source, today, progress).await {
         Ok(lines) => done.injury_report = Some((today, lines)),
@@ -399,7 +401,7 @@ pub async fn run_tracked<P: PlayerSource>(
     source: &P,
     kind: PlayerSyncKind,
     trigger: Trigger,
-) -> Result<PlayerSyncOutcome, Interrupted> {
+) -> Result<PlayerSyncOutcome, Box<Interrupted>> {
     let started_at = Utc::now();
     app.set_player_phase(PlayerPhase::Fetching {
         kind,
@@ -419,10 +421,12 @@ pub async fn run_tracked<P: PlayerSource>(
     };
     let today = app.today();
     // A run of one fetch has no dates to resume.
-    let alone = |error| Interrupted {
-        done: PlayerSyncOutcome::default(),
-        dates_total: 0,
-        error,
+    let alone = |error| {
+        Box::new(Interrupted {
+            done: PlayerSyncOutcome::default(),
+            dates_total: 0,
+            error,
+        })
     };
     let result = match kind {
         PlayerSyncKind::Backfill { season } => {
