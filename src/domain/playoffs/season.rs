@@ -23,6 +23,7 @@ use crate::domain::simulation::progress::{ChunkTracker, Progress};
 use crate::domain::simulation::rng::{chunk_rng, chunks};
 use crate::domain::simulation::stats;
 use crate::domain::validation::{invalid, ValidationError};
+use crate::domain::worth;
 
 use super::bracket::{
     play_bracket, Bracket, BracketTeam, EloModel, PlayoffFormat, RoundCounts, SeriesModel, SLOTS,
@@ -56,6 +57,10 @@ pub struct SeasonParams {
     pub playoff_k: Option<f64>,
     #[serde(default = "default_scale")]
     pub playoff_scale: f64,
+    /// Rating penalties for players out, per team and span of dates, applied to the
+    /// simulated regular-season games; see `domain::worth`.
+    #[serde(default)]
+    pub absences: Vec<worth::Absence>,
 }
 
 fn default_home_adv() -> f64 {
@@ -102,6 +107,23 @@ impl SeasonParams {
         if !(0.1..=3.0).contains(&self.playoff_scale) {
             return invalid("playoff_scale", "playoff scale must be between 0.1 and 3");
         }
+        if self.absences.len() > worth::MAX_ABSENCES {
+            return invalid(
+                "absences",
+                format!("at most {} absences", worth::MAX_ABSENCES),
+            );
+        }
+        for a in &self.absences {
+            if !(0.0..=worth::MAX_ABSENCE_ELO).contains(&a.elo) || a.to < a.from {
+                return invalid(
+                    "absences",
+                    format!(
+                        "an absence needs a penalty between 0 and {} Elo and a span that ends on or after it starts",
+                        worth::MAX_ABSENCE_ELO
+                    ),
+                );
+            }
+        }
         Ok(())
     }
 }
@@ -118,6 +140,9 @@ pub struct TeamForecast {
     pub wins: i32,
     pub losses: i32,
     pub remaining_games: i32,
+    /// The mean rating penalty over the team's remaining games from the absences given.
+    #[serde(default)]
+    pub absence_penalty: f64,
     pub expected_wins: f64,
     pub p_top6: f64,
     pub p_play_in: f64,
@@ -267,6 +292,9 @@ pub struct SeasonForecast {
     pub qualification: Qualification,
     pub games_played: usize,
     pub games_remaining: usize,
+    /// Absences applied to at least one remaining game.
+    #[serde(default)]
+    pub absences_applied: usize,
     pub iterations: u64,
     pub seed: u64,
     pub params: SeasonParams,
@@ -420,6 +448,10 @@ struct Remaining {
     home: Ti,
     away: Ti,
     neutral: bool,
+    date: NaiveDate,
+    /// The rating penalties of the absences that cover the game's date.
+    home_penalty: f64,
+    away_penalty: f64,
     /// The index of the Cup group game this game is, when it is one.
     cup_game: Option<usize>,
     /// A game on a knockout date: its simulated result also decides the Cup game.
@@ -796,6 +828,9 @@ impl Setup {
                     home: h,
                     away: a,
                     neutral: g.neutral,
+                    date: g.game_date,
+                    home_penalty: worth::penalty(&params.absences, g.home_team_id, g.game_date),
+                    away_penalty: worth::penalty(&params.absences, g.away_team_id, g.game_date),
                     cup_game,
                     knockout_game: on_knockout_date,
                 }),
@@ -1298,6 +1333,42 @@ fn remaining_of(setup: &Setup, i: Ti) -> i32 {
         .count() as i32
 }
 
+/// The mean penalty of team `i` over its remaining games.
+fn penalty_of(setup: &Setup, i: Ti) -> f64 {
+    let (sum, n) = setup
+        .remaining
+        .iter()
+        .filter_map(|g| {
+            if g.home == i {
+                Some(g.home_penalty)
+            } else if g.away == i {
+                Some(g.away_penalty)
+            } else {
+                None
+            }
+        })
+        .fold((0.0, 0usize), |(s, n), p| (s + p, n + 1));
+    if n == 0 {
+        0.0
+    } else {
+        sum / n as f64
+    }
+}
+
+/// How many of the absences given cover at least one of the games the forecast simulates.
+fn absences_applied(params: &SeasonParams, setup: &Setup) -> usize {
+    params
+        .absences
+        .iter()
+        .filter(|a| {
+            setup.remaining.iter().any(|g| {
+                (setup.ids[g.home] == a.team_id || setup.ids[g.away] == a.team_id)
+                    && a.covers(g.date)
+            })
+        })
+        .count()
+}
+
 pub fn run<P: Progress + ?Sized>(
     params: &SeasonParams,
     games: &[Game],
@@ -1356,9 +1427,11 @@ pub fn run<P: Progress + ?Sized>(
                 st.reset(&setup, &mut rng);
                 // remaining regular season
                 for g in &setup.remaining {
+                    // The penalties lower the sides for the result; the rating update
+                    // below works from the ratings themselves, as the real one will.
                     let p = elo::game_probability(
-                        st.elo[g.home],
-                        st.elo[g.away],
+                        st.elo[g.home] - g.home_penalty,
+                        st.elo[g.away] - g.away_penalty,
                         true,
                         g.neutral,
                         home_adv,
@@ -1366,7 +1439,8 @@ pub fn run<P: Progress + ?Sized>(
                     );
                     let home_won = rng.gen::<f64>() < p;
                     if let Some(ci) = g.cup_game {
-                        let edge = st.elo[g.home] - st.elo[g.away]
+                        let edge = (st.elo[g.home] - g.home_penalty)
+                            - (st.elo[g.away] - g.away_penalty)
                             + if g.neutral { 0.0 } else { home_adv };
                         st.cup_results[ci] =
                             Some((home_won, draw_margin(&mut rng, edge, home_won)));
@@ -1588,6 +1662,7 @@ pub fn run<P: Progress + ?Sized>(
                 wins: setup.base_wins[i],
                 losses: setup.base_losses[i],
                 remaining_games: remaining_of(&setup, i),
+                absence_penalty: penalty_of(&setup, i),
                 expected_wins: acc.wins_sum[i] / it,
                 p_top6: acc.top6[i] as f64 / it,
                 p_play_in: acc.play_in[i] as f64 / it,
@@ -1617,6 +1692,7 @@ pub fn run<P: Progress + ?Sized>(
         qualification: setup.qualification,
         games_played,
         games_remaining: setup.remaining.len(),
+        absences_applied: absences_applied(params, &setup),
         iterations: acc.iterations,
         seed: params.seed,
         params: params.clone(),
@@ -1854,7 +1930,56 @@ mod tests {
             regular_season_k: None,
             playoff_k: None,
             playoff_scale: 1.0,
+            absences: vec![],
         }
+    }
+
+    #[test]
+    fn an_absence_lowers_the_team_for_the_games_it_covers() {
+        use crate::domain::simulation::progress::Silent;
+        let (teams, games) = cup_season(2024, false, false);
+        let mut params = cup_params(2024, "2023-11-01");
+        params.iterations = 2000;
+        let base = run(&params, &games, &teams, &Silent).unwrap();
+        let team = base.teams[0].team_id;
+        let base_wins = base.teams[0].expected_wins;
+        // The team loses 150 Elo for the rest of the season.
+        params.absences = vec![worth::Absence {
+            team_id: team,
+            from: NaiveDate::from_ymd_opt(2023, 11, 1).unwrap(),
+            to: NaiveDate::from_ymd_opt(2024, 6, 30).unwrap(),
+            elo: 150.0,
+            player_id: None,
+        }];
+        let hurt = run(&params, &games, &teams, &Silent).unwrap();
+        let row = hurt.teams.iter().find(|t| t.team_id == team).unwrap();
+        assert_eq!(hurt.absences_applied, 1);
+        assert!((row.absence_penalty - 150.0).abs() < 1e-9);
+        // At 150 Elo down the win chance of an even game falls from a half to about 0.3,
+        // whatever the number of games left in the fixture.
+        assert!(
+            row.expected_wins < base_wins * 0.8,
+            "{} vs {}",
+            row.expected_wins,
+            base_wins
+        );
+        assert!(hurt
+            .teams
+            .iter()
+            .filter(|t| t.team_id != team)
+            .all(|t| t.absence_penalty == 0.0));
+        // An absence that ends before the first remaining game changes nothing.
+        params.absences[0].to = NaiveDate::from_ymd_opt(2023, 10, 1).unwrap();
+        params.absences[0].from = NaiveDate::from_ymd_opt(2023, 9, 1).unwrap();
+        let none = run(&params, &games, &teams, &Silent).unwrap();
+        assert_eq!(none.absences_applied, 0);
+        assert_eq!(none.teams[0].expected_wins, base_wins);
+        // Validation: a penalty beyond the cap or a span that ends before it starts.
+        params.absences[0].elo = 1000.0;
+        assert!(params.validate(10_000).is_err());
+        params.absences[0].elo = 10.0;
+        params.absences[0].to = params.absences[0].from - chrono::Duration::days(1);
+        assert!(params.validate(10_000).is_err());
     }
 
     #[test]

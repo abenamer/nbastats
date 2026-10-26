@@ -228,6 +228,7 @@ async fn forecasts_never_use_future_information(pool: PgPool) {
         regular_season_k: Some(20.0),
         playoff_k: None,
         playoff_scale: 1.0,
+        absences: vec![],
     };
     let full = season::run(&params, &games, &by_id, &Silent).unwrap();
     // The projected bracket: sixteen distinct teams, seeds 1 to 8 per conference, exact
@@ -772,6 +773,7 @@ async fn computed_elo_continues_from_the_previous_season(pool: PgPool) {
         regular_season_k: Some(20.0),
         playoff_k: None,
         playoff_scale: 1.0,
+        absences: vec![],
     };
     let forecast = season::run(&params, &games, &by_id, &Silent).unwrap();
     assert_eq!(forecast.games_remaining, 1230);
@@ -1804,6 +1806,105 @@ mod players {
             store.dates_without_box_scores(s2017).await.unwrap().len(),
             3
         );
+    }
+
+    /// The season's lines feed the worth regression: a player who sat a block of games has
+    /// a worth with an error; a line with no minutes and no stats is an absence; the
+    /// injury report becomes penalties.
+    #[sqlx::test(migrations = "./migrations")]
+    async fn player_worth_and_availability_read_the_store(pool: PgPool) {
+        use nba_elo_simulator::application::worth as app_worth;
+        use nba_elo_simulator::domain::worth;
+        let (store, teams) = common::setup(pool).await;
+        imports::import_bytes(
+            &store,
+            common::FIXTURE.as_bytes(),
+            prov("mini_2016.csv"),
+            false,
+        )
+        .await
+        .unwrap();
+        // The Warriors' games of 2015-16 in order; a star on the box score of every game
+        // except a block in the middle, where the team under-performed the ratings.
+        let gsw = teams["GSW"].id;
+        let mut games: Vec<_> = store
+            .season_games(S2016)
+            .await
+            .unwrap()
+            .into_iter()
+            .filter(|g| g.is_played() && (g.home_team_id == gsw || g.away_team_id == gsw))
+            .collect();
+        games.sort_by_key(|g| (g.game_date, g.seq));
+        assert!(games.len() > 80);
+        let star = person(30, "Stephen", "Curry");
+        let mut dates_saved = 0;
+        for (i, g) in games.iter().enumerate() {
+            let played = !(30..50).contains(&i);
+            let date = g.game_date.to_string();
+            let seconds = if played { 2100 } else { 0 };
+            let mut l = line(&date, "GSW", star.clone(), seconds, 25);
+            // Some DNP lines come with no minutes and no stats at all, as the source
+            // writes them; they must read as absences, not fail the query.
+            if (30..35).contains(&i) {
+                l.seconds = None;
+                l.pts = None;
+                l.reb = None;
+                l.ast = None;
+                l.fga = None;
+                l.fta = None;
+            }
+            store
+                .save_box_scores(g.game_date, "fake-players", &[l])
+                .await
+                .unwrap();
+            dates_saved += 1;
+        }
+        assert_eq!(dates_saved, games.len());
+        let lines = store.season_lines(S2016).await.unwrap();
+        assert_eq!(lines.len(), games.len());
+        assert_eq!(
+            lines.iter().filter(|l| !l.played).count(),
+            20,
+            "the DNP lines"
+        );
+        let t = worth::table(
+            S2016,
+            &store.season_games(S2016).await.unwrap(),
+            &lines,
+            worth::WorthParams::default(),
+        );
+        assert_eq!(t.players.len(), 1);
+        let w = &t.players[0];
+        assert_eq!((w.absences, w.teams.as_slice()), (20, &[gsw][..]));
+        assert_eq!(w.games_played as usize, games.len() - 20);
+        assert!(w.se_points > 0.0 && w.se_points < 5.0, "{}", w.se_points);
+        assert!(!t.prior_estimated, "one player: the default prior");
+        // The names join: the store's player row carries the name.
+        let found = store.players_by_id(&[w.player_id]).await.unwrap();
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].last_name, "Curry");
+        assert!(store.players_by_id(&[]).await.unwrap().is_empty());
+        // The injury report priced: Out with a return date, for the Warriors.
+        let worth_elo = w.worth_elo;
+        let reported = vec![worth::ReportedAbsence {
+            player_id: w.player_id,
+            team_id: gsw,
+            status: worth::AbsenceStatus::Out,
+            return_date: Some(date("2016-01-10")),
+            worth_elo,
+        }];
+        let absences =
+            worth::absences_from_report(&reported, date("2016-01-05"), date("2016-06-20"));
+        if worth_elo > 0.0 {
+            assert_eq!(absences.len(), 1);
+            assert_eq!(
+                (absences[0].from, absences[0].to),
+                (date("2016-01-05"), date("2016-01-09"))
+            );
+        } else {
+            assert!(absences.is_empty(), "no reward for an absence");
+        }
+        let _ = app_worth::WORTH_LOOKBACK;
     }
 
     #[sqlx::test(migrations = "./migrations")]

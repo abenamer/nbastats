@@ -26,6 +26,7 @@ This project follows the [REAS engineering standard](https://github.com/abenamer
 * [Historical data](concepts/historical-data.md) - Data sources, coverage, franchise identity and game classification.
 * [Elo continuation](concepts/elo-continuation.md) - How the application computes ratings for seasons after the archive ends, and projects a season that has not started.
 * [Player data](concepts/player-data.md) - Where the players, their box-score lines and the daily injury reports come from, how they match the stored games, and how a backfill resumes.
+* [Player worth and availability](concepts/player-worth.md) - How a player is valued in Elo points from the games his team played without him, and how the injury report becomes a forecast penalty.
 * [Persistence model](concepts/persistence.md) - Which state is durable, where it lives and which commands keep it.
 * [Security model](concepts/security.md) - Threat model of the local-only deployment and the controls in place.
 * [Rule periods and bargaining periods](concepts/periods.md) - The period tables that group seasons on the Records page, with what each period changed.

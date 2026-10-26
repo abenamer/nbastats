@@ -12,6 +12,7 @@ use crate::application::ports::{
     PlayerCoverage, PlayerRecord, PlayerSeason, PlayerStore, SeasonBackfill, StoreResult,
 };
 use crate::domain::ids::{PlayerId, SeasonYear, TeamId};
+use crate::domain::worth::Line;
 
 use super::PostgresStore;
 
@@ -528,6 +529,40 @@ impl PlayerStore for PostgresStore {
         .fetch_all(&self.pool)
         .await?;
         Ok(rows.into_iter().map(|r| r.0).collect())
+    }
+
+    async fn season_lines(&self, season: SeasonYear) -> StoreResult<Vec<Line>> {
+        let rows: Vec<(i64, PlayerId, TeamId, bool)> = sqlx::query_as(
+            "SELECT a.game_id, a.player_id, a.team_id,
+                    COALESCE(a.seconds, 0) > 0 OR (a.seconds IS NULL AND
+                        COALESCE(a.pts, 0) + COALESCE(a.fga, 0) + COALESCE(a.fta, 0)
+                        + COALESCE(a.reb, 0) + COALESCE(a.ast, 0) > 0) AS played
+             FROM appearances a JOIN games g ON g.id = a.game_id
+             WHERE g.season = $1",
+        )
+        .bind(season)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .into_iter()
+            .map(|(game_id, player_id, team_id, played)| Line {
+                game_id,
+                player_id,
+                team_id,
+                played,
+            })
+            .collect())
+    }
+
+    async fn players_by_id(&self, ids: &[PlayerId]) -> StoreResult<Vec<Player>> {
+        if ids.is_empty() {
+            return Ok(vec![]);
+        }
+        let rows: Vec<PlayerRow> = sqlx::query_as(&format!("{PLAYER_SELECT} WHERE p.id = ANY($1)"))
+            .bind(ids)
+            .fetch_all(&self.pool)
+            .await?;
+        Ok(rows.into_iter().map(player_from_row).collect())
     }
 
     async fn backfill_progress(&self) -> StoreResult<Vec<SeasonBackfill>> {

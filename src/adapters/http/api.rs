@@ -21,7 +21,8 @@ use crate::application::ports::{
     ResultsSource,
 };
 use crate::application::reports::{self, Fetching, PlayedGame, ReportError};
-use crate::application::{dashboard, dynasty};
+use crate::application::state::SeasonLoadError;
+use crate::application::{dashboard, dynasty, worth};
 use crate::application::{results_sync, scheduler};
 use crate::config::APP_VERSION;
 use crate::domain::backtesting::BacktestParams;
@@ -838,17 +839,35 @@ pub async fn submit_playoff(
     queue(&app, body.params, body.name).await
 }
 
+/// A season forecast request: the parameters, a name, and whether to price the latest
+/// injury report into the forecast.
+#[derive(Deserialize)]
+pub struct SeasonRequest {
+    #[serde(flatten)]
+    pub named: Named<SeasonParams>,
+    #[serde(default)]
+    pub use_injury_report: bool,
+}
+
 pub async fn submit_season(
     State(app): State<AppState>,
-    Json(body): Json<Named<SeasonParams>>,
+    Json(body): Json<SeasonRequest>,
 ) -> ApiResult<Value> {
     // A request without a regular-season bonus takes the season's fitted value, so the
     // stored parameters say which bonus the forecast used.
-    let mut params = body.params;
+    let mut params = body.named.params;
     if params.regular_home_advantage.is_none() {
         params.regular_home_advantage = Some(app.home_advantage(params.season).await?.regular);
     }
-    queue(&app, SeasonJob(params), body.name).await
+    // The injury report becomes absences in the stored parameters, so the forecast says
+    // what it priced in.
+    if body.use_injury_report && params.absences.is_empty() {
+        params.absences = worth::availability(&app, params.season)
+            .await
+            .map_err(season_load_error)?
+            .absences;
+    }
+    queue(&app, SeasonJob(params), body.named.name).await
 }
 
 /// The home-court bonus the forecasts of a season use.
@@ -1025,6 +1044,79 @@ pub async fn project_season(
         .map_err(continuation_error)?;
     app.invalidate_cache();
     Ok(Json(json!(outcome)))
+}
+
+// ---------------------------------------------------------------------------------------
+// Player worth and availability
+// ---------------------------------------------------------------------------------------
+
+fn season_load_error(e: SeasonLoadError) -> ApiError {
+    match e {
+        SeasonLoadError::NoGames(s) => ApiError::not_found(format!("no games stored for {s}")),
+        SeasonLoadError::Store(s) => s.into(),
+    }
+}
+
+/// Every player's worth in a season, highest first, with the table's parameters.
+pub async fn season_player_worth(
+    State(app): State<AppState>,
+    Path(season): Path<SeasonYear>,
+) -> ApiResult<Value> {
+    let (t, rows) = worth::named_table(&app, season)
+        .await
+        .map_err(season_load_error)?;
+    Ok(Json(json!({
+        "season": t.season,
+        "params": t.params,
+        "prior_sd_points": t.prior_sd_points,
+        "prior_estimated": t.prior_estimated,
+        "games": t.games,
+        "games_with_absence": t.games_with_absence,
+        "residual_sd_points": t.residual_sd_points,
+        "players_seen": t.players_seen,
+        "elo_per_point": crate::domain::worth::ELO_PER_POINT,
+        "players": rows,
+    })))
+}
+
+/// The latest injury report priced for a season: the penalties a forecast would apply.
+pub async fn season_availability(
+    State(app): State<AppState>,
+    Path(season): Path<SeasonYear>,
+) -> ApiResult<Value> {
+    let a = worth::availability(&app, season)
+        .await
+        .map_err(season_load_error)?;
+    Ok(Json(json!(a)))
+}
+
+/// A player's worth in every season he has one.
+pub async fn player_worth(State(app): State<AppState>, Path(id): Path<i32>) -> ApiResult<Value> {
+    let id = player_id(id)?;
+    let player = app
+        .store
+        .player(id)
+        .await?
+        .ok_or_else(|| ApiError::not_found(format!("no player {id}")))?;
+    let mut seasons = Vec::new();
+    for s in app.store.player_seasons(id).await? {
+        if seasons.iter().any(|(y, _)| *y == s.season) {
+            continue;
+        }
+        match worth::table(&app, s.season).await {
+            Ok(t) => {
+                if let Some(w) = t.players.iter().find(|w| w.player_id == id) {
+                    seasons.push((s.season, w.clone()));
+                }
+            }
+            Err(SeasonLoadError::NoGames(_)) => {}
+            Err(SeasonLoadError::Store(e)) => return Err(e.into()),
+        }
+    }
+    Ok(Json(json!({
+        "player": player,
+        "seasons": seasons.iter().map(|(_, w)| w).collect::<Vec<_>>(),
+    })))
 }
 
 /// Pull a season's results from BALLDONTLIE and compute the Elo.

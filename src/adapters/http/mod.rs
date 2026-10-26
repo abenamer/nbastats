@@ -31,6 +31,15 @@ pub fn router(app: State) -> Router {
         )
         .route("/seasons/{season}/bracket", get(api::season_bracket))
         .route(
+            "/seasons/{season}/player-worth",
+            get(api::season_player_worth),
+        )
+        .route(
+            "/seasons/{season}/availability",
+            get(api::season_availability),
+        )
+        .route("/players/{id}/worth", get(api::player_worth))
+        .route(
             "/seasons/{season}/home-advantage",
             get(api::season_home_advantage),
         )
@@ -94,6 +103,7 @@ pub fn router(app: State) -> Router {
         .route("/alpha", get(pages::alpha))
         .route("/playoffs", get(pages::playoffs))
         .route("/season", get(pages::season))
+        .route("/players", get(pages::players))
         .route("/dynasty", get(pages::dynasty))
         .route("/validation", get(pages::validation))
         .route("/data", get(pages::data))

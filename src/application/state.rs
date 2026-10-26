@@ -87,8 +87,10 @@ pub struct App {
     seasons: RwLock<HashMap<SeasonYear, Arc<SeasonData>>>,
     /// The home-court bonus of each season's forecasts, fitted once per season.
     home_advantages: RwLock<HashMap<SeasonYear, crate::domain::elo::HomeAdvantage>>,
+    /// The player worth of each season, computed once per season until the next import.
+    pub(crate) worths: RwLock<HashMap<SeasonYear, Arc<crate::domain::worth::WorthTable>>>,
     /// Counts the cache invalidations, so a load that began before one is not cached after it.
-    cache_generation: AtomicU64,
+    pub(crate) cache_generation: AtomicU64,
     teams: RwLock<Option<Arc<HashMap<TeamId, Team>>>>,
 }
 
@@ -123,6 +125,7 @@ impl App {
             shutdown: CancellationToken::new(),
             seasons: RwLock::new(HashMap::new()),
             home_advantages: RwLock::new(HashMap::new()),
+            worths: RwLock::new(HashMap::new()),
             cache_generation: AtomicU64::new(0),
             teams: RwLock::new(None),
         }
@@ -250,6 +253,10 @@ impl App {
         seasons.clear();
         drop(seasons);
         self.home_advantages
+            .write()
+            .unwrap_or_else(|e| e.into_inner())
+            .clear();
+        self.worths
             .write()
             .unwrap_or_else(|e| e.into_inner())
             .clear();
