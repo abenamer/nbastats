@@ -1619,6 +1619,109 @@ mod players {
         assert_eq!(coverage.injury_report_dates, 0);
     }
 
+    /// A run over every season takes the incomplete seasons newest first, resumes after
+    /// a failure, and reports the per-season progress the Data page shows.
+    #[sqlx::test(migrations = "./migrations")]
+    async fn backfill_of_every_season_walks_the_incomplete_ones_and_resumes(pool: PgPool) {
+        use nba_elo_simulator::application::continuation;
+        let (store, _teams) = common::setup(pool).await;
+        imports::import_bytes(
+            &store,
+            common::FIXTURE.as_bytes(),
+            prov("mini_2016.csv"),
+            false,
+        )
+        .await
+        .unwrap();
+        // A second, short season from a results source: three played dates.
+        let s2017 = SeasonYear::of(2017);
+        let results = FakeResults::with(vec![
+            record("2016-10-25", "GSW", "SAS", Some((100, 129))),
+            record("2016-10-28", "GSW", "NOP", Some((122, 114))),
+            record("2016-10-30", "DAL", "GSW", Some((95, 100))),
+        ]);
+        continuation::sync_results(&store, &results, s2017, date("2016-10-31"), &|_| {})
+            .await
+            .unwrap();
+        let progress = store.backfill_progress().await.unwrap();
+        assert_eq!(progress.len(), 2);
+        assert_eq!((progress[0].season, progress[0].dates_fetched), (S2016, 0));
+        assert_eq!((progress[1].season, progress[1].dates_total), (s2017, 3));
+        let dates_2016 = progress[0].dates_total;
+        assert!(dates_2016 > 100);
+
+        // The first run fails on the second date of 2016-17, the first season taken
+        // (newest first): the run goes on with 2015-16 and completes it, then reports
+        // the error.
+        let fake = FakePlayers {
+            lines: vec![line(
+                "2016-10-28",
+                "GSW",
+                person(115, "Stephen", "Curry"),
+                2100,
+                40,
+            )],
+            fail_on: Mutex::new(Some(date("2016-10-28"))),
+            asked: Mutex::new(vec![]),
+            injuries: vec![],
+            players: vec![],
+            active: vec![],
+        };
+        let seen = Mutex::new(Vec::new());
+        let err = players::backfill_all(&store, &fake, S2016, s2017, &|p| {
+            seen.lock()
+                .unwrap()
+                .push((p.season, p.seasons_done, p.seasons_total));
+        })
+        .await
+        .unwrap_err();
+        assert_eq!(
+            err.done.dates_fetched as i64,
+            1 + dates_2016,
+            "one date of 2016-17, then every date of 2015-16"
+        );
+        assert_eq!(
+            err.done.matched, 0,
+            "the matched line was on the failed date"
+        );
+        assert_eq!(err.dates_total as i64, 3 + dates_2016);
+        assert!(err.to_string().contains("rate limit"), "{err}");
+        let seen = seen.lock().unwrap().clone();
+        assert_eq!(seen[0], (Some(s2017), 0, 2), "newest season first");
+        assert!(
+            seen.contains(&(Some(S2016), 1, 2)),
+            "went on after the failure"
+        );
+        let progress = store.backfill_progress().await.unwrap();
+        assert!(progress[0].is_complete(), "2015-16 complete");
+        assert_eq!(progress[1].dates_fetched, 1);
+        assert_eq!(
+            players::seasons_to_backfill(&progress, S2016, s2017),
+            vec![s2017]
+        );
+        // A season outside the range is left alone; the second run finishes 2016-17.
+        let outcome = players::backfill_all(&store, &fake, S2016, S2016, &|_| {})
+            .await
+            .unwrap();
+        assert_eq!(outcome.dates_fetched, 0);
+        let outcome = players::backfill_all(&store, &fake, S2016, s2017, &|_| {})
+            .await
+            .unwrap();
+        assert_eq!((outcome.dates_fetched, outcome.matched), (2, 1));
+        assert!(store
+            .backfill_progress()
+            .await
+            .unwrap()
+            .iter()
+            .all(|s| s.is_complete()));
+        assert!(players::seasons_to_backfill(
+            &store.backfill_progress().await.unwrap(),
+            SeasonYear::MIN,
+            SeasonYear::MAX
+        )
+        .is_empty());
+    }
+
     /// The daily results sync replaces a season's non-archive games; the lines stored for
     /// those games must survive it, and a season removed and stored again is fetched again.
     #[sqlx::test(migrations = "./migrations")]

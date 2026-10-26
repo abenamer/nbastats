@@ -69,6 +69,9 @@ enum Command {
         /// Also refresh the current rosters (which players are active, and where)
         #[arg(long)]
         rosters: bool,
+        /// Backfill every season from the given one to the current season, newest first
+        #[arg(long)]
+        every_season: bool,
     },
     /// Container health check: GET /healthz on the bound address (exit 0 when healthy)
     Healthcheck,
@@ -203,6 +206,7 @@ async fn main() -> anyhow::Result<()> {
             injuries,
             all_players,
             rosters,
+            every_season,
         } => {
             let season = SeasonYear::try_new(season)?;
             let results = results.ok_or_else(|| {
@@ -212,7 +216,14 @@ async fn main() -> anyhow::Result<()> {
             })?;
             let progress = |p: players::PlayerProgress| {
                 eprintln!(
-                    "dates: {}/{}{} lines: {} requests: {}{}",
+                    "{}dates: {}/{}{} lines: {} requests: {}{}",
+                    p.season
+                        .map(|s| format!(
+                            "season {s} ({}/{}) ",
+                            p.seasons_done + 1,
+                            p.seasons_total
+                        ))
+                        .unwrap_or_default(),
                     p.dates_done,
                     p.dates_total,
                     p.current_date
@@ -226,14 +237,19 @@ async fn main() -> anyhow::Result<()> {
                         .unwrap_or_default()
                 );
             };
-            let mut outcome = players::backfill_season(&store, &results, season, &progress).await?;
+            let zone: chrono_tz::Tz = config
+                .results_sync_timezone
+                .trim()
+                .parse()
+                .unwrap_or(chrono_tz::America::New_York);
+            let today = chrono::Utc::now().with_timezone(&zone).date_naive();
+            let mut outcome = if every_season {
+                let to = scheduler::current_season(today);
+                players::backfill_all(&store, &results, season, to, &progress).await?
+            } else {
+                players::backfill_season(&store, &results, season, &progress).await?
+            };
             if injuries {
-                let zone: chrono_tz::Tz = config
-                    .results_sync_timezone
-                    .trim()
-                    .parse()
-                    .unwrap_or(chrono_tz::America::New_York);
-                let today = chrono::Utc::now().with_timezone(&zone).date_naive();
                 let lines =
                     players::fetch_injury_report(&store, &results, today, &progress).await?;
                 outcome.injury_report = Some((today, lines));
@@ -337,6 +353,22 @@ async fn serve(
     }
     let runner = tokio::spawn(jobs::runner(app.clone()));
     let sync = tokio::spawn(scheduler::run(app.clone()));
+    let backfill = match (config.player_backfill_from, app.results.is_some()) {
+        (Some(from), true) => {
+            info!(%from, "box-score backfill of every season scheduled (PLAYER_BACKFILL_FROM)");
+            let app = app.clone();
+            Some(tokio::spawn(async move {
+                if let Some(source) = app.results.as_ref() {
+                    players::backfill_loop(app.clone(), source, from).await;
+                }
+            }))
+        }
+        (Some(_), false) => {
+            warn!("PLAYER_BACKFILL_FROM is set but BALLDONTLIE_API_KEY is not; no backfill");
+            None
+        }
+        _ => None,
+    };
     let router = http::router(app.clone());
     let listener = tokio::net::TcpListener::bind(&config.bind_addr).await?;
     info!(addr = %config.bind_addr, "listening");
@@ -351,6 +383,9 @@ async fn serve(
     // Give the runner a moment to record an interrupted job before the pool closes.
     let _ = tokio::time::timeout(std::time::Duration::from_secs(10), runner).await;
     sync.abort();
+    if let Some(b) = backfill {
+        b.abort();
+    }
     store.close().await;
     info!("stopped cleanly");
     Ok(())

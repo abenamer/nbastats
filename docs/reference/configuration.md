@@ -32,6 +32,7 @@ sources:
 | `RESULTS_SYNC_TIME` | `04:00` | Wall-clock time of the daily sync, `HH:MM`. |
 | `RESULTS_SYNC_TIMEZONE` | `America/New_York` | IANA time zone of the daily sync. Daylight saving time is applied. |
 | `PLAYER_SYNC_ENABLED` | `true` | After the daily results sync, fetch the current season's box scores, today's injury report and the rosters; see [Player data](/concepts/player-data.md). Needs the daily sync. |
+| `PLAYER_BACKFILL_FROM` | none | A season end year (1947 for every season). When set, a background loop backfills the box scores of every season from it to the current one, season by season, until nothing is left. It retries after a failure and resumes after a restart; then the daily sync takes over. Needs the API key. |
 | `OPENROUTER_API_KEY` | none | API key for the [question box](/concepts/question-box.md). When unset, the box is off. |
 | `OPENROUTER_MODEL` | `openai/gpt-4o-mini` | The model the box asks through OpenRouter; it must support tool calling. |
 | `OPENROUTER_BASE_URL` | `https://openrouter.ai/api/v1` | Base URL of the OpenAI-compatible chat API. |

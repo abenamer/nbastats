@@ -3,6 +3,8 @@
 
 use std::env;
 use std::path::PathBuf;
+
+use crate::domain::ids::SeasonYear;
 use std::time::Duration;
 
 #[derive(Debug, Clone)]
@@ -32,6 +34,9 @@ pub struct Config {
     pub results_sync_timezone: String,
     /// Fetch box scores and the injury report after the daily results sync.
     pub player_sync_enabled: bool,
+    /// Backfill the box scores of every season from this one on, in the background, until
+    /// no played date is unfetched; `None` turns the loop off.
+    pub player_backfill_from: Option<SeasonYear>,
     /// OpenRouter API key for the question box; `None` disables it.
     pub openrouter_api_key: Option<String>,
     pub openrouter_base_url: String,
@@ -107,6 +112,21 @@ impl Config {
         let player_sync_enabled = env::var("PLAYER_SYNC_ENABLED")
             .map(|v| matches!(v.to_ascii_lowercase().as_str(), "1" | "true" | "yes"))
             .unwrap_or(true);
+        let player_backfill_from = env::var("PLAYER_BACKFILL_FROM")
+            .ok()
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty())
+            .map(|v| {
+                v.parse::<i32>()
+                    .ok()
+                    .and_then(|y| SeasonYear::try_new(y).ok())
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "PLAYER_BACKFILL_FROM must be a season end year between 1947 and 2100, for example 1947"
+                        )
+                    })
+            })
+            .transpose()?;
         let openrouter_api_key = env::var("OPENROUTER_API_KEY")
             .ok()
             .map(|k| k.trim().to_string())
@@ -149,6 +169,7 @@ impl Config {
             results_sync_time,
             results_sync_timezone,
             player_sync_enabled,
+            player_backfill_from,
             openrouter_api_key,
             openrouter_base_url,
             openrouter_model,
@@ -218,6 +239,7 @@ mod tests {
             results_sync_time: "04:00".to_string(),
             results_sync_timezone: "America/New_York".to_string(),
             player_sync_enabled: false,
+            player_backfill_from: None,
             openrouter_api_key: None,
             openrouter_base_url: String::new(),
             openrouter_model: String::new(),

@@ -68,6 +68,10 @@ pub fn router(app: State) -> Router {
         .route("/data/players", get(api::players_data))
         .route("/data/players/status", get(api::players_status))
         .route("/data/players/backfill", post(api::players_backfill))
+        .route(
+            "/data/players/backfill-all",
+            post(api::players_backfill_all),
+        )
         .route("/data/players/injuries", post(api::players_injury_report))
         .route("/data/players/load", post(api::players_load_all))
         .route("/data/players/rosters", post(api::players_refresh_active))

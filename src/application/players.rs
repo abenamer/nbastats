@@ -10,11 +10,13 @@ use std::sync::Arc;
 
 use chrono::{DateTime, Duration, NaiveDate, Utc};
 use serde::Serialize;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 use crate::domain::ids::SeasonYear;
 
-use super::ports::{FetchProgress, PlayerSource, PlayerStore, SourceError, StoreError};
+use super::ports::{
+    FetchProgress, PlayerSource, PlayerStore, SeasonBackfill, SourceError, StoreError,
+};
 use super::results_sync::Trigger;
 use super::state::App;
 
@@ -38,9 +40,24 @@ pub struct PlayerSyncOutcome {
     pub active_players: Option<i64>,
 }
 
-/// Progress of a run: the dates done and the fetch under way.
+impl PlayerSyncOutcome {
+    /// Add the counts of one season's run to a run over several.
+    fn add(&mut self, other: &PlayerSyncOutcome) {
+        self.dates_fetched += other.dates_fetched;
+        self.lines += other.lines;
+        self.matched += other.matched;
+        self.unmatched += other.unmatched;
+        self.players_upserted += other.players_upserted;
+    }
+}
+
+/// Progress of a run: the season and the dates done, and the fetch under way.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct PlayerProgress {
+    /// The season under way and how many seasons the run holds, for a run over several.
+    pub season: Option<SeasonYear>,
+    pub seasons_done: usize,
+    pub seasons_total: usize,
     pub dates_total: usize,
     pub dates_done: usize,
     pub current_date: Option<NaiveDate>,
@@ -94,6 +111,9 @@ impl std::error::Error for Interrupted {
 pub enum PlayerSyncKind {
     /// Box scores of every unfetched date of the season.
     Backfill { season: SeasonYear },
+    /// Box scores of every unfetched date of every season from `from` to `to`, newest
+    /// season first.
+    BackfillAll { from: SeasonYear, to: SeasonYear },
     /// The current season's unfetched and settling dates, today's injury report, then
     /// the current rosters.
     Daily { season: SeasonYear },
@@ -113,6 +133,9 @@ pub enum PlayerPhase {
         kind: PlayerSyncKind,
         trigger: Trigger,
         started_at: DateTime<Utc>,
+        season: Option<SeasonYear>,
+        seasons_done: usize,
+        seasons_total: usize,
         dates_total: usize,
         dates_done: usize,
         current_date: Option<NaiveDate>,
@@ -155,6 +178,9 @@ impl PlayerPhase {
                 kind: *kind,
                 trigger: *trigger,
                 started_at: *started_at,
+                season: p.season,
+                seasons_done: p.seasons_done,
+                seasons_total: p.seasons_total,
                 dates_total: p.dates_total,
                 dates_done: p.dates_done,
                 current_date: p.current_date,
@@ -200,6 +226,7 @@ async fn fetch_dates<P: PlayerSource, S: PlayerStore>(
                     requests: requests + p.requests,
                     ..p
                 },
+                ..Default::default()
             })
         };
         let step = async {
@@ -238,6 +265,7 @@ async fn fetch_dates<P: PlayerSource, S: PlayerStore>(
             requests,
             ..Default::default()
         },
+        ..Default::default()
     });
     Ok(done)
 }
@@ -258,6 +286,117 @@ pub async fn backfill_season<P: PlayerSource, S: PlayerStore>(
     })?;
     info!(%season, dates = dates.len(), "box-score backfill: dates to fetch");
     fetch_dates(store, source, &dates, progress).await
+}
+
+/// The seasons a run over `from..=to` must still fetch: those with an unfetched played
+/// date, newest first, so the seasons a forecast needs come first.
+pub fn seasons_to_backfill(
+    progress: &[SeasonBackfill],
+    from: SeasonYear,
+    to: SeasonYear,
+) -> Vec<SeasonYear> {
+    let mut seasons: Vec<SeasonYear> = progress
+        .iter()
+        .filter(|s| s.season >= from && s.season <= to && !s.is_complete())
+        .map(|s| s.season)
+        .collect();
+    seasons.sort_unstable_by(|a, b| b.cmp(a));
+    seasons
+}
+
+/// Box scores of every unfetched date of every season from `from` to `to`, newest first.
+/// A season whose run stops does not stop the others: the run goes on with the next
+/// season and reports the first error at the end, so one bad date cannot block every
+/// older season. A rejected key, tier or path stops the run at once. The seasons and
+/// dates done stay stored.
+pub async fn backfill_all<P: PlayerSource, S: PlayerStore>(
+    store: &S,
+    source: &P,
+    from: SeasonYear,
+    to: SeasonYear,
+    progress: &(dyn Fn(PlayerProgress) + Sync),
+) -> Result<PlayerSyncOutcome, Box<Interrupted>> {
+    let rows = store.backfill_progress().await.map_err(|e| {
+        Box::new(Interrupted {
+            done: PlayerSyncOutcome::default(),
+            dates_total: 0,
+            error: e.into(),
+        })
+    })?;
+    let seasons = seasons_to_backfill(&rows, from, to);
+    let dates_left: usize = rows
+        .iter()
+        .filter(|s| seasons.contains(&s.season))
+        .map(|s| (s.dates_total - s.dates_fetched).max(0) as usize)
+        .sum();
+    info!(seasons = seasons.len(), dates = dates_left, %from, %to, "box-score backfill of every season: left to fetch");
+    let mut done = PlayerSyncOutcome::default();
+    let mut requests = 0u32;
+    let mut first_error: Option<PlayerSyncError> = None;
+    for (i, &season) in seasons.iter().enumerate() {
+        // The page shows run totals: the finished seasons' counts come first.
+        let (lines_before, requests_before) = (done.lines, requests);
+        let scoped = |p: PlayerProgress| {
+            progress(PlayerProgress {
+                season: Some(season),
+                seasons_done: i,
+                seasons_total: seasons.len(),
+                lines: lines_before + p.lines,
+                fetch: FetchProgress {
+                    requests: requests_before + p.fetch.requests,
+                    ..p.fetch
+                },
+                ..p
+            })
+        };
+        let (outcome, error) = match backfill_season(store, source, season, &scoped).await {
+            Ok(o) => (o, None),
+            Err(e) => {
+                let Interrupted {
+                    done,
+                    dates_total,
+                    error,
+                } = *e;
+                warn!(%season, error = %error, dates_done = done.dates_fetched, dates_total, "backfill of the season stopped; going on with the next season");
+                (done, Some(error))
+            }
+        };
+        // At least one request per date and one per 100 lines: the count the page shows.
+        requests += (outcome.lines as u32)
+            .div_ceil(100)
+            .max(outcome.dates_fetched as u32);
+        done.add(&outcome);
+        if let Some(e) = error {
+            let stop = !retry_worthwhile(&e);
+            first_error.get_or_insert(e);
+            if stop {
+                break;
+            }
+        }
+    }
+    match first_error {
+        Some(error) => Err(Box::new(Interrupted {
+            done,
+            dates_total: dates_left,
+            error,
+        })),
+        None => {
+            progress(PlayerProgress {
+                season: None,
+                seasons_done: seasons.len(),
+                seasons_total: seasons.len(),
+                dates_total: dates_left,
+                dates_done: dates_left,
+                lines: done.lines,
+                fetch: FetchProgress {
+                    requests,
+                    ..Default::default()
+                },
+                ..Default::default()
+            });
+            Ok(done)
+        }
+    }
 }
 
 /// The dates the daily sync fetches: the unfetched dates, and the fetched dates of the
@@ -407,6 +546,9 @@ pub async fn run_tracked<P: PlayerSource>(
         kind,
         trigger,
         started_at,
+        season: None,
+        seasons_done: 0,
+        seasons_total: 0,
         dates_total: 0,
         dates_done: 0,
         current_date: None,
@@ -431,6 +573,9 @@ pub async fn run_tracked<P: PlayerSource>(
     let result = match kind {
         PlayerSyncKind::Backfill { season } => {
             backfill_season(&app.store, source, season, &progress).await
+        }
+        PlayerSyncKind::BackfillAll { from, to } => {
+            backfill_all(&app.store, source, from, to, &progress).await
         }
         PlayerSyncKind::Daily { season } => {
             sync_daily(&app.store, source, season, today, &progress).await
@@ -511,10 +656,111 @@ pub fn start(app: Arc<App>, kind: PlayerSyncKind) -> Result<(), StartError> {
     Ok(())
 }
 
+/// How long the backfill loop waits after a run that stopped before its end.
+pub const BACKFILL_RETRY: std::time::Duration = std::time::Duration::from_secs(10 * 60);
+/// How long the loop waits when a manual run holds the lock.
+const BACKFILL_LOCK_WAIT: std::time::Duration = std::time::Duration::from_secs(60);
+/// The pause before the first run, so the server finishes starting.
+const BACKFILL_START_DELAY: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// Whether a failed run is worth a retry: a rejected key, tier or path stays rejected, so
+/// the loop stops and says so; anything else (a rate limit, a transport error, a server
+/// error, a store error) is tried again after `BACKFILL_RETRY`.
+pub fn retry_worthwhile(error: &PlayerSyncError) -> bool {
+    !matches!(
+        error,
+        PlayerSyncError::Source(SourceError::Rejected {
+            status: 401 | 403 | 404,
+            ..
+        }) | PlayerSyncError::Source(SourceError::NotConfigured(_))
+    )
+}
+
+/// Background task: backfill the box scores of every season from `from` to the current
+/// season until no played date is unfetched, season after season, across failures. Each
+/// season is one run under the player lock, so the daily player sync can run between
+/// seasons. A season whose run stops is left for the next pass; a pass with a failure is
+/// followed by a wait of `BACKFILL_RETRY`. Every run resumes where the last stopped (the
+/// fetch records are the bookmark). Stops when the work is done, when the source rejects
+/// the key, tier or path, or at shutdown; after that the daily sync keeps the current
+/// season up to date.
+pub async fn backfill_loop<P: PlayerSource>(app: Arc<App>, source: &P, from: SeasonYear) {
+    tokio::select! {
+        _ = tokio::time::sleep(BACKFILL_START_DELAY) => {}
+        _ = app.shutdown.cancelled() => return,
+    }
+    info!(%from, "box-score backfill of every season: loop started");
+    // The seasons whose run stopped in this pass; tried again in the next pass.
+    let mut failed_this_pass: Vec<SeasonYear> = Vec::new();
+    loop {
+        let to = super::scheduler::current_season(app.today());
+        let wait = match app.store.backfill_progress().await {
+            Err(e) => {
+                warn!(error = %e, retry_secs = BACKFILL_RETRY.as_secs(), "backfill loop: could not read the progress; trying again later");
+                BACKFILL_RETRY
+            }
+            Ok(rows) => {
+                let next = seasons_to_backfill(&rows, from, to)
+                    .into_iter()
+                    .find(|s| !failed_this_pass.contains(s));
+                match next {
+                    None if failed_this_pass.is_empty() => {
+                        info!(%from, %to, "box-score backfill of every season: nothing left to fetch");
+                        return;
+                    }
+                    None => {
+                        warn!(seasons = ?failed_this_pass, retry_secs = BACKFILL_RETRY.as_secs(), "backfill loop: a pass ended with seasons that stopped; trying them again later");
+                        failed_this_pass.clear();
+                        BACKFILL_RETRY
+                    }
+                    Some(season) => match app.player_lock.clone().try_lock_owned() {
+                        Ok(guard) => {
+                            let result = run_tracked(
+                                &app,
+                                source,
+                                PlayerSyncKind::Backfill { season },
+                                Trigger::Scheduled,
+                            )
+                            .await;
+                            drop(guard);
+                            match result {
+                                // A run that stored nothing leaves the season as it was
+                                // (a date the store holds lines for without a fetch
+                                // record); it is left for the next pass, not retried at
+                                // the source's pace.
+                                Ok(o) if o.dates_fetched == 0 => {
+                                    warn!(%season, "backfill loop: the season's run stored no date; leaving it for the next pass");
+                                    failed_this_pass.push(season);
+                                    continue;
+                                }
+                                Ok(_) => continue,
+                                Err(e) if retry_worthwhile(&e.error) => {
+                                    warn!(%season, error = %e, "backfill loop: the season's run stopped; going on with the next season");
+                                    failed_this_pass.push(season);
+                                    continue;
+                                }
+                                Err(e) => {
+                                    error!(error = %e, "backfill loop stopped: the source rejects the request; fix the key, the tier or the base URL and restart");
+                                    return;
+                                }
+                            }
+                        }
+                        Err(_) => BACKFILL_LOCK_WAIT,
+                    },
+                }
+            }
+        };
+        tokio::select! {
+            _ = tokio::time::sleep(wait) => {}
+            _ = app.shutdown.cancelled() => return,
+        }
+    }
+}
+
 /// The scheduled daily run for `season`. Skipped when a manual run holds the lock.
 pub async fn sync_scheduled<P: PlayerSource>(app: &App, source: &P, season: SeasonYear) {
     let Ok(_guard) = app.player_lock.clone().try_lock_owned() else {
-        info!("a manual player sync is running; the scheduled player sync waits for the next run");
+        info!("another player sync is running; the scheduled player sync waits for the next run");
         return;
     };
     let _ = run_tracked(
@@ -541,6 +787,9 @@ mod tests {
             kind,
             trigger: Trigger::Manual,
             started_at: t,
+            season: None,
+            seasons_done: 0,
+            seasons_total: 0,
             dates_total: 0,
             dates_done: 0,
             current_date: None,
@@ -551,6 +800,9 @@ mod tests {
         };
         let date = NaiveDate::from_ymd_opt(2025, 11, 3).unwrap();
         let p = PlayerProgress {
+            season: Some(SeasonYear::of(2026)),
+            seasons_done: 1,
+            seasons_total: 3,
             dates_total: 160,
             dates_done: 12,
             current_date: Some(date),
@@ -568,6 +820,9 @@ mod tests {
                 kind,
                 trigger: Trigger::Manual,
                 started_at: t,
+                season: Some(SeasonYear::of(2026)),
+                seasons_done: 1,
+                seasons_total: 3,
                 dates_total: 160,
                 dates_done: 12,
                 current_date: Some(date),
@@ -623,5 +878,62 @@ mod tests {
             error: SourceError::Transport("timed out".into()).into(),
         };
         assert!(none.to_string().ends_with("timed out"), "{none}");
+    }
+
+    #[test]
+    fn only_a_rejected_key_tier_or_path_stops_the_retries() {
+        let rejected = |status: u16| {
+            PlayerSyncError::Source(SourceError::Rejected {
+                status,
+                message: String::new(),
+            })
+        };
+        for stop in [
+            rejected(401),
+            rejected(403),
+            rejected(404),
+            PlayerSyncError::Source(SourceError::NotConfigured("no key".into())),
+        ] {
+            assert!(!retry_worthwhile(&stop), "{stop}");
+        }
+        for again in [
+            rejected(429),
+            rejected(500),
+            PlayerSyncError::Source(SourceError::RateLimited(6)),
+            PlayerSyncError::Source(SourceError::Transport("reset".into())),
+            PlayerSyncError::Source(SourceError::InvalidPayload("odd".into())),
+            PlayerSyncError::Store(StoreError::Unavailable("down".into())),
+        ] {
+            assert!(retry_worthwhile(&again), "{again}");
+        }
+    }
+
+    #[test]
+    fn seasons_to_backfill_are_the_incomplete_ones_newest_first() {
+        let row = |y: i32, total: i64, fetched: i64| SeasonBackfill {
+            season: SeasonYear::of(y),
+            dates_total: total,
+            dates_fetched: fetched,
+        };
+        let rows = [
+            row(2016, 210, 210),
+            row(2017, 205, 3),
+            row(2024, 220, 0),
+            row(2025, 215, 215),
+            row(2026, 12, 0),
+        ];
+        assert_eq!(
+            seasons_to_backfill(&rows, SeasonYear::of(2016), SeasonYear::of(2026)),
+            vec![
+                SeasonYear::of(2026),
+                SeasonYear::of(2024),
+                SeasonYear::of(2017)
+            ]
+        );
+        assert_eq!(
+            seasons_to_backfill(&rows, SeasonYear::of(2018), SeasonYear::of(2025)),
+            vec![SeasonYear::of(2024)]
+        );
+        assert!(seasons_to_backfill(&rows, SeasonYear::of(2016), SeasonYear::of(2016)).is_empty());
     }
 }

@@ -9,7 +9,7 @@ use sqlx::{FromRow, PgConnection, Row};
 
 use crate::application::ports::{
     Appearance, BoxScoreCounts, BoxScoreFetch, BoxScoreLine, InjuryLine, InjuryRecord, Player,
-    PlayerCoverage, PlayerRecord, PlayerSeason, PlayerStore, StoreResult,
+    PlayerCoverage, PlayerRecord, PlayerSeason, PlayerStore, SeasonBackfill, StoreResult,
 };
 use crate::domain::ids::{PlayerId, SeasonYear, TeamId};
 
@@ -528,6 +528,25 @@ impl PlayerStore for PostgresStore {
         .fetch_all(&self.pool)
         .await?;
         Ok(rows.into_iter().map(|r| r.0).collect())
+    }
+
+    async fn backfill_progress(&self) -> StoreResult<Vec<SeasonBackfill>> {
+        let rows: Vec<(SeasonYear, i64, i64)> = sqlx::query_as(
+            "SELECT d.season, count(*), count(f.game_date)
+             FROM (SELECT DISTINCT season, game_date FROM games WHERE home_score IS NOT NULL) d
+             LEFT JOIN box_score_fetches f ON f.game_date = d.game_date
+             GROUP BY d.season ORDER BY d.season",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .into_iter()
+            .map(|(season, dates_total, dates_fetched)| SeasonBackfill {
+                season,
+                dates_total,
+                dates_fetched,
+            })
+            .collect())
     }
 
     async fn player_coverage(&self) -> StoreResult<PlayerCoverage> {
