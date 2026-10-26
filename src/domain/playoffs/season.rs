@@ -123,6 +123,28 @@ impl SeasonParams {
                     ),
                 );
             }
+            if !(0.0..=worth::MAX_ABSENCE_ELO).contains(&a.se_elo) {
+                return invalid(
+                    "absences",
+                    format!(
+                        "an absence's standard error must be between 0 and {} Elo",
+                        worth::MAX_ABSENCE_ELO
+                    ),
+                );
+            }
+        }
+        // Two absences of one player that overlap would stack his penalty.
+        for (i, a) in self.absences.iter().enumerate() {
+            let Some(p) = a.player_id else { continue };
+            if self.absences[..i]
+                .iter()
+                .any(|b| b.player_id == Some(p) && b.from <= a.to && a.from <= b.to)
+            {
+                return invalid(
+                    "absences",
+                    format!("two absences of player {p} overlap; give one span per player"),
+                );
+            }
         }
         Ok(())
     }
@@ -295,6 +317,9 @@ pub struct SeasonForecast {
     /// Absences applied to at least one remaining game.
     #[serde(default)]
     pub absences_applied: usize,
+    /// Of those, the absences whose penalty is drawn afresh in every simulated season.
+    #[serde(default)]
+    pub absences_sampled: usize,
     pub iterations: u64,
     pub seed: u64,
     pub params: SeasonParams,
@@ -449,13 +474,36 @@ struct Remaining {
     away: Ti,
     neutral: bool,
     date: NaiveDate,
-    /// The rating penalties of the absences that cover the game's date.
+    /// The expected rating penalties of the absences that cover the game's date.
     home_penalty: f64,
     away_penalty: f64,
+    /// The sampled absences (indices into `Setup::sampled`) that cover the date: their
+    /// drawn deviation from the expected penalty is added in each simulated season.
+    home_sampled: Vec<usize>,
+    away_sampled: Vec<usize>,
     /// The index of the Cup group game this game is, when it is one.
     cup_game: Option<usize>,
     /// A game on a knockout date: its simulated result also decides the Cup game.
     knockout_game: bool,
+}
+
+/// An absence whose penalty is drawn in every simulated season: the expected penalty and
+/// its standard error, with the team and the span to match games on.
+#[derive(Debug, Clone, Copy)]
+struct SampledAbsence {
+    team: TeamId,
+    from: NaiveDate,
+    to: NaiveDate,
+    elo: f64,
+    se: f64,
+    /// The mean of the held draw, which the expected penalties already count.
+    mean: f64,
+}
+
+/// A standard normal draw (Box-Muller).
+fn standard_normal<R: Rng>(rng: &mut R) -> f64 {
+    let (u1, u2): (f64, f64) = (rng.gen::<f64>().max(1e-12), rng.gen());
+    (-2.0 * u1.ln()).sqrt() * (2.0 * std::f64::consts::PI * u2).cos()
 }
 
 /// A Cup group game: played with its result (home won, the winner's margin), or to come.
@@ -635,9 +683,7 @@ fn draw_margin<R: Rng>(rng: &mut R, home_edge: f64, home_won: bool) -> i32 {
     let expected = home_edge * cup::POINTS_PER_ELO;
     let mut margin = 0.0;
     for attempt in 0..64 {
-        let (u1, u2): (f64, f64) = (rng.gen::<f64>().max(1e-12), rng.gen());
-        let normal = (-2.0 * u1.ln()).sqrt() * (2.0 * std::f64::consts::PI * u2).cos();
-        margin = expected + cup::MARGIN_SD * normal;
+        margin = expected + cup::MARGIN_SD * standard_normal(rng);
         if (margin > 0.0) == home_won || attempt == 63 {
             break;
         }
@@ -709,6 +755,8 @@ struct Setup {
     /// n*n: wins of i over j
     base_h2h: Vec<i32>,
     remaining: Vec<Remaining>,
+    /// The absences with a standard error, in the order of `params.absences`.
+    sampled: Vec<SampledAbsence>,
     played_play_in: Vec<PlayedPlayIn>,
     qualification: Qualification,
     format: PlayoffFormat,
@@ -742,6 +790,19 @@ impl Setup {
         let conf_of: Vec<Conference> = ids.iter().map(|t| alignment[t].0).collect();
         let div_of: Vec<&str> = ids.iter().map(|t| alignment[t].1.as_str()).collect();
         let mut remaining = Vec::new();
+        let sampled: Vec<SampledAbsence> = params
+            .absences
+            .iter()
+            .filter(|a| a.se_elo > 0.0)
+            .map(|a| SampledAbsence {
+                team: a.team_id,
+                from: a.from,
+                to: a.to,
+                elo: a.elo,
+                se: a.se_elo,
+                mean: worth::expected_penalty(a.elo, a.se_elo),
+            })
+            .collect();
         let mut played_play_in = Vec::new();
         let dates = cup::dates_for(params.season);
         let knockout_dates: Vec<NaiveDate> = dates
@@ -831,6 +892,8 @@ impl Setup {
                     date: g.game_date,
                     home_penalty: worth::penalty(&params.absences, g.home_team_id, g.game_date),
                     away_penalty: worth::penalty(&params.absences, g.away_team_id, g.game_date),
+                    home_sampled: covering(&sampled, g.home_team_id, g.game_date),
+                    away_sampled: covering(&sampled, g.away_team_id, g.game_date),
                     cup_game,
                     knockout_game: on_knockout_date,
                 }),
@@ -894,6 +957,7 @@ impl Setup {
             base_records,
             base_h2h,
             remaining,
+            sampled,
             played_play_in,
             qualification: seeding::qualification(params.season),
             format,
@@ -1041,9 +1105,20 @@ struct IterState {
     /// Games on the knockout dates simulated as regular-season games this iteration:
     /// home, away, home won; the Cup keeps their results.
     knockout_sim: Vec<(Ti, Ti, bool)>,
+    /// This season's deviation of each sampled absence from its expected penalty.
+    absence_dev: Vec<f64>,
 }
 
 /// The played results of the Cup group games, as the start of every iteration.
+/// Indices of the sampled absences of `team` that cover `date`.
+fn covering(sampled: &[SampledAbsence], team: TeamId, date: NaiveDate) -> Vec<usize> {
+    sampled
+        .iter()
+        .enumerate()
+        .filter(|(_, a)| a.team == team && a.from <= date && date <= a.to)
+        .map(|(i, _)| i)
+        .collect()
+}
 fn cup_played(setup: &Setup) -> Vec<Option<(bool, i32)>> {
     setup
         .cup
@@ -1063,6 +1138,7 @@ impl IterState {
             elo: setup.elo.clone(),
             cup_results: cup_played(setup),
             knockout_sim: Vec::new(),
+            absence_dev: vec![0.0; setup.sampled.len()],
         }
     }
     fn reset<R: Rng>(&mut self, setup: &Setup, rng: &mut R) {
@@ -1078,6 +1154,13 @@ impl IterState {
             }
         }
         self.knockout_sim.clear();
+        // A sampled absence's penalty this season: a normal draw around the estimate, held
+        // between zero and the cap, as a deviation from the mean of that held draw (which
+        // the expected penalties of the games already carry).
+        for (d, a) in self.absence_dev.iter_mut().zip(&setup.sampled) {
+            let drawn = (a.elo + a.se * standard_normal(rng)).clamp(0.0, worth::MAX_ABSENCE_ELO);
+            *d = drawn - a.mean;
+        }
     }
     /// Record a decided game between team indices `w` (winner) and `l` (loser).
     fn record(&mut self, setup: &Setup, w: Ti, l: Ti) {
@@ -1355,17 +1438,24 @@ fn penalty_of(setup: &Setup, i: Ti) -> f64 {
     }
 }
 
+/// Whether an absence covers at least one of the games the forecast simulates.
+fn applies(a: &worth::Absence, setup: &Setup) -> bool {
+    setup.remaining.iter().any(|g| {
+        (setup.ids[g.home] == a.team_id || setup.ids[g.away] == a.team_id) && a.covers(g.date)
+    })
+}
+
 /// How many of the absences given cover at least one of the games the forecast simulates.
 fn absences_applied(params: &SeasonParams, setup: &Setup) -> usize {
+    params.absences.iter().filter(|a| applies(a, setup)).count()
+}
+
+/// How many applied absences have their penalty drawn in every simulated season.
+fn absences_sampled(params: &SeasonParams, setup: &Setup) -> usize {
     params
         .absences
         .iter()
-        .filter(|a| {
-            setup.remaining.iter().any(|g| {
-                (setup.ids[g.home] == a.team_id || setup.ids[g.away] == a.team_id)
-                    && a.covers(g.date)
-            })
-        })
+        .filter(|a| a.se_elo > 0.0 && applies(a, setup))
         .count()
 }
 
@@ -1429,9 +1519,19 @@ pub fn run<P: Progress + ?Sized>(
                 for g in &setup.remaining {
                     // The penalties lower the sides for the result; the rating update
                     // below works from the ratings themselves, as the real one will.
+                    let home_penalty = g.home_penalty
+                        + g.home_sampled
+                            .iter()
+                            .map(|&i| st.absence_dev[i])
+                            .sum::<f64>();
+                    let away_penalty = g.away_penalty
+                        + g.away_sampled
+                            .iter()
+                            .map(|&i| st.absence_dev[i])
+                            .sum::<f64>();
                     let p = elo::game_probability(
-                        st.elo[g.home] - g.home_penalty,
-                        st.elo[g.away] - g.away_penalty,
+                        st.elo[g.home] - home_penalty,
+                        st.elo[g.away] - away_penalty,
                         true,
                         g.neutral,
                         home_adv,
@@ -1439,8 +1539,8 @@ pub fn run<P: Progress + ?Sized>(
                     );
                     let home_won = rng.gen::<f64>() < p;
                     if let Some(ci) = g.cup_game {
-                        let edge = (st.elo[g.home] - g.home_penalty)
-                            - (st.elo[g.away] - g.away_penalty)
+                        let edge = (st.elo[g.home] - home_penalty)
+                            - (st.elo[g.away] - away_penalty)
                             + if g.neutral { 0.0 } else { home_adv };
                         st.cup_results[ci] =
                             Some((home_won, draw_margin(&mut rng, edge, home_won)));
@@ -1693,6 +1793,7 @@ pub fn run<P: Progress + ?Sized>(
         games_played,
         games_remaining: setup.remaining.len(),
         absences_applied: absences_applied(params, &setup),
+        absences_sampled: absences_sampled(params, &setup),
         iterations: acc.iterations,
         seed: params.seed,
         params: params.clone(),
@@ -1950,6 +2051,7 @@ mod tests {
             to: NaiveDate::from_ymd_opt(2024, 6, 30).unwrap(),
             elo: 150.0,
             player_id: None,
+            se_elo: 0.0,
         }];
         let hurt = run(&params, &games, &teams, &Silent).unwrap();
         let row = hurt.teams.iter().find(|t| t.team_id == team).unwrap();
@@ -1980,6 +2082,67 @@ mod tests {
         params.absences[0].elo = 10.0;
         params.absences[0].to = params.absences[0].from - chrono::Duration::days(1);
         assert!(params.validate(10_000).is_err());
+        params.absences[0].to = params.absences[0].from;
+        params.absences[0].se_elo = 1000.0;
+        assert!(params.validate(10_000).is_err());
+    }
+
+    #[test]
+    fn a_sampled_absence_keeps_the_expected_penalty_and_a_zero_error_is_the_fixed_case() {
+        use crate::domain::simulation::progress::Silent;
+        let (teams, games) = cup_season(2024, false, false);
+        let mut params = cup_params(2024, "2023-11-01");
+        params.iterations = 4000;
+        let team = run(&params, &games, &teams, &Silent).unwrap().teams[0].team_id;
+        params.absences = vec![worth::Absence {
+            team_id: team,
+            from: NaiveDate::from_ymd_opt(2023, 11, 1).unwrap(),
+            to: NaiveDate::from_ymd_opt(2024, 6, 30).unwrap(),
+            elo: 150.0,
+            player_id: None,
+            se_elo: 0.0,
+        }];
+        let fixed = run(&params, &games, &teams, &Silent).unwrap();
+        assert_eq!(fixed.absences_sampled, 0);
+        // The same seed with an error of zero draws nothing: the results are identical.
+        let again = run(&params, &games, &teams, &Silent).unwrap();
+        assert_eq!(fixed.teams[0].expected_wins, again.teams[0].expected_wins);
+        params.absences[0].se_elo = 60.0;
+        let sampled = run(&params, &games, &teams, &Silent).unwrap();
+        assert_eq!(sampled.absences_sampled, 1);
+        assert_eq!(sampled.absences_applied, 1);
+        let fixed_row = fixed.teams.iter().find(|t| t.team_id == team).unwrap();
+        let sampled_row = sampled.teams.iter().find(|t| t.team_id == team).unwrap();
+        // The reported penalty is the mean of the held draw (150.1 for 150 ± 60); the win
+        // total stays close to the fixed case, because the draws average out, but the two
+        // are not identical.
+        assert!((sampled_row.absence_penalty - 150.1).abs() < 0.1);
+        // A small estimate with a large error is pulled up by the hold at zero, and the
+        // reported penalty says so.
+        params.absences[0].elo = 0.0;
+        let pulled = run(&params, &games, &teams, &Silent).unwrap();
+        let row = pulled.teams.iter().find(|t| t.team_id == team).unwrap();
+        assert!(
+            (row.absence_penalty - 23.9).abs() < 0.1,
+            "{}",
+            row.absence_penalty
+        );
+        params.absences[0].elo = 150.0;
+        // Two overlapping absences of one player are refused; disjoint spans are not.
+        params.absences[0].player_id = Some(crate::domain::ids::PlayerId::new(7));
+        params.absences.push(params.absences[0].clone());
+        assert!(params.validate(10_000).is_err());
+        params.absences[1].from = NaiveDate::from_ymd_opt(2024, 7, 1).unwrap();
+        params.absences[1].to = NaiveDate::from_ymd_opt(2024, 7, 2).unwrap();
+        assert!(params.validate(10_000).is_ok());
+        assert!(
+            (sampled_row.expected_wins - fixed_row.expected_wins).abs()
+                < 0.05 * fixed_row.expected_wins.max(1.0),
+            "{} vs {}",
+            sampled_row.expected_wins,
+            fixed_row.expected_wins
+        );
+        assert_ne!(sampled_row.expected_wins, fixed_row.expected_wins);
     }
 
     #[test]

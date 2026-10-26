@@ -16,6 +16,16 @@
   <button id="run" class="primary">Forecast</button>
   <span id="status" class="muted"></span>
 </section>
+<section class="controls" id="whatIf">
+  <label>Player out <input id="whoName" list="whoOptions" placeholder="type a name" autocomplete="off" style="width:14rem" title="A player whose worth comes off his team's rating for the span; the search needs two letters"><datalist id="whoOptions"></datalist></label>
+  <label>From <input id="whoFrom" type="date"></label>
+  <label>To <input id="whoTo" type="date"></label>
+  <label>Estimate <select id="whoEstimate" title="Worth: from the games his team played without him, with its error. Box: from his box score, without an error. Auto: the worth when he has one, else the box"><option value="auto">Auto</option><option value="worth">Worth (missed games)</option><option value="box">Box score</option></select></label>
+  <button id="whoAdd">Add</button>
+  <label title="Each simulated season draws every absence's penalty from its standard error, so the forecast's spread reflects how little is known about the worth"><input id="sampleWorth" type="checkbox"> Draw each worth from its uncertainty</label>
+  <span id="whoStatus" class="muted small"></span>
+</section>
+<ul id="absences" class="small" style="margin:0 0 .5rem 0;padding-left:1.2rem"></ul>
 <p class="muted small" id="advNote"></p>
 <p class="muted small" id="note"></p>
 <section class="panel"><div id="results" class="table-wrap"></div></section>

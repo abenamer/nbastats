@@ -65,6 +65,64 @@
   };
   document.getElementById('season').addEventListener('change', showAdvantage);
   showAdvantage();
+
+  // Players out: absences the user adds, priced with the player's worth.
+  const absences = [];
+  let found = new Map();
+  const whoStatus = document.getElementById('whoStatus');
+  const seasonSpan = () => { const s = parseInt(document.getElementById('season').value); return [`${s - 1}-10-01`, `${s}-06-30`]; };
+  function renderAbsences() {
+    document.getElementById('absences').innerHTML = absences.map((a, i) =>
+      `<li>${esc(a.name)} (${esc(a.team_code)}) out ${esc(a.from)} to ${esc(a.to)}: −${num(a.elo, 0)} Elo${a.se_elo ? ` ± ${num(a.se_elo, 0)}` : ''} from the ${esc(a.source)} <button type="button" data-remove="${i}" class="small">remove</button></li>`).join('');
+  }
+  document.getElementById('absences').addEventListener('click', e => {
+    const b = e.target.closest('button[data-remove]'); if (!b) return;
+    absences.splice(Number(b.dataset.remove), 1); renderAbsences();
+  });
+  let searchTimer = null;
+  document.getElementById('whoName').addEventListener('input', e => {
+    const q = e.target.value.trim();
+    clearTimeout(searchTimer);
+    if (q.length < 2) return;
+    searchTimer = setTimeout(async () => {
+      try {
+        const r = await getJSON(`/api/players?q=${encodeURIComponent(q)}`);
+        // Two players of one name are told apart by team or identifier in the label.
+        const names = new Map(); r.players.forEach(p => { const n = `${p.first_name} ${p.last_name}`.trim(); names.set(n, (names.get(n) || 0) + 1); });
+        found = new Map(r.players.map(p => { const n = `${p.first_name} ${p.last_name}`.trim(); return [names.get(n) > 1 ? `${n} (${p.team_code || `#${p.id}`})` : n, p]; }));
+        document.getElementById('whoOptions').innerHTML = [...found.keys()].map(n => `<option value="${esc(n)}"></option>`).join('');
+      } catch (err) { setStatus(whoStatus, err.message, true); }
+    }, 250);
+  });
+  document.getElementById('whoAdd').addEventListener('click', async () => {
+    const name = document.getElementById('whoName').value.trim();
+    const player = found.get(name);
+    if (!player) { setStatus(whoStatus, 'Pick a player from the list first.', true); return; }
+    const season = parseInt(document.getElementById('season').value);
+    const [start, end] = seasonSpan();
+    const asOf = document.getElementById('preseason').checked ? '' : document.getElementById('asOf').value;
+    const from = document.getElementById('whoFrom').value || asOf || start;
+    const to = document.getElementById('whoTo').value || end;
+    if (to < from) { setStatus(whoStatus, 'The span ends before it starts.', true); return; }
+    const want = document.getElementById('whoEstimate').value;
+    setStatus(whoStatus, 'pricing…');
+    try {
+      const w = await getJSON(`/api/players/${player.id}/worth`);
+      const worth = w.seasons.find(s => s.season === season) || null;
+      const box = (w.box_seasons || []).filter(b => b.season === season).map(b => b.row).sort((a, b) => b.minutes - a.minutes)[0] || null;
+      let pick = null;
+      if (want === 'worth' || (want === 'auto' && worth)) pick = worth ? { elo: worth.worth_elo, se_elo: worth.se_elo, team_id: worth.teams[worth.teams.length - 1], source: 'missed games' } : null;
+      else if (box) pick = { elo: box.worth_elo, se_elo: 0, team_id: box.team_id, source: 'box score' };
+      if (!pick) { setStatus(whoStatus, `No ${want === 'box' ? 'box-score' : want === 'worth' ? 'with/without' : ''} estimate for ${name} in ${labelOf(season)}.`, true); return; }
+      if (pick.elo <= 0) { setStatus(whoStatus, `${name}'s estimate is ${num(pick.elo, 0)} Elo: an absence that costs nothing is not added.`, true); return; }
+      const teamCode = (w.teams || {})[String(pick.team_id)] || player.team_code || `team ${pick.team_id}`;
+      const entry = { name, player_id: player.id, team_id: pick.team_id, team_code: teamCode, from, to, elo: Math.min(pick.elo, 400), se_elo: Math.min(pick.se_elo, 400), source: pick.source };
+      // One span per player: a second Add replaces the first entry.
+      const existing = absences.findIndex(a => a.player_id === player.id);
+      if (existing >= 0) { absences[existing] = entry; setStatus(whoStatus, `${name} replaced.`); } else { absences.push(entry); setStatus(whoStatus, ''); }
+      renderAbsences();
+    } catch (err) { setStatus(whoStatus, err.message, true); }
+  });
   document.getElementById('run').addEventListener('click', async () => {
     const btn = document.getElementById('run'); btn.disabled = true;
     const pk = document.getElementById('pk').value; const radv = document.getElementById('radv').value;
@@ -72,14 +130,16 @@
       home_advantage: parseFloat(document.getElementById('adv').value), regular_home_advantage: radv === '' ? null : parseFloat(radv), regular_season_k: parseFloat(document.getElementById('k').value), playoff_k: pk === '' ? null : parseFloat(pk), playoff_scale: 1.0 };
     if (!document.getElementById('preseason').checked && document.getElementById('asOf').value) p.as_of = document.getElementById('asOf').value;
     if (document.getElementById('injuries').checked) p.use_injury_report = true;
+    if (absences.length) p.absences = absences.map(a => ({ team_id: a.team_id, from: a.from, to: a.to, elo: a.elo, se_elo: a.se_elo, player_id: a.player_id }));
+    if (document.getElementById('sampleWorth').checked) p.sample_worth = true;
     const name = document.getElementById('name').value.trim(); if (name) p.name = name;
     try {
       const job = await runJob('/api/jobs/season', p, j => setStatus(status, `${j.status} ${pct(j.progress, 0)}`));
       const r = job.result;
-      document.getElementById('note').textContent = `${r.information_cutoff_note} Games used: ${r.games_played}; regular-season games simulated: ${r.games_remaining}; qualification format: ${r.qualification}. ${r.iterations.toLocaleString()} simulated seasons in ${r.elapsed_ms} ms.${provenance(p.season)} ${r.absences_applied ? ` ${r.absences_applied} absences from the injury report priced in; see the Players page.` : p.use_injury_report ? ' The injury report priced nothing: no report is stored for this season, or no listed player has a worth; see the Players page.' : ''}`;
+      document.getElementById('note').textContent = `${r.information_cutoff_note} Games used: ${r.games_played}; regular-season games simulated: ${r.games_remaining}; qualification format: ${r.qualification}. ${r.iterations.toLocaleString()} simulated seasons in ${r.elapsed_ms} ms.${provenance(p.season)} ${r.absences_applied ? ` ${r.absences_applied} absence${r.absences_applied === 1 ? '' : 's'} priced in${r.absences_sampled ? `, ${r.absences_sampled} with the worth drawn from its uncertainty in every simulated season` : ''}; see the Players page.` : p.use_injury_report ? ' The injury report priced nothing: no report is stored for this season, or no listed player has a worth; see the Players page.' : ''}`;
       const cols = [
         { label: 'Team', value: t => `${t.code} · ${t.name}`, left: true }, { label: 'Conf', value: 'conference', left: true }, { label: 'Elo', value: t => num(t.elo_as_of, 0) },
-        ...(r.absences_applied ? [{ label: 'Out (Elo)', value: t => t.absence_penalty ? `−${num(t.absence_penalty, 0)}` : '', cls: t => t.absence_penalty ? 'bad' : '', title: 'Mean rating penalty over the remaining games from the injury report' }] : []),
+        ...(r.absences_applied ? [{ label: 'Out (Elo)', value: t => t.absence_penalty ? `−${num(t.absence_penalty, 0)}` : '', cls: t => t.absence_penalty ? 'bad' : '', title: 'Mean rating penalty over the remaining games from the injury report and the players marked out' }] : []),
         { label: 'Record', value: t => `${t.wins}-${t.losses}` }, { label: 'Exp. wins', value: t => num(t.expected_wins, 1) },
         { label: 'Top 6', value: t => pct(t.p_top6) }, { label: 'Play-in', value: t => pct(t.p_play_in) }, { label: 'Playoffs', value: t => pct(t.p_playoffs) },
         { label: '2nd round', value: t => pct(t.p_second_round) }, { label: 'Conf. finals', value: t => pct(t.p_conf_finals) }, { label: 'Finals', value: t => pct(t.p_finals) },
