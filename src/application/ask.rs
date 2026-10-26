@@ -223,7 +223,8 @@ pub fn system_prompt(today: NaiveDate, latest: Option<SeasonYear>) -> String {
          Franchises keep their key across relocations. For a question about a team with its \
          injured players back (\"fully healthy\", \"everyone available\"), call team_availability \
          for the Elo the absences cost and forecast_effect for what that means for the season; a \
-         worth is in Elo points, and 28 Elo is about one point of margin per game. Answer in a \
+         worth is in Elo points, and 28 Elo is about one point of margin per game. Name the date \
+         a rating stands at (rating_date), and say so when it is a preseason rating. Answer in a \
          few short sentences with the numbers, the season labels and the team names; no markdown \
          tables."
     )
