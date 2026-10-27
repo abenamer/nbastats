@@ -61,6 +61,11 @@ pub struct SeasonParams {
     /// simulated regular-season games; see `domain::worth`.
     #[serde(default)]
     pub absences: Vec<worth::Absence>,
+    /// Run the season a second time with every absence that covers the cutoff date held to
+    /// the last regular-season game: the forecast with tonight's roster all season, the
+    /// bound the dated forecast sits above. See [`SeasonForecast::held`].
+    #[serde(default)]
+    pub hold_absences: bool,
 }
 
 fn default_home_adv() -> f64 {
@@ -309,6 +314,37 @@ pub struct CupForecast {
     pub actual_winner: Option<String>,
 }
 
+/// One team of the held run: the forecast with the absences covering the cutoff date held
+/// to the season's last game.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HeldTeam {
+    pub team_id: TeamId,
+    pub code: String,
+    /// The mean penalty over the remaining games under the held absences.
+    pub absence_penalty: f64,
+    pub expected_wins: f64,
+    pub p_top6: f64,
+    pub p_play_in: f64,
+    pub p_playoffs: f64,
+    pub p_conf_finals: f64,
+    pub p_finals: f64,
+    pub p_champion: f64,
+}
+
+/// The season run again with tonight's absences held all season, as a bound: the truth
+/// lies between it and the forecast with nobody out, and the dated forecast in between.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HeldForecast {
+    /// Absences that covered the cutoff date and ended before the season's last
+    /// regular-season game, now held to it.
+    pub absences_held: usize,
+    /// The date the held absences run to: the season's last regular-season game.
+    pub held_to: NaiveDate,
+    /// In the held run's order: by its title chance, then code. Join on `team_id`.
+    pub teams: Vec<HeldTeam>,
+    pub elapsed_ms: u128,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SeasonForecast {
     pub season: SeasonYear,
@@ -335,6 +371,9 @@ pub struct SeasonForecast {
     pub cup: Option<CupForecast>,
     #[serde(default)]
     pub cup_note: Option<String>,
+    /// The held run, when `hold_absences` was set and an absence covered the cutoff date.
+    #[serde(default)]
+    pub held: Option<HeldForecast>,
     pub elapsed_ms: u128,
 }
 
@@ -1462,13 +1501,19 @@ fn absences_sampled(params: &SeasonParams, setup: &Setup) -> usize {
         .count()
 }
 
-pub fn run<P: Progress + ?Sized>(
-    params: &SeasonParams,
-    games: &[Game],
-    teams: &HashMap<TeamId, Team>,
-    progress: &P,
-) -> Result<SeasonForecast, SeasonError> {
-    let start = std::time::Instant::now();
+/// The last regular-season game date of the stored schedule, played or not.
+pub fn last_regular_game(games: &[Game]) -> Option<NaiveDate> {
+    games
+        .iter()
+        .filter(|g| g.game_type == GameType::Regular)
+        .map(|g| g.game_date)
+        .max()
+}
+
+/// The information cutoff the forecast works from: the parameters' date, or the day
+/// before the first game; never on or after the first playoff game. The note says when it
+/// moved.
+fn cutoff(params: &SeasonParams, games: &[Game]) -> Result<(NaiveDate, String), SeasonError> {
     let first_date = games
         .first()
         .map(|g| g.game_date)
@@ -1482,6 +1527,92 @@ pub fn run<P: Progress + ?Sized>(
         as_of = fp - chrono::Duration::days(1);
         note = format!("Cutoff moved to {as_of}, the day before the playoffs started; playoff games are never used as inputs.");
     }
+    Ok((as_of, note))
+}
+
+/// The parameters with every absence that covers `as_of` and ends before the season's last
+/// regular-season game held to that game, and how many were extended. The flag is
+/// cleared, so the result runs once. Nothing is extended when the schedule has no
+/// regular-season game left after `as_of`.
+pub fn hold_absences(
+    params: &SeasonParams,
+    games: &[Game],
+    as_of: NaiveDate,
+) -> (SeasonParams, usize, Option<NaiveDate>) {
+    let last = last_regular_game(games);
+    let mut held = params.clone();
+    held.hold_absences = false;
+    let mut count = 0;
+    if let Some(last) = last {
+        for a in &mut held.absences {
+            if a.covers(as_of) && a.to < last {
+                a.to = last;
+                count += 1;
+            }
+        }
+    }
+    (held, count, last)
+}
+
+/// The forecast; with `hold_absences`, the season is run a second time with the absences
+/// covering the cutoff date held to the season's end, and the result carries both. The
+/// hold is decided before the first run, so progress runs over both halves only when a
+/// held run follows, and a cancelled first run stops there.
+pub fn run<P: Progress + ?Sized>(
+    params: &SeasonParams,
+    games: &[Game],
+    teams: &HashMap<TeamId, Team>,
+    progress: &P,
+) -> Result<SeasonForecast, SeasonError> {
+    if !params.hold_absences {
+        return run_once(params, games, teams, progress);
+    }
+    let (as_of, _) = cutoff(params, games)?;
+    let (held_params, count, last) = hold_absences(params, games, as_of);
+    let (Some(last), true) = (last, count > 0) else {
+        return run_once(params, games, teams, progress);
+    };
+    let first_half = |f: f64| progress.report(f / 2.0);
+    let mut forecast = run_once(params, games, teams, &first_half)?;
+    // The sink answers false to cancel: the held run is then not started.
+    if !progress.report(0.5) {
+        return Ok(forecast);
+    }
+    let second_half = |f: f64| progress.report(0.5 + f / 2.0);
+    let held = run_once(&held_params, games, teams, &second_half)?;
+    forecast.held = Some(HeldForecast {
+        absences_held: count,
+        held_to: last,
+        teams: held
+            .teams
+            .iter()
+            .map(|t| HeldTeam {
+                team_id: t.team_id,
+                code: t.code.clone(),
+                absence_penalty: t.absence_penalty,
+                expected_wins: t.expected_wins,
+                p_top6: t.p_top6,
+                p_play_in: t.p_play_in,
+                p_playoffs: t.p_playoffs,
+                p_conf_finals: t.p_conf_finals,
+                p_finals: t.p_finals,
+                p_champion: t.p_champion,
+            })
+            .collect(),
+        elapsed_ms: held.elapsed_ms,
+    });
+    forecast.elapsed_ms += held.elapsed_ms;
+    Ok(forecast)
+}
+
+fn run_once<P: Progress + ?Sized>(
+    params: &SeasonParams,
+    games: &[Game],
+    teams: &HashMap<TeamId, Team>,
+    progress: &P,
+) -> Result<SeasonForecast, SeasonError> {
+    let start = std::time::Instant::now();
+    let (as_of, note) = cutoff(params, games)?;
     let setup = Setup::build(params, games, teams, as_of)?;
     let n = setup.n;
     let games_played = games
@@ -1812,6 +1943,7 @@ pub fn run<P: Progress + ?Sized>(
             .as_ref()
             .map(|c| cup_forecast(c, &setup, &acc, home_adv)),
         cup_note: setup.cup_note.clone(),
+        held: None,
         elapsed_ms: start.elapsed().as_millis(),
     })
 }
@@ -2075,6 +2207,7 @@ mod tests {
 
     fn cup_params(season: i32, as_of: &str) -> SeasonParams {
         SeasonParams {
+            hold_absences: false,
             season: SeasonYear::of(season),
             as_of: Some(NaiveDate::parse_from_str(as_of, "%Y-%m-%d").unwrap()),
             iterations: 200,
@@ -2196,6 +2329,72 @@ mod tests {
             (lost_early - lost_late).abs() < 0.1 * lost_early.max(lost_late),
             "early {lost_early} vs late {lost_late}"
         );
+    }
+
+    #[test]
+    fn the_held_run_keeps_tonights_absences_all_season_and_costs_more_wins() {
+        use crate::domain::simulation::progress::Silent;
+        let (teams, games) = long_season();
+        let mut params = cup_params(2024, "2023-11-01");
+        params.iterations = 2000;
+        params.hold_absences = true;
+        let team = TeamId::new(1);
+        let first = NaiveDate::from_ymd_opt(2023, 11, 2).unwrap();
+        let last_regular = games
+            .iter()
+            .filter(|g| g.game_type == GameType::Regular)
+            .map(|g| g.game_date)
+            .max()
+            .unwrap();
+        // Nothing covers the cutoff: one run, no held side.
+        params.absences = vec![worth::Absence {
+            team_id: team,
+            from: first + chrono::Duration::days(5),
+            to: first + chrono::Duration::days(9),
+            elo: worth::MAX_ABSENCE_ELO,
+            player_id: None,
+            se_elo: 0.0,
+        }];
+        let later = run(&params, &games, &teams, &Silent).unwrap();
+        assert!(later.held.is_none());
+        // A five-game absence from the cutoff: held, it lasts the season.
+        params.absences[0].from = NaiveDate::from_ymd_opt(2023, 11, 1).unwrap();
+        params.absences[0].to = first + chrono::Duration::days(4);
+        let (held_params, count, last) = hold_absences(&params, &games, params.as_of.unwrap());
+        assert_eq!((count, last), (1, Some(last_regular)));
+        assert_eq!(held_params.absences[0].to, last_regular);
+        assert!(!held_params.hold_absences);
+        // An absence already running to the last game is nothing to hold.
+        let mut whole = params.clone();
+        whole.absences[0].to = last_regular;
+        assert_eq!(hold_absences(&whole, &games, whole.as_of.unwrap()).1, 0);
+        assert!(run(&whole, &games, &teams, &Silent).unwrap().held.is_none());
+        let dated = run(&params, &games, &teams, &Silent).unwrap();
+        let held = dated.held.as_ref().expect("an absence covers the cutoff");
+        assert_eq!((held.absences_held, held.held_to), (1, last_regular));
+        assert_eq!(held.teams.len(), dated.teams.len());
+        let dated_team = dated.teams.iter().find(|t| t.team_id == team).unwrap();
+        let held_team = held.teams.iter().find(|t| t.team_id == team).unwrap();
+        assert!(
+            held_team.absence_penalty > dated_team.absence_penalty * 3.0,
+            "{} vs {}",
+            held_team.absence_penalty,
+            dated_team.absence_penalty
+        );
+        assert!(
+            held_team.expected_wins + 2.0 < dated_team.expected_wins,
+            "{} vs {}",
+            held_team.expected_wins,
+            dated_team.expected_wins
+        );
+        assert!(held_team.p_playoffs <= dated_team.p_playoffs);
+        // The held run does not change the dated side: the same seed gives the same
+        // forecast as without the flag.
+        let mut plain = params.clone();
+        plain.hold_absences = false;
+        let plain = run(&plain, &games, &teams, &Silent).unwrap();
+        assert_eq!(plain.teams[0].expected_wins, dated.teams[0].expected_wins);
+        assert!(plain.held.is_none());
     }
 
     #[test]

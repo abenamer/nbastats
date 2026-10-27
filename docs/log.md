@@ -1,6 +1,7 @@
 # Bundle update log
 
 ## 2026-10-27
+* **Update**: [Season forecast engine](/concepts/season-engine.md) gains the held run in the Availability section; the API reference, the [Question box](/concepts/question-box.md) tool table and example, and the term Held forecast follow.
 * **Update**: [Player worth](/concepts/player-worth.md) gains the section How long an absence lasts: the return-date placeholder, the survival curve of the absence spells, the games missed so far and the players absent without a report line. The API reference, the [Question box](/concepts/question-box.md) tool table and the terms Absence spell and Survival curve follow.
 
 ## 2026-10-26

@@ -223,7 +223,10 @@ pub fn system_prompt(today: NaiveDate, latest: Option<SeasonYear>) -> String {
          SAS, UTA); when a code is unknown, look at the season's standings for the right one. \
          Franchises keep their key across relocations. For a question about a team with its \
          injured players back (\"fully healthy\", \"everyone available\"), call team_availability \
-         for the Elo the absences cost and forecast_effect for what that means for the season; a \
+         for the Elo the absences cost and forecast_effect for what that means for the season, \
+         and, when it returns a range, give it: the wins with everyone healthy and with the \
+         team's current absences held all season are the bounds, and the dated forecast sits \
+         between them up to about a point of simulation noise; a \
          worth is in Elo points, and 28 Elo is about one point of margin per game. Name the date \
          a rating stands at (rating_date), and say so when it is a preseason rating. When a tool \
          result carries a schedule_note, say so: the missing games are the Cup-week games the \
@@ -315,7 +318,7 @@ pub fn tool_specs() -> Vec<ToolSpec> {
         },
         ToolSpec {
             name: "forecast_effect",
-            description: "The season forecast of one team computed twice from today with the same seed: with the injury report's absences priced in, and with this team's absences removed while the other teams keep theirs. Expected wins, playoff and title chances both ways and the differences. 2,000 simulated seasons; it runs once per question, and the probability differences carry about one point of simulation noise.",
+            description: "The season forecast of one team computed from today with the same seed three ways: with the injury report's absences priced in as dated (with_report), with this team's absences removed while the other teams keep theirs (everyone_healthy), and, when one of this team's absences covers its next game, with those absences held to the season's end (todays_absences_held_all_season). Expected wins, playoff and title chances each way, the differences, and the range between the two bounds when the third run exists. 2,000 simulated seasons; it runs once per question, and the probability differences carry about one point of simulation noise.",
             parameters: json!({ "type": "object", "required": ["team"], "properties": {
                 "team": { "type": "string", "description": "Team code, for example GSW" },
                 "season": season_schema("Season end year (default: the current season)") }, "additionalProperties": false }),
