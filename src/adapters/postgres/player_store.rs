@@ -13,7 +13,8 @@ use crate::application::ports::{
 };
 use crate::domain::bpm::BoxLine;
 use crate::domain::ids::{PlayerId, SeasonYear, TeamId};
-use crate::domain::worth::Line;
+use crate::domain::status::ReportedStatus;
+use crate::domain::worth::{AbsenceStatus, Line};
 
 use super::PostgresStore;
 
@@ -422,6 +423,32 @@ impl PlayerStore for PostgresStore {
                 .fetch_one(&self.pool)
                 .await?;
         Ok(date)
+    }
+
+    async fn injury_reports_between(
+        &self,
+        from: NaiveDate,
+        to: NaiveDate,
+    ) -> StoreResult<Vec<ReportedStatus>> {
+        let rows: Vec<(NaiveDate, PlayerId, TeamId, String, Option<String>)> = sqlx::query_as(
+            "SELECT report_date, player_id, team_id, status, description FROM injury_reports
+             WHERE report_date BETWEEN $1 AND $2 ORDER BY report_date, team_id, player_id",
+        )
+        .bind(from)
+        .bind(to)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .into_iter()
+            .map(
+                |(report_date, player_id, team_id, status, description)| ReportedStatus {
+                    report_date,
+                    player_id,
+                    team_id,
+                    status: AbsenceStatus::parse_line(&status, description.as_deref()),
+                },
+            )
+            .collect())
     }
 
     async fn save_players(&self, source: &str, players: &[PlayerRecord]) -> StoreResult<i64> {

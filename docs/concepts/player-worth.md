@@ -34,8 +34,8 @@ The regression values a player only through variation. Two players out for the s
 
 The latest injury report stored gives a status for each listed player, and sometimes a return date. The forecast prices it as follows:
 
-| Status | Share of the worth taken off | Span when the game logs give none |
-|--------|------------------------------|-----------------------------------|
+| Status | Default share of the worth taken off | Default span |
+|--------|--------------------------------------|--------------|
 | Out | all | 14 days |
 | Out for season | all | the rest of the season |
 | Absent (not on the report, see below) | all | 14 days |
@@ -47,16 +47,30 @@ The latest injury report stored gives a status for each listed player, and somet
 
 A status that starts with "out" counts as out. So does one that mentions a suspension, a player not with the team, or "not available". A status that mentions the season counts as out for the season, and so does a description that says the player is done for the season ("out for the season", "done for the season", "miss the rest of the season", "season-ending") under a status that does not; a note about the season opener, debut or finale, or an injury avoided, does not count.
 
+The shares and spans in the table are the defaults. When the stored reports show what a status has meant, the measured share and span replace them; see [What a status has meant](#what-a-status-has-meant).
+
 ## How long an absence lasts
 
 The feed's return date is most often the date of the team's next game, whatever the injury: a player who will miss two months reads as out until tomorrow, every day, until a writer puts a date on it. The forecast therefore does not take the date at its word. The rule, in `span_for`:
 
 1. Out for the season ends with the season.
-2. A return date beyond the team's next regular-season game is the source's estimate. The span ends the day before it.
+2. A return date beyond the team's next regular-season game is the source's estimate. The span ends the day before it, at the status's default weight: the measured weight is read over every line of a status, dated or not, and does not apply to a line the source has dated.
 3. A return date that is the next game or earlier is a placeholder, and so is no date. A player listed out, or absent, or in a run of three or more missed games whatever his status, is then priced for the expected remaining games of a run as long as his, laid over his team's remaining regular-season games. The expectation comes from the survival curve of the runs of missed games: every run of a regular player in the five seasons before, with the runs cut off by the end of a season counted for the games they did last (Kaplan-Meier, read as ending at the longest run seen, which keeps the expectation for a very long run on the low side). A run that has lasted ten games has more to go than a new one; the curve says how much. The rule needs at least 50 runs and the games missed so far; with fewer runs, or for a team without box scores, the status's default span stands.
-4. A return date of today prices nothing for a line about tonight (questionable, doubtful, day-to-day, probable); those lines keep their default spans. For a player in a spell it is the placeholder of rule 3.
+4. Any other line whose status has a curve (see below) is priced for the games a line of its status, in the player's state, has gone on to miss, laid over the schedule the same way.
+5. Without a curve to lean on, a return date of today prices nothing for a line about tonight (questionable, doubtful, day-to-day, probable); those lines keep their default spans. With a curve, or for a player in a spell, it is the placeholder of rules 3 and 4.
 
-The games a player has missed so far are read from the box scores: his run at his team's latest game with lines, plus the games the team played since without lines, which nobody has a line for. The Players page shows them beside each line, and what set each span.
+The games a player has missed so far are read from the box scores: his run at his team's latest game with lines, plus the games the team played since without lines, which nobody has a line for. The Players page shows them beside each line, and what set each span and each weight.
+
+## What a status has meant
+
+A status is a word from the feed. "Day-to-day" on the first morning of a sprain and "day-to-day" ten games into a fracture are the same word and different facts, and the default weights priced both at half the worth for three days. The application therefore measures the statuses on its own data, in `domain::status` (model `status-curve-1.0`):
+
+1. Every line of every stored injury report whose status takes something off, out for the season apart (that one is priced by definition), is followed through the box scores of the player's team: did he miss the team's next game, and which of the next thirty did he miss. A line whose team has no later game with box scores yet gives nothing; a line is cut off where the box scores end. A player who has not played for the team yet counts, and reads as not yet out until he has a played game with the team, as the pricing reads him.
+2. Each line is read in the player's state on the report day: not yet out (he played the team's last game before the report) or already in a run (he had missed it). The two states are kept apart.
+3. For each status and state with at least 50 lines, the curve is the share of the lines whose player missed the next game, the one after, and so on. The weight is the first share: the measured chance he misses tonight. The expected games missed is the sum over the thirty. The span, in games, is the expected games missed divided by the weight, so that weight times span is the games missed; it never runs past the thirty games followed. Below 50 lines the default weight and span of the table above stand. A status measured as never missing the next game prices nothing.
+4. The lines come from the season being priced and the five seasons before it, pooled. The curves are kept per status and state, not per player, so no player is fitted on his own history.
+
+Which weight and which span priced each line is shown beside it on the Players page (`measured` or the default), and the panel "What a status has meant" shows every curve: the lines behind it, the share missing tonight against the default, the games missed of the next thirty, the span, and the share still out after one, five and ten more games. The question box's `team_availability` tool carries the same figures.
 
 **Absent without a line.** A regular player (fifteen of the last twenty team games, at fifteen minutes a game, so the rule starts after a team's twentieth game with lines) who has not played his team's last three games or more and is not on the report is priced as out, under the status "absent", with the same rule. The report misses some players; the box scores miss none who dressed. The reason does not matter to the forecast: the team plays without him either way. A player who has left the team is no absence: one the last roster refresh did not list, or whose current team is another, is dropped. A season whose lines carry no minutes gives no runs and no absent players.
 
@@ -77,6 +91,8 @@ With **Draw each worth from its uncertainty** ticked, every simulated season dra
 * Injuries cluster, and a team that lost one player often lost others. The regression shares the gap, but it cannot see a player who never sits. The [box-score worth](box-score-worth.md) is the second estimate for him, from his production.
 * The report is a snapshot, and its return date is a placeholder more often than an estimate. The expected remaining games correct the typical case; a particular player returns earlier or later than the curve says, and the forecast does not yet draw that length from the curve as it draws the worth from its error.
 * An absent regular player is priced whatever the reason: a suspension, a rest or a coach's decision look like an injury. The team plays without him either way.
+* The curves are read over each line's team, whether or not the player has played for it yet, so a player who joins or leaves the team mid-season is counted for the team the report names. A report fetched after the day's game reads that game as the next one, where the pricing takes the next unplayed game. The in-run curve pools runs of one game and more; a player in a spell of three or more takes the survival curve's span and the in-run curve's weight.
+* The status curves rest on the reports stored since the feed was connected, so they fill in over time and the first seasons lean on few lines. A player who leaves his team (traded, waived) reads as missing every game that follows, which runs the long end of a curve high; the thirty-game horizon bounds it. A status whose meaning drifts from season to season is averaged over the seasons pooled.
 * Only the simulated regular-season games take the penalty. The play-in and the playoffs run at the full ratings. A player out for the season still counts for his team in April.
 * Nothing here changes a rating. A later change may use the worth in the ratings themselves.
 * On 2026-10-26 the method was tested on synthetic seasons only, because the sandbox holds no box scores. The first reading on real seasons is the check of the prior spread and of the status weights.

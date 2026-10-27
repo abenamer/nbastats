@@ -99,6 +99,9 @@ pub struct App {
         RwLock<HashMap<SeasonYear, Arc<crate::domain::recovery::SeasonReturns>>>,
     /// The runs of missed games of each season, likewise.
     pub(crate) spell_runs: RwLock<HashMap<SeasonYear, Arc<crate::domain::spell::SeasonRuns>>>,
+    /// The report lines of each season followed through its game logs, likewise.
+    pub(crate) status_samples:
+        RwLock<HashMap<SeasonYear, Arc<Vec<crate::domain::status::StatusSample>>>>,
     /// Counts the cache invalidations, so a load that began before one is not cached after it.
     pub(crate) cache_generation: AtomicU64,
     teams: RwLock<Option<Arc<HashMap<TeamId, Team>>>>,
@@ -140,6 +143,7 @@ impl App {
             box_tables: RwLock::new(HashMap::new()),
             return_seasons: RwLock::new(HashMap::new()),
             spell_runs: RwLock::new(HashMap::new()),
+            status_samples: RwLock::new(HashMap::new()),
             cache_generation: AtomicU64::new(0),
             teams: RwLock::new(None),
         }
@@ -286,7 +290,38 @@ impl App {
             .write()
             .unwrap_or_else(|e| e.into_inner())
             .clear();
+        self.status_samples
+            .write()
+            .unwrap_or_else(|e| e.into_inner())
+            .clear();
         *self.teams.write().unwrap_or_else(|e| e.into_inner()) = None;
+    }
+
+    /// Drop the caches read from the players, box scores and injury reports after a player
+    /// sync: the worth tables, the box tables, the return seasons, the runs and the status
+    /// samples. The games and teams stand. The generation moves first, as above.
+    pub fn invalidate_player_caches(&self) {
+        self.cache_generation.fetch_add(1, Ordering::SeqCst);
+        self.worths
+            .write()
+            .unwrap_or_else(|e| e.into_inner())
+            .clear();
+        self.box_tables
+            .write()
+            .unwrap_or_else(|e| e.into_inner())
+            .clear();
+        self.return_seasons
+            .write()
+            .unwrap_or_else(|e| e.into_inner())
+            .clear();
+        self.spell_runs
+            .write()
+            .unwrap_or_else(|e| e.into_inner())
+            .clear();
+        self.status_samples
+            .write()
+            .unwrap_or_else(|e| e.into_inner())
+            .clear();
     }
 
     pub fn cancel_flag(&self, id: Uuid) -> Arc<AtomicBool> {

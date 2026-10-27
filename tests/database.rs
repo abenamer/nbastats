@@ -17,6 +17,7 @@ use nba_elo_simulator::domain::models::{
 use nba_elo_simulator::domain::playoffs::reconstruct;
 use nba_elo_simulator::domain::playoffs::season::{self, SeasonParams};
 use nba_elo_simulator::domain::simulation::progress::Silent;
+use nba_elo_simulator::domain::worth::AbsenceStatus;
 use sqlx::PgPool;
 
 const S2016: SeasonYear = SeasonYear::of(2016);
@@ -2039,6 +2040,21 @@ mod players {
             second[0].player_id, curry.player_id,
             "the same stored player"
         );
+        // The lines of a range of days, with the status read as the pricing reads it.
+        let between = store.injury_reports_between(day1, day2).await.unwrap();
+        assert_eq!(between.len(), 3);
+        assert_eq!(between[0].report_date, day1);
+        assert!(between
+            .iter()
+            .any(|r| r.status == AbsenceStatus::DayToDay && r.report_date == day1));
+        assert_eq!(between[2].report_date, day2);
+        assert_eq!(between[2].status, AbsenceStatus::Questionable);
+        assert_eq!(between[2].player_id, curry.player_id);
+        assert!(store
+            .injury_reports_between(date("2026-01-17"), date("2026-01-30"))
+            .await
+            .unwrap()
+            .is_empty());
         // Saving a day again replaces that day's rows.
         store
             .save_injury_report(day2, "fake-players", &[])
