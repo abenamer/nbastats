@@ -18,7 +18,7 @@ sources:
 
 # Bracket
 
-The bracket has 16 slots. Slots 0 to 7 are the East. Slots 8 to 15 are the West. The positions in a conference hold seeds 1, 8, 4, 5, 2, 7, 3, 6. Round 1 pairs adjacent slots. Each later round pairs the winners of adjacent pairs. The NBA has used this fixed bracket since 1984.
+The bracket has 16 slots. Slots 0 to 7 are the East. Slots 8 to 15 are the West. The positions in a conference hold seeds 1, 8, 4, 5, 2, 7, 3, 6. Round 1 pairs adjacent slots. Each later round pairs the winners of adjacent pairs. The NBA has used this fixed bracket since 1984. The Playoff Simulator page draws every round in that shape, each conference converging on the Finals: a played series shows its winner and score, a series in progress its score, and an unplayed one the team more likely to have won the round before, marked projected, from the exact chances; each team carries its chance of winning the round: from the start of the playoffs for a seeded team, and from where it stands for one that has won its way in, projected onward or not.
 
 # Reconstruction from game records
 
