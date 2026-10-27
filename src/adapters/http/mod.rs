@@ -39,6 +39,10 @@ pub fn router(app: State) -> Router {
             get(api::season_availability),
         )
         .route("/seasons/{season}/box-worth", get(api::season_box_worth))
+        .route(
+            "/seasons/{season}/teams/{code}/injury-card",
+            get(api::injury_card),
+        )
         .route("/research/return-curve", get(api::return_curve))
         .route("/players/{id}/worth", get(api::player_worth))
         .route(

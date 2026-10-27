@@ -57,6 +57,7 @@ These are project-specific technical terms. They are not a reproduction of the A
 | Implied strength | The rating gap above the league mean at which a team of constant strength, against the actual playoff fields of a window of seasons, has the title chance a record implies; given in Elo points, points per game and wins per 82. Computed in `domain::strength`. |
 | Information cutoff | The last date whose games a forecast may use. |
 | Job | A stored simulation request with parameters, seed, versions, progress and result. |
+| Injury card | One team's lines of the latest injury report priced with the arithmetic in the open: penalty per game, span, games covered, the part of the mean penalty and the expected wins lost to first order, totalled as listed and with today's absences held to the season's end. |
 | Injury report | The source's list of players with a status (out, day-to-day, questionable), the expected return date and a description, stored once per day under the day it was fetched. |
 | Language model | A chat model with tool calling behind the `LanguageModel` port; the `OpenRouterModel` adapter calls it through OpenRouter's OpenAI-compatible API. |
 | League size | The number of teams of one league (NBA/BAA or ABA) in one season. |

@@ -1205,6 +1205,18 @@ pub async fn season_availability(
     Ok(Json(json!(a)))
 }
 
+/// A team's injury card: every report line priced for it and the sum as listed and held.
+pub async fn injury_card(
+    State(app): State<AppState>,
+    Path((season, code)): Path<(SeasonYear, String)>,
+) -> ApiResult<Value> {
+    let card = worth::injury_card(&app, season, &code)
+        .await
+        .map_err(season_load_error)?
+        .ok_or_else(|| ApiError::not_found(format!("{code} is not in the {season} season")))?;
+    Ok(Json(json!(card)))
+}
+
 /// A player's worth in every season he has one.
 pub async fn player_worth(State(app): State<AppState>, Path(id): Path<i32>) -> ApiResult<Value> {
     let id = player_id(id)?;

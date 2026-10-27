@@ -762,15 +762,91 @@ pub fn absences_from_report(
         .collect()
 }
 
+/// What a set of absences costs a team over its remaining regular-season games, priced
+/// game by game at today's ratings, with the opponents at full strength.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct AbsenceEffect {
+    /// Regular-season games on the schedule without a result, dated `today` or later.
+    pub games: u32,
+    /// Those with a penalty.
+    pub games_covered: u32,
+    /// The penalties summed over the games covered, in Elo times games.
+    pub elo_games: f64,
+    /// The mean penalty over the remaining games: `elo_games` over `games`.
+    pub mean_penalty: f64,
+    /// The win probability at the full rating less the probability at the penalized one,
+    /// summed over the games: expected wins lost, to first order (the ratings do not move).
+    pub wins_lost: f64,
+}
+
+/// The effect of `absences` on `team` over its remaining games. `ratings` holds every
+/// team's current rating; an opponent without one is read at the league mean. The home
+/// bonus is the season's regular-season one.
+pub fn absence_effect(
+    absences: &[Absence],
+    games: &[Game],
+    ratings: &HashMap<TeamId, f64>,
+    team: TeamId,
+    today: NaiveDate,
+    home_advantage: f64,
+) -> AbsenceEffect {
+    let rating = ratings.get(&team).copied().unwrap_or(elo::SEASON_MEAN);
+    let mut effect = AbsenceEffect {
+        games: 0,
+        games_covered: 0,
+        elo_games: 0.0,
+        mean_penalty: 0.0,
+        wins_lost: 0.0,
+    };
+    for g in games.iter().filter(|g| {
+        g.game_type == crate::domain::models::GameType::Regular
+            && !g.is_played()
+            && g.game_date >= today
+            && g.involves(team)
+    }) {
+        effect.games += 1;
+        let p = penalty(absences, team, g.game_date);
+        if p <= 0.0 {
+            continue;
+        }
+        effect.games_covered += 1;
+        effect.elo_games += p;
+        let home = g.home_team_id == team;
+        let opponent = if home { g.away_team_id } else { g.home_team_id };
+        let other = ratings.get(&opponent).copied().unwrap_or(elo::SEASON_MEAN);
+        let full = elo::game_probability(rating, other, home, g.neutral, home_advantage, 1.0);
+        let down = elo::game_probability(rating - p, other, home, g.neutral, home_advantage, 1.0);
+        effect.wins_lost += full - down;
+    }
+    if effect.games > 0 {
+        effect.mean_penalty = effect.elo_games / f64::from(effect.games);
+    }
+    effect
+}
+
+/// The absences that cover `as_of`, each held to `until` (inclusive) when it ends before
+/// that: the roster of `as_of` kept to the season's end.
+pub fn held(absences: &[Absence], as_of: NaiveDate, until: NaiveDate) -> Vec<Absence> {
+    absences
+        .iter()
+        .filter(|a| a.covers(as_of))
+        .map(|a| Absence {
+            to: a.to.max(until),
+            ..a.clone()
+        })
+        .collect()
+}
+
 /// The penalty of `team` on `date`: the sum of its absences that cover the date. An
 /// absence with a standard error counts its expected drawn penalty, see
 /// [`expected_penalty`].
 pub fn penalty(absences: &[Absence], team: TeamId, date: NaiveDate) -> f64 {
+    // A fold from zero: an empty sum of floats is negative zero, which serializes as -0.0.
     absences
         .iter()
         .filter(|a| a.team_id == team && a.covers(date))
         .map(|a| expected_penalty(a.elo, a.se_elo))
-        .sum()
+        .fold(0.0, |acc, p| acc + p)
 }
 
 /// The mean of a penalty drawn from a normal distribution around `elo` with standard error
@@ -1456,6 +1532,78 @@ mod tests {
             ),
             None
         );
+    }
+
+    #[test]
+    fn the_effect_sums_the_penalties_and_the_win_probability_over_the_games_covered() {
+        use crate::domain::models::{EloSource, GameType, ResultSource};
+        let game = |day: u32, home: i32, away: i32| Game {
+            id: i64::from(day),
+            season: SeasonYear::of(2026),
+            game_date: d(day),
+            seq: 0,
+            home_team_id: TeamId::new(home),
+            away_team_id: TeamId::new(away),
+            neutral: false,
+            game_type: GameType::Regular,
+            home_score: None,
+            away_score: None,
+            home_elo_pre: 1500.0,
+            away_elo_pre: 1500.0,
+            home_elo_post: 1500.0,
+            away_elo_post: 1500.0,
+            home_win_prob: None,
+            elo_source: EloSource::Computed,
+            result_source: ResultSource::Results,
+            ref_home_elo_pre: None,
+            ref_away_elo_pre: None,
+            ref_home_elo_post: None,
+            ref_away_elo_post: None,
+        };
+        // Team 1 plays on days 10 (home), 12 (away) and 14 (home); day 8 is played.
+        let mut played = game(8, 1, 2);
+        played.home_score = Some(100);
+        played.away_score = Some(90);
+        let games = vec![played, game(10, 1, 2), game(12, 2, 1), game(14, 1, 3)];
+        let mut ratings = HashMap::new();
+        ratings.insert(TeamId::new(1), 1600.0);
+        ratings.insert(TeamId::new(2), 1500.0);
+        let absence = |to: u32, elo: f64| Absence {
+            team_id: TeamId::new(1),
+            from: d(9),
+            to: d(to),
+            elo,
+            player_id: Some(PlayerId::new(1)),
+            se_elo: 0.0,
+        };
+        let listed = vec![absence(12, 100.0), absence(10, 50.0)];
+        let e = absence_effect(&listed, &games, &ratings, TeamId::new(1), d(10), 60.0);
+        assert_eq!((e.games, e.games_covered), (3, 2));
+        assert!(
+            (e.elo_games - 250.0).abs() < 1e-9,
+            "150 on day 10, 100 on day 12"
+        );
+        assert!((e.mean_penalty - 250.0 / 3.0).abs() < 1e-9);
+        let p = |elo: f64, home: bool, other: f64| {
+            elo::game_probability(elo, other, home, false, 60.0, 1.0)
+        };
+        let expected = (p(1600.0, true, 1500.0) - p(1450.0, true, 1500.0))
+            + (p(1600.0, false, 1500.0) - p(1500.0, false, 1500.0));
+        assert!((e.wins_lost - expected).abs() < 1e-12);
+        // Held to day 14: both absences cover every game; team 3 is read at the mean.
+        let kept = held(&listed, d(10), d(14));
+        assert_eq!(kept.len(), 2);
+        assert!(kept.iter().all(|a| a.to == d(14)));
+        let h = absence_effect(&kept, &games, &ratings, TeamId::new(1), d(10), 60.0);
+        assert_eq!((h.games, h.games_covered), (3, 3));
+        assert!((h.elo_games - 450.0).abs() < 1e-9);
+        assert!(h.wins_lost > e.wins_lost);
+        // An absence that ended before today is not held, and a team without games has
+        // no effect.
+        assert!(held(&[absence(9, 100.0)], d(10), d(14)).is_empty());
+        let none = absence_effect(&listed, &games, &ratings, TeamId::new(9), d(10), 60.0);
+        assert_eq!(none.games, 0);
+        assert_eq!(none.mean_penalty, 0.0);
     }
 
     #[test]

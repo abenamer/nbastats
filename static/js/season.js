@@ -81,6 +81,73 @@
       : `Regular-season home-court bonus for ${labelOf(season)}: ${num(h.regular, 0)} Elo (the default; fewer than 2,000 earlier regular-season games are stored). Playoff games use ${num(h.playoff, 0)}.`;
   };
   document.getElementById('season').addEventListener('change', showAdvantage);
+  // The injury card: one team's report lines with the arithmetic, and the two totals.
+  const cardStatus = document.getElementById('cardStatus');
+  async function fillCardTeams() {
+    const season = parseInt(document.getElementById('season').value);
+    const select = document.getElementById('cardTeam');
+    const was = select.value;
+    try {
+      const t = await getJSON(`/api/seasons/${season}/teams`);
+      const teams = t.teams.slice().sort((a, b) => a.code.localeCompare(b.code));
+      select.innerHTML = teams.map(x => `<option value="${esc(x.code)}">${esc(x.code)} · ${esc(x.name)}</option>`).join('');
+      if (teams.some(x => x.code === was)) select.value = was;
+      setStatus(cardStatus, '');
+    } catch (e) { select.innerHTML = ''; setStatus(cardStatus, `no teams: ${e.message}`, true); }
+  }
+  const spanLabel = { return_date: 'return date', expected: 'expected run', measured: 'status curve', status: 'status default', season: 'season' };
+  async function loadCard() {
+    const season = parseInt(document.getElementById('season').value);
+    const code = document.getElementById('cardTeam').value;
+    if (!code) { setStatus(cardStatus, 'pick a team', true); return; }
+    setStatus(cardStatus, 'loading…');
+    try {
+      const c = await getJSON(`/api/seasons/${season}/teams/${encodeURIComponent(code)}/injury-card`);
+      const priced = c.lines.filter(l => l.penalty_elo != null).length;
+      document.getElementById('cardNote').textContent = c.note
+        ? c.note
+        : `${c.team_code} · ${c.team_name}, ${labelOf(c.season)}. Rating ${num(c.rating_elo, 0)} (${c.rating_is_preseason ? 'preseason, before any game' : `after the game of ${c.rating_date}`}); today ${c.today} the team plays at ${num(c.rating_today, 0)}, ${num(c.penalty_today, 0)} below it. Report of ${c.report_date}: ${c.lines.length} line${c.lines.length === 1 ? '' : 's'}, ${priced} priced. ${c.listed.games} regular-season games remain, ${c.listed.games_covered} with a penalty as listed. Home bonus ${num(c.home_advantage, 0)}.`;
+      const totals = [
+        { label: 'As listed', e: c.listed, note: 'each absence ends when the report, the curve or the status default says' },
+        { label: 'Held to the last game', e: c.held, note: `today's absences (${num(c.penalty_today, 0)} Elo) kept through the last regular-season game, ${c.last_regular_game}` }];
+      document.getElementById('cardTotals').innerHTML = c.note ? '' : table([
+        { label: 'Total', value: 'label', left: true },
+        { label: 'Games covered', value: t => `${t.e.games_covered} of ${t.e.games}`, title: 'Remaining regular-season games with a penalty' },
+        { label: 'Elo × games', value: t => num(t.e.elo_games, 0), title: 'The penalties summed over the games covered' },
+        { label: 'Mean penalty (Elo)', value: t => t.e.mean_penalty ? `−${num(t.e.mean_penalty, 1)}` : '0', cls: t => t.e.mean_penalty ? 'bad' : '', title: 'Elo × games divided by the remaining games: the figure the forecast table shows for a cutoff of today' },
+        { label: 'Wins lost (first order)', value: t => num(t.e.wins_lost, 2), cls: t => t.e.wins_lost ? 'bad' : '', title: 'Win probability at the full rating less at the penalized one, summed over the games covered, at today\'s ratings with the opponents at full strength; the forecast simulates the season instead' },
+        { label: 'How', value: 'note', left: true }], totals);
+      document.getElementById('cardLines').innerHTML = c.lines.length ? table([
+        { label: 'Player', value: 'name', left: true },
+        { label: 'Status', value: 'status_text', left: true },
+        { label: 'Return', value: l => l.return_date || '', left: true, title: 'The report\'s return date' },
+        { label: 'Missed', value: l => l.missed_so_far == null ? '' : l.missed_so_far, title: 'Team games missed in a row up to the latest game with box scores' },
+        { label: 'Worth (Elo)', value: l => l.worth_elo == null ? 'no estimate' : `${num(l.worth_elo, 0)}${l.se_elo ? ` ± ${num(l.se_elo, 0)}` : ''} (${labelOf(l.worth_season)}, ${l.worth_source === 'box' ? 'box score' : 'missed games'})`, left: true, title: 'What the team loses per game without him' },
+        { label: 'Weight', value: l => l.weight == null ? '' : `${num(100 * l.weight, 0)}% (${l.weight_source === 'measured' ? 'measured' : 'default'})`, left: true, title: 'The share of the worth taken off: the measured chance a line of this status misses the next game, or the status default' },
+        { label: 'Penalty / game', value: l => l.penalty_elo == null ? '' : `${num(l.penalty_elo, 0)}${l.expected_penalty_elo != null && Math.abs(l.expected_penalty_elo - l.penalty_elo) >= 0.5 ? ` (${num(l.expected_penalty_elo, 0)} priced)` : ''}`, cls: l => l.penalty_elo ? 'bad' : '', title: 'Worth × weight, capped at 400. With an error on the worth, the games are priced at the mean of the draw held between 0 and 400, shown in brackets when it differs' },
+        { label: 'Until', value: l => l.until ? `${l.until} (${spanLabel[l.span] || l.span})` : '', left: true, title: 'The last date the penalty applies, and what set it' },
+        { label: 'Games covered', value: l => l.penalty_elo == null ? '' : l.games_covered, title: 'Remaining regular-season games up to that date' },
+        { label: 'Elo × games', value: l => l.penalty_elo == null ? '' : num(l.elo_games, 0) },
+        { label: 'Of the mean', value: l => l.penalty_elo == null ? '' : l.mean_penalty_elo ? `−${num(l.mean_penalty_elo, 1)}` : '0', title: 'This line\'s part of the team\'s mean penalty over the remaining games' },
+        { label: 'Wins lost alone (first order)', value: l => l.penalty_elo == null ? '' : num(l.wins_lost_alone, 2), title: 'If this were the only absence, at today\'s ratings' }], c.lines) : '<p class="muted small">No line for this team.</p>';
+      setStatus(cardStatus, '');
+    } catch (e) { setStatus(cardStatus, e.message, true); document.getElementById('cardTotals').innerHTML = ''; document.getElementById('cardLines').innerHTML = ''; }
+  }
+  document.getElementById('cardLoad').addEventListener('click', loadCard);
+  document.getElementById('cardTeam').addEventListener('change', loadCard);
+  document.getElementById('season').addEventListener('change', fillCardTeams);
+  document.getElementById('results').addEventListener('click', async e => {
+    const a = e.target.closest('a.card-link'); if (!a) return;
+    e.preventDefault();
+    // The card follows the forecast's season, which the select may have left.
+    const seasonSelect = document.getElementById('season');
+    if (seasonSelect.value !== a.dataset.season) { seasonSelect.value = a.dataset.season; seasonSelect.dispatchEvent(new Event('change')); }
+    await fillCardTeams();
+    document.getElementById('cardTeam').value = a.dataset.team;
+    loadCard();
+    document.getElementById('injuryCard').scrollIntoView({ behavior: 'smooth' });
+  });
+  fillCardTeams();
   showAdvantage();
 
   // Players out: absences the user adds, priced with the player's worth.
@@ -158,7 +225,7 @@
       const held = new Map((r.held ? r.held.teams : []).map(h => [h.team_id, h]));
       const heldCol = (label, value, title) => ({ label, value: t => { const h = held.get(t.team_id); return h ? value(h) : ''; }, cls: () => 'muted', title });
       const cols = [
-        { label: 'Team', value: t => `${t.code} · ${t.name}`, left: true }, { label: 'Conf', value: 'conference', left: true }, { label: 'Elo', value: t => num(t.elo_as_of, 0) },
+        { label: 'Team', value: t => `<a href="#injuryCard" class="card-link" data-team="${esc(t.code)}" data-season="${esc(String(p.season))}" title="Open the team's injury card">${esc(t.code)}</a> · ${esc(t.name)}`, raw: true, left: true }, { label: 'Conf', value: 'conference', left: true }, { label: 'Elo', value: t => num(t.elo_as_of, 0) },
         ...(r.absences_applied && r.teams.length && 'absence_penalty_today' in r.teams[0] ? [
           { label: `Elo on ${r.as_of}`, value: t => num(t.elo_as_of - t.absence_penalty_today, 0), cls: t => t.absence_penalty_today ? 'bad' : '', title: 'The rating the team plays at on the cutoff date: its Elo less the penalties of the absences that cover that date' },
           { label: 'Out (Elo)', value: t => t.absence_penalty ? `−${num(t.absence_penalty, 0)}` : '', cls: t => t.absence_penalty ? 'bad' : '', title: 'Mean rating penalty over the remaining games from the injury report and the players marked out' }] : []),
