@@ -11,9 +11,10 @@ use serde::Serialize;
 use crate::domain::bpm::BoxTable;
 use crate::domain::ids::{PlayerId, SeasonYear, TeamId};
 use crate::domain::spell::{self, SeasonRuns, Survival};
+use crate::domain::status::{self, StatusSample, StatusTable};
 use crate::domain::worth::{
-    self, Absence, AbsenceStatus, PlayerWorth, ReportedAbsence, SpanRule, SpanSource, WorthParams,
-    WorthTable,
+    self, Absence, AbsenceStatus, PlayerWorth, ReportedAbsence, SpanRule, SpanSource, WeightSource,
+    WorthParams, WorthTable,
 };
 
 use super::boxscore;
@@ -25,7 +26,8 @@ use crate::domain::models::GameType;
 /// and those of this many earlier seasons.
 pub const WORTH_LOOKBACK: usize = 2;
 /// The survival curve of the runs of missed games is fitted on this many seasons before
-/// the season priced.
+/// the season priced. The status curves are fitted on the season's own reports and those
+/// of the same seasons before.
 pub const SPELL_SEASONS: usize = 5;
 
 /// A player's worth with his name, for the page.
@@ -57,6 +59,10 @@ pub struct CurrentAbsence {
     pub worth_source: Option<WorthSource>,
     /// The penalty the forecast applies, when any: the worth weighted by the status.
     pub penalty_elo: Option<f64>,
+    /// The share of the worth the penalty takes off, and what set it: the measured chance
+    /// that a line of this status, in this state, misses the next game, or the default.
+    pub weight: Option<f64>,
+    pub weight_source: Option<WeightSource>,
     pub until: Option<NaiveDate>,
     /// What set `until`.
     pub span: Option<SpanSource>,
@@ -83,6 +89,38 @@ pub struct SurvivalSummary {
     pub expected_remaining: Vec<f64>,
 }
 
+/// What a status has meant on the stored reports, for the reader: one row per status and
+/// state with enough lines.
+#[derive(Debug, Clone, Serialize)]
+pub struct StatusCurveSummary {
+    pub status: AbsenceStatus,
+    /// The player had already missed his team's last game before the report.
+    pub in_run: bool,
+    /// Lines followed.
+    pub samples: u32,
+    /// The share of the lines whose player missed the next game: the weight used.
+    pub weight: f64,
+    pub default_weight: f64,
+    /// The games missed over the next thirty, in expectation.
+    pub expected_missed: f64,
+    /// The span in games the weight is applied over.
+    pub span_games: f64,
+    pub default_days: i64,
+    /// The share missing each of the next games, from the next.
+    pub miss: Vec<f64>,
+}
+
+/// The status curves the weights and spans lean on.
+#[derive(Debug, Clone, Serialize)]
+pub struct StatusSummary {
+    pub model: &'static str,
+    /// The seasons whose reports were followed.
+    pub seasons: Vec<SeasonYear>,
+    /// Lines followed, over every status and both states.
+    pub lines: u32,
+    pub curves: Vec<StatusCurveSummary>,
+}
+
 /// The availability of a season's rosters: the latest injury report priced in Elo.
 #[derive(Debug, Clone, Serialize)]
 pub struct Availability {
@@ -93,6 +131,9 @@ pub struct Availability {
     pub absences: Vec<Absence>,
     /// None when too few runs are stored: the status defaults price the spans.
     pub survival: Option<SurvivalSummary>,
+    /// None when no stored report line could be followed through the game logs. A status
+    /// without a curve keeps its default weight and span.
+    pub statuses: Option<StatusSummary>,
     /// Lines added from the box scores: regular players in a run not on the report.
     pub unlisted: u32,
     /// Why nothing is priced, when nothing is.
@@ -153,6 +194,87 @@ async fn survival_before(
     }
     seasons.reverse();
     Ok(Survival::fit(&runs).map(|s| (s, seasons)))
+}
+
+/// The report lines of a season followed through its game logs, cached until the next
+/// import, results sync or player sync. The reports read are those dated from [`REPORT_WINDOW_DAYS`] before the
+/// season's first game to its last. A season without games is `NoGames`.
+pub async fn status_samples(
+    app: &App,
+    season: SeasonYear,
+) -> Result<Arc<Vec<StatusSample>>, SeasonLoadError> {
+    if let Some(r) = app
+        .status_samples
+        .read()
+        .unwrap_or_else(|e| e.into_inner())
+        .get(&season)
+        .cloned()
+    {
+        return Ok(r);
+    }
+    let generation = app.cache_generation.load(Ordering::SeqCst);
+    let data = app.season_data(season).await?;
+    let dates = data.games.iter().map(|g| g.game_date);
+    let (Some(first), Some(last)) = (dates.clone().min(), dates.max()) else {
+        return Ok(Arc::new(vec![]));
+    };
+    let reports = app
+        .store
+        .injury_reports_between(first - chrono::Duration::days(REPORT_WINDOW_DAYS), last)
+        .await?;
+    let samples = if reports.is_empty() {
+        Arc::new(vec![])
+    } else {
+        let lines = app.store.season_box_lines(season).await?;
+        tokio::task::spawn_blocking(move || {
+            Arc::new(status::samples(&data.games, &lines, &reports))
+        })
+        .await
+        .map_err(|e| SeasonLoadError::Store(StoreError::Query(e.to_string())))?
+    };
+    let mut cache = app
+        .status_samples
+        .write()
+        .unwrap_or_else(|e| e.into_inner());
+    if app.cache_generation.load(Ordering::SeqCst) == generation {
+        cache.insert(season, samples.clone());
+    }
+    Ok(samples)
+}
+
+/// The status curves from the report lines of `season` and the [`SPELL_SEASONS`] seasons
+/// before it that have games; none when no line was followed.
+async fn status_table(
+    app: &App,
+    season: SeasonYear,
+) -> Result<Option<(StatusTable, Vec<SeasonYear>)>, StoreError> {
+    let mut samples = Vec::new();
+    let mut seasons = Vec::new();
+    let mut year = Some(season);
+    for _ in 0..=SPELL_SEASONS {
+        let Some(y) = year else {
+            break;
+        };
+        year = y.previous();
+        match status_samples(app, y).await {
+            Ok(s) => {
+                if !s.is_empty() {
+                    seasons.push(y);
+                    samples.extend(s.iter().cloned());
+                }
+            }
+            Err(SeasonLoadError::NoGames(_)) => continue,
+            Err(SeasonLoadError::Store(e)) => return Err(e),
+        }
+    }
+    seasons.reverse();
+    if samples.is_empty() {
+        return Ok(None);
+    }
+    let table = tokio::task::spawn_blocking(move || StatusTable::fit(&samples))
+        .await
+        .map_err(|e| StoreError::Query(e.to_string()))?;
+    Ok(Some((table, seasons)))
 }
 
 /// The worth table of a season, cached until the next import or sync.
@@ -393,6 +515,7 @@ pub async fn availability(app: &App, season: SeasonYear) -> Result<Availability,
         lines: vec![],
         absences: vec![],
         survival: None,
+        statuses: None,
         unlisted: 0,
         note,
     };
@@ -455,8 +578,10 @@ pub async fn availability(app: &App, season: SeasonYear) -> Result<Availability,
             upcoming.entry(t).or_default().push(g.game_date);
         }
     }
-    let rule = fitted.as_ref().map(|(s, _)| SpanRule {
-        survival: s,
+    let measured = status_table(app, season).await?;
+    let rule = Some(SpanRule {
+        survival: fitted.as_ref().map(|(s, _)| s),
+        statuses: measured.as_ref().map(|(t, _)| t),
         upcoming: &upcoming,
     });
     let mut lines = Vec::with_capacity(report.len());
@@ -516,8 +641,10 @@ pub async fn availability(app: &App, season: SeasonYear) -> Result<Availability,
             worth_season: found.map(|e| e.season),
             worth_source: found.map(|e| e.source),
             penalty_elo: one.map(|a| a.elo),
+            weight: one.and(span).map(|s| s.weight),
+            weight_source: one.and(span).map(|s| s.weight_source),
             until: one.map(|a| a.to),
-            span: one.and(span.map(|(_, source)| source)),
+            span: one.and(span).map(|s| s.source),
             missed_so_far,
             lines_through: lines_through.get(&team_id).copied(),
             listed: is_listed,
@@ -617,6 +744,26 @@ pub async fn availability(app: &App, season: SeasonYear) -> Result<Availability,
         mean_run_games: s.mean_run(),
         expected_remaining: s.curve(),
     });
+    let statuses = measured.map(|(t, seasons)| StatusSummary {
+        model: t.model,
+        seasons,
+        lines: t.lines,
+        curves: t
+            .curves
+            .iter()
+            .map(|c| StatusCurveSummary {
+                status: c.status,
+                in_run: c.in_run,
+                samples: c.samples,
+                weight: c.weight(),
+                default_weight: c.status.weight(),
+                expected_missed: c.expected_missed(),
+                span_games: c.span_games(),
+                default_days: c.status.default_days(),
+                miss: c.miss.clone(),
+            })
+            .collect(),
+    });
     Ok(Availability {
         season,
         report_date: Some(report_date),
@@ -624,6 +771,7 @@ pub async fn availability(app: &App, season: SeasonYear) -> Result<Availability,
         lines,
         absences,
         survival,
+        statuses,
         unlisted,
         note: None,
     })

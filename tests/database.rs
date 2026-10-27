@@ -17,6 +17,7 @@ use nba_elo_simulator::domain::models::{
 use nba_elo_simulator::domain::playoffs::reconstruct;
 use nba_elo_simulator::domain::playoffs::season::{self, SeasonParams};
 use nba_elo_simulator::domain::simulation::progress::Silent;
+use nba_elo_simulator::domain::worth::AbsenceStatus;
 use sqlx::PgPool;
 
 const S2016: SeasonYear = SeasonYear::of(2016);
@@ -219,6 +220,7 @@ async fn forecasts_never_use_future_information(pool: PgPool) {
     assert!(until.len() < games.len());
     // The engine-level guard: identical forecast whether or not later games are present.
     let params = SeasonParams {
+        hold_absences: false,
         season: S2016,
         as_of: Some(cutoff),
         iterations: 300,
@@ -302,6 +304,7 @@ async fn forecasts_never_use_future_information(pool: PgPool) {
     }
     // A cutoff inside the playoffs is clamped back to the day before they started.
     let late = SeasonParams {
+        hold_absences: false,
         as_of: Some(NaiveDate::from_ymd_opt(2016, 6, 1).unwrap()),
         ..params.clone()
     };
@@ -764,6 +767,7 @@ async fn computed_elo_continues_from_the_previous_season(pool: PgPool) {
     // A season forecast runs on the projection.
     let by_id = store.team_map().await.unwrap();
     let params = SeasonParams {
+        hold_absences: false,
         season: s2017,
         as_of: None,
         iterations: 200,
@@ -2036,6 +2040,21 @@ mod players {
             second[0].player_id, curry.player_id,
             "the same stored player"
         );
+        // The lines of a range of days, with the status read as the pricing reads it.
+        let between = store.injury_reports_between(day1, day2).await.unwrap();
+        assert_eq!(between.len(), 3);
+        assert_eq!(between[0].report_date, day1);
+        assert!(between
+            .iter()
+            .any(|r| r.status == AbsenceStatus::DayToDay && r.report_date == day1));
+        assert_eq!(between[2].report_date, day2);
+        assert_eq!(between[2].status, AbsenceStatus::Questionable);
+        assert_eq!(between[2].player_id, curry.player_id);
+        assert!(store
+            .injury_reports_between(date("2026-01-17"), date("2026-01-30"))
+            .await
+            .unwrap()
+            .is_empty());
         // Saving a day again replaces that day's rows.
         store
             .save_injury_report(day2, "fake-players", &[])

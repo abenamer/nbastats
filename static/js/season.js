@@ -149,11 +149,14 @@
     if (document.getElementById('injuries').checked) p.use_injury_report = true;
     if (absences.length) p.absences = absences.map(a => ({ team_id: a.team_id, from: a.from, to: a.to, elo: a.elo, se_elo: a.se_elo, player_id: a.player_id }));
     if (document.getElementById('sampleWorth').checked) p.sample_worth = true;
+    if (document.getElementById('holdAbsences').checked) p.hold_absences = true;
     const name = document.getElementById('name').value.trim(); if (name) p.name = name;
     try {
       const job = await runJob('/api/jobs/season', p, j => setStatus(status, `${j.status} ${pct(j.progress, 0)}`));
       const r = job.result;
-      document.getElementById('note').textContent = `${r.information_cutoff_note} Games used: ${r.games_played}; regular-season games simulated: ${r.games_remaining}; qualification format: ${r.qualification}. ${r.iterations.toLocaleString()} simulated seasons in ${r.elapsed_ms} ms.${provenance(p.season)} ${r.absences_applied ? ` ${r.absences_applied} absence${r.absences_applied === 1 ? '' : 's'} priced in${r.absences_sampled ? `, ${r.absences_sampled} with the worth drawn from its uncertainty in every simulated season` : ''}; see the Players page.` : p.use_injury_report ? ' The injury report priced nothing: no report is stored for this season, or no listed player has a worth; see the Players page.' : ''}`;
+      document.getElementById('note').textContent = `${r.information_cutoff_note} Games used: ${r.games_played}; regular-season games simulated: ${r.games_remaining}; qualification format: ${r.qualification}. ${r.iterations.toLocaleString()} simulated seasons in ${r.elapsed_ms} ms.${provenance(p.season)} ${r.absences_applied ? ` ${r.absences_applied} absence${r.absences_applied === 1 ? '' : 's'} priced in${r.absences_sampled ? `, ${r.absences_sampled} with the worth drawn from its uncertainty in every simulated season` : ''}; see the Players page.` : p.use_injury_report ? ' The injury report priced nothing: no report is stored for this season, or no listed player has a worth; see the Players page.' : ''}${r.held ? ` Held: the season run again with the ${r.held.absences_held} absence${r.held.absences_held === 1 ? '' : 's'} covering ${r.as_of} kept to ${r.held.held_to}; the "held" columns are the forecast if the roster of ${r.as_of} were the roster all season, the bound the dated forecast sits above.` : p.hold_absences ? ' No absence covering the cutoff date ends before the last regular-season game, so there is no held run.' : ''}`;
+      const held = new Map((r.held ? r.held.teams : []).map(h => [h.team_id, h]));
+      const heldCol = (label, value, title) => ({ label, value: t => { const h = held.get(t.team_id); return h ? value(h) : ''; }, cls: () => 'muted', title });
       const cols = [
         { label: 'Team', value: t => `${t.code} · ${t.name}`, left: true }, { label: 'Conf', value: 'conference', left: true }, { label: 'Elo', value: t => num(t.elo_as_of, 0) },
         ...(r.absences_applied && r.teams.length && 'absence_penalty_today' in r.teams[0] ? [
@@ -163,6 +166,11 @@
         { label: 'Top 6', value: t => pct(t.p_top6) }, { label: 'Play-in', value: t => pct(t.p_play_in) }, { label: 'Playoffs', value: t => pct(t.p_playoffs) },
         { label: '2nd round', value: t => pct(t.p_second_round) }, { label: 'Conf. finals', value: t => pct(t.p_conf_finals) }, { label: 'Finals', value: t => pct(t.p_finals) },
         { label: 'Title', value: t => `${pct(t.p_champion, 2)} ± ${pct(1.96 * t.p_champion_se, 2)}`, cls: () => 'good' },
+        ...(r.held ? [
+          heldCol('Out held (Elo)', h => h.absence_penalty ? `−${num(h.absence_penalty, 0)}` : '', 'Mean penalty over the remaining games with the absences covering the cutoff date held to the last regular-season game'),
+          heldCol('Exp. wins held', h => num(h.expected_wins, 1), 'Expected wins if the roster of the cutoff date were the roster all season'),
+          heldCol('Playoffs held', h => pct(h.p_playoffs), 'Playoff chance with the absences of the cutoff date held all season'),
+          heldCol('Title held', h => pct(h.p_champion, 2), 'Title chance with the absences of the cutoff date held all season')] : []),
         { label: 'Actual', value: t => t.actual_result ? RESULT[t.actual_result] + (t.actual_seed ? ` (${t.actual_seed})` : '') : '–', left: true, cls: t => t.actual_result === 'champion' ? 'good' : '' }];
       document.getElementById('results').innerHTML = table(cols, r.teams);
       renderProjected(r); renderCup(r);

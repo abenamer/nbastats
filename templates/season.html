@@ -23,6 +23,7 @@
   <label>Estimate <select id="whoEstimate" title="Worth: from the games his team played without him, with its error. Box: from his box score, without an error. Auto: the worth when he has one, else the box"><option value="auto">Auto</option><option value="worth">Worth (missed games)</option><option value="box">Box score</option></select></label>
   <button id="whoAdd">Add</button>
   <label title="Each simulated season draws every absence's penalty from its standard error, so the forecast's spread reflects how little is known about the worth"><input id="sampleWorth" type="checkbox"> Draw each worth from its uncertainty</label>
+  <label title="Run the season a second time with every absence that covers the cutoff date held to the last regular-season game: the forecast if the roster of the cutoff date were the roster all season, the bound the dated forecast sits above"><input id="holdAbsences" type="checkbox"> Hold the cutoff date's absences all season</label>
   <span id="whoStatus" class="muted small"></span>
 </section>
 <ul id="absences" class="small" style="margin:0 0 .5rem 0;padding-left:1.2rem"></ul>

@@ -614,6 +614,8 @@ pub async fn run_tracked<P: PlayerSource>(
                 unmatched = outcome.unmatched,
                 "player sync completed"
             );
+            // What the run wrote feeds the worth, box, return, run and status caches.
+            app.invalidate_player_caches();
             app.set_player_phase(PlayerPhase::Done {
                 kind,
                 trigger,

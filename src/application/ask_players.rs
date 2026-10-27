@@ -145,10 +145,12 @@ impl EffectSide {
     }
 }
 
-/// The two sides of the comparison and their differences; the chances are rounded to two
-/// decimals, which is what 2,000 simulated seasons resolve.
-pub fn effect_json(with: EffectSide, healthy: EffectSide) -> Value {
-    let row = |t: EffectSide| {
+/// The sides of the comparison and their differences; the chances are rounded to two
+/// decimals, which is what 2,000 simulated seasons resolve. `held` is the run with this
+/// team's absences of today held all season: the lower bound, with everyone healthy the
+/// upper one and the dated forecast between them.
+pub fn effect_json(with: EffectSide, healthy: EffectSide, held: Option<EffectSide>) -> Value {
+    let row = |t: &EffectSide| {
         json!({
             "expected_wins": round(t.expected_wins, 1),
             "p_playoffs": round(t.p_playoffs, 2),
@@ -158,23 +160,50 @@ pub fn effect_json(with: EffectSide, healthy: EffectSide) -> Value {
             "mean_penalty_elo": round(t.mean_penalty, 1),
         })
     };
-    json!({
-        "with_report": row(with),
-        "everyone_healthy": row(healthy),
+    let mut v = json!({
+        "with_report": row(&with),
+        "everyone_healthy": row(&healthy),
         "healthy_minus_report": {
             "expected_wins": round(healthy.expected_wins - with.expected_wins, 1),
             "p_playoffs": round(healthy.p_playoffs - with.p_playoffs, 2),
             "p_champion": round(healthy.p_champion - with.p_champion, 2),
         },
         "team_games_remaining": with.remaining_games,
-    })
+    });
+    if let Some(h) = held {
+        v["todays_absences_held_all_season"] = row(&h);
+        v["range"] = json!({
+            "expected_wins": [round(h.expected_wins, 1), round(healthy.expected_wins, 1)],
+            "p_playoffs": [round(h.p_playoffs, 2), round(healthy.p_playoffs, 2)],
+            "p_champion": [round(h.p_champion, 2), round(healthy.p_champion, 2)],
+            "note": "the lower bound holds this team's absences covering its next game to the season's end, the upper has everyone healthy; the dated forecast (with_report) lies between them, up to about one point of simulation noise",
+        });
+    }
+    v
 }
 
-/// The forecast rows of one team under two runs, and their differences.
-pub fn effect_rows(with: &SeasonForecast, without: &SeasonForecast, team: TeamId) -> Option<Value> {
+/// The date of a team's next regular-season game without a result: what "tonight" means
+/// to a forecast of a season in progress, and the first unplayed game of a season behind
+/// us.
+pub fn next_game_date(games: &[Game], team: TeamId) -> Option<NaiveDate> {
+    games
+        .iter()
+        .filter(|g| g.game_type == GameType::Regular && !g.is_played() && g.involves(team))
+        .map(|g| g.game_date)
+        .min()
+}
+
+/// The forecast rows of one team under the runs, and their differences.
+pub fn effect_rows(
+    with: &SeasonForecast,
+    without: &SeasonForecast,
+    held: Option<&SeasonForecast>,
+    team: TeamId,
+) -> Option<Value> {
     let a = EffectSide::of(with, team)?;
     let b = EffectSide::of(without, team)?;
-    let mut v = effect_json(a, b);
+    let h = held.and_then(|f| EffectSide::of(f, team));
+    let mut v = effect_json(a, b, h);
     v["absences_applied"] = json!(with.absences_applied);
     v["iterations"] = json!(with.iterations);
     v["as_of"] = json!(with.as_of);
@@ -349,6 +378,7 @@ impl PlayerLookups for App {
                     "worth_elo": l.worth_elo.map(|v| round(v, 0)), "se_elo": l.se_elo.map(|v| round(v, 0)),
                     "worth_season": l.worth_season, "worth_source": l.worth_source,
                     "penalty_elo": l.penalty_elo.map(|v| round(v, 0)), "until": l.until,
+                    "weight": l.weight.map(|v| round(v, 2)), "weight_set_by": l.weight_source,
                     "until_set_by": l.span, "games_missed_so_far": l.missed_so_far,
                     "box_scores_through": l.lines_through, "on_report": l.listed,
                 })
@@ -390,7 +420,12 @@ impl PlayerLookups for App {
             "lines": lines,
             "absent_without_a_report_line": unlisted,
             "mean_run_of_missed_games": a.survival.as_ref().map(|s| round(s.mean_run_games, 1)),
-            "note": a.note.unwrap_or_else(|| "A penalty is what the team plays without on a game date; the rating itself does not change. Lines without a penalty have returned, have no worth estimate, or have a worth at or below zero. A line with on_report false is a regular player absent from his team's last games who is not on the report. until_set_by says what ended the span: the report's return date when it lies beyond the next game, else the expected remaining games of a run this long (expected), the status default, or the season.".to_string()),
+            "what_a_status_has_meant": a.statuses.as_ref().map(|t| t.curves.iter().map(|c| json!({
+                "status": c.status, "already_in_a_run": c.in_run, "lines_followed": c.samples,
+                "share_missing_the_next_game": round(c.weight, 2), "games_missed_of_the_next_30": round(c.expected_missed, 1),
+                "span_games": round(c.span_games, 1),
+            })).collect::<Vec<_>>()),
+            "note": a.note.unwrap_or_else(|| "A penalty is what the team plays without on a game date; the rating itself does not change. Lines without a penalty have returned, have no worth estimate, or have a worth at or below zero. A line with on_report false is a regular player absent from his team's last games who is not on the report. weight is the share of the worth taken off: measured when the stored reports show how often a line of this status, for a player not yet out or already in a run, missed the next game; else the status default (out 1, doubtful 0.75, questionable or day-to-day 0.5, probable 0.25). until_set_by says what ended the span: the report's return date when it lies beyond the next game, else the expected remaining games of a run this long (expected), the games a line of this status has gone on to miss (measured), the status default, or the season.".to_string()),
         }))
     }
 
@@ -415,6 +450,7 @@ impl PlayerLookups for App {
         let home = self.home_advantage(season).await?;
         let teams = self.teams().await?;
         let mut params = SeasonParams {
+            hold_absences: false,
             season,
             as_of: Some(today),
             iterations: EFFECT_ITERATIONS,
@@ -427,30 +463,49 @@ impl PlayerLookups for App {
             absences: a.absences.clone(),
         };
         app_worth::fix_penalties(&mut params.absences);
-        // With nothing priced the two runs would be identical: run once.
         // "Everyone healthy" means this team's players back; the other teams keep their
-        // absences as reported. With nothing priced for this team the two runs would be
-        // identical: run once.
+        // absences as reported. "Held" means this team's absences of today kept to the
+        // season's end, the other teams' as dated. With nothing priced for this team the
+        // runs would be identical: run once.
         let nothing_priced = !params.absences.iter().any(|a| a.team_id == team_id);
         let games = data.games.clone();
         let teams_for_run = teams.clone();
         let outcome = tokio::task::spawn_blocking(move || {
             let with = engine::run(&params, &games, &teams_for_run, &Silent)?;
             if nothing_priced {
-                return Ok::<_, engine::SeasonError>((with.clone(), with));
+                return Ok::<_, engine::SeasonError>((with.clone(), with, None));
             }
             let mut healthy = params.clone();
             healthy.absences.retain(|a| a.team_id != team_id);
             let without = engine::run(&healthy, &games, &teams_for_run, &Silent)?;
-            Ok((with, without))
+            // "Today's absences" are the ones covering the team's next game to simulate:
+            // tonight in the season in progress, and still defined for a season behind us.
+            // Only this team's absences are held; the others keep their dated spans.
+            let anchor = next_game_date(&games, team_id).unwrap_or(with.as_of);
+            let mut held_params = params.clone();
+            let mut extended = 0;
+            if let Some(last) = engine::last_regular_game(&games) {
+                for a in &mut held_params.absences {
+                    if a.team_id == team_id && a.covers(anchor) && a.to < last {
+                        a.to = last;
+                        extended += 1;
+                    }
+                }
+            }
+            let held = if extended > 0 {
+                Some(engine::run(&held_params, &games, &teams_for_run, &Silent)?)
+            } else {
+                None
+            };
+            Ok((with, without, held))
         })
         .await
         .map_err(|e| StoreError::Query(e.to_string()))?;
-        let (with, without) = match outcome {
+        let (with, without, held) = match outcome {
             Ok(v) => v,
             Err(e) => return Ok(error(e.to_string())),
         };
-        let Some(rows) = effect_rows(&with, &without, team_id) else {
+        let Some(rows) = effect_rows(&with, &without, held.as_ref(), team_id) else {
             return Ok(error(format!(
                 "{code} is not in the {} season",
                 season.label()
@@ -462,7 +517,7 @@ impl PlayerLookups for App {
         out["note"] = json!(if nothing_priced {
             "No absence is priced for this team (no report, a report outside the season, or no listed player with a worth), so both sides are the same forecast."
         } else {
-            "Two runs of the season engine from today with the same seed: with the injury report's absences priced at their estimates, and with this team's absences removed while the other teams keep theirs. Only the regular-season games the spans cover take the penalty; the play-in and playoffs run at full ratings. The probability differences carry about one point of simulation noise."
+            "Runs of the season engine from today with the same seed: with the injury report's absences priced at their estimates (with_report), with this team's absences removed while the other teams keep theirs (everyone_healthy), and, when one of this team's absences covers its next game and ends before the last game, with those held to the season's end (todays_absences_held_all_season). The last two are the bounds; the dated forecast lies between them up to about one point of simulation noise, where exactly depending on when the players return. Only the regular-season games the spans cover take the penalty; the play-in and playoffs run at full ratings."
         });
         if let Some(n) = a.note {
             out["report_note"] = json!(n);
@@ -568,12 +623,44 @@ mod tests {
             mean_penalty: 0.0,
             remaining_games: 60,
         };
-        let v = effect_json(with, healthy);
+        let held = EffectSide {
+            expected_wins: 44.0,
+            p_playoffs: 0.6,
+            p_conf_finals: 0.1,
+            p_finals: 0.04,
+            p_champion: 0.012,
+            mean_penalty: 120.0,
+            remaining_games: 60,
+        };
+        let v = effect_json(with, healthy, Some(held));
         assert_eq!(v["healthy_minus_report"]["expected_wins"], 2.4);
         assert_eq!(v["healthy_minus_report"]["p_champion"], 0.03);
         assert_eq!(v["with_report"]["mean_penalty_elo"], 31.4);
         assert_eq!(v["everyone_healthy"]["p_champion"], 0.11);
         assert_eq!(v["team_games_remaining"], 60);
+        assert_eq!(v["todays_absences_held_all_season"]["expected_wins"], 44.0);
+        assert_eq!(v["range"]["expected_wins"], json!([44.0, 52.6]));
+        // Without a held run, no bounds.
+        let v = effect_json(with, healthy, None);
+        assert!(v.get("range").is_none());
+    }
+
+    #[test]
+    fn the_next_game_is_the_first_unplayed_regular_season_game_of_the_team() {
+        let games = vec![
+            game(1, 20, 1, 2, true),
+            game(2, 25, 1, 2, false),
+            game(3, 22, 2, 3, false),
+        ];
+        assert_eq!(
+            next_game_date(&games, TeamId::new(1)),
+            NaiveDate::from_ymd_opt(2026, 10, 25)
+        );
+        assert_eq!(
+            next_game_date(&games, TeamId::new(2)),
+            NaiveDate::from_ymd_opt(2026, 10, 22)
+        );
+        assert_eq!(next_game_date(&games, TeamId::new(9)), None);
     }
 
     #[test]

@@ -187,8 +187,12 @@ impl JobSpec for SeasonJob {
 
     fn validate(&self, limits: &Limits) -> Result<(), ValidationError> {
         self.0.validate(limits.max_iterations)?;
-        // A full regular season (1,230 games), the play-in and the playoffs, plus sorting.
-        limits.check_work(self.0.iterations, 1_500)
+        // A full regular season (1,230 games), the play-in and the playoffs, plus sorting;
+        // twice with the held run.
+        limits.check_work(
+            self.0.iterations,
+            if self.0.hold_absences { 3_000 } else { 1_500 },
+        )
     }
     fn seed(&self) -> Option<i64> {
         Some(self.0.seed as i64)

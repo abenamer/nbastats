@@ -893,6 +893,13 @@ pub trait PlayerStore: Send + Sync {
     ) -> StoreResult<i64>;
     async fn injury_report(&self, date: NaiveDate) -> StoreResult<Vec<InjuryLine>>;
     async fn latest_injury_report_date(&self) -> StoreResult<Option<NaiveDate>>;
+    /// Every line of the reports dated `from` to `to` (inclusive), reduced to what the
+    /// status curves need, with the status read as the pricing reads it.
+    async fn injury_reports_between(
+        &self,
+        from: NaiveDate,
+        to: NaiveDate,
+    ) -> StoreResult<Vec<crate::domain::status::ReportedStatus>>;
     /// Upsert players in one transaction; returns how many were written.
     async fn save_players(&self, source: &str, players: &[PlayerRecord]) -> StoreResult<i64>;
     /// Upsert the roster players and mark them active, and every other player of the

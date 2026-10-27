@@ -17,6 +17,7 @@ pub mod recovery;
 pub mod reference;
 pub mod simulation;
 pub mod spell;
+pub mod status;
 pub mod strength;
 pub mod validation;
 pub mod worth;

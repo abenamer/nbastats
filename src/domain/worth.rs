@@ -15,6 +15,7 @@ use serde::{Deserialize, Serialize};
 use crate::domain::elo;
 use crate::domain::ids::{PlayerId, SeasonYear, TeamId};
 use crate::domain::models::Game;
+use crate::domain::status::StatusTable;
 
 /// Elo points per point of margin, the convention of the Cup margin model.
 pub const ELO_PER_POINT: f64 = 28.0;
@@ -589,75 +590,147 @@ pub enum SpanSource {
     ReturnDate,
     /// The expected remaining games of a run this long, from the survival curve.
     Expected,
+    /// The games a line of this status has gone on to miss, from the status curve.
+    Measured,
     /// The status's default span.
     Status,
     /// Out for the season.
     Season,
 }
 
+/// What set the share of the worth an absence takes off.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WeightSource {
+    /// The share of the lines of this status, in this state, whose player missed the next
+    /// game: the status curve.
+    Measured,
+    /// The status's default weight.
+    Status,
+}
+
+/// A priced absence's span and weight, with what set each.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Span {
+    /// Inclusive.
+    pub to: NaiveDate,
+    pub source: SpanSource,
+    /// The share of the worth taken off over the span.
+    pub weight: f64,
+    pub weight_source: WeightSource,
+}
+
 /// What the game logs add to the pricing of a report: the survival curve of the runs of
-/// missed games, and each team's unplayed games from the report date on, in order.
+/// missed games, the curves of what each status has meant, and each team's unplayed games
+/// from the report date on, in order. Either curve is absent below its minimum of data.
 pub struct SpanRule<'a> {
-    pub survival: &'a crate::domain::spell::Survival,
+    pub survival: Option<&'a crate::domain::spell::Survival>,
+    pub statuses: Option<&'a StatusTable>,
     pub upcoming: &'a HashMap<TeamId, Vec<NaiveDate>>,
 }
 
-/// When a line's absence ends (inclusive), and what decided it; none when nothing is
-/// priced. Out for the season ends with the season. A return date beyond the team's next
-/// game is the source's estimate and stands. A return date that is the next game or
-/// earlier is the feed's placeholder: a player listed out, or in a run of
-/// [`SPELL_MIN_MISSED`] games, is then priced for the expected remaining games of a run
-/// as long as his, read off the survival curve and laid over the team's schedule, when
-/// the games he has missed so far are known. The other statuses, every line without a
-/// rule and a team without box scores take the status's default span.
+/// When a line's absence ends (inclusive), what share of the worth it takes off, and what
+/// decided each; none when nothing is priced.
+///
+/// The weight is the status curve's, for the player's state (not yet out, or in a run of
+/// one game or more), when the stored reports back a curve for the status; else the
+/// status's default. Out for the season keeps its full weight, and so does a line whose
+/// return date stands, the source's own estimate. A status measured as never missing the
+/// next game prices nothing. A rule without either curve is no rule.
+///
+/// The span: out for the season ends with the season. A return date beyond the team's
+/// next game is the source's estimate and stands. A return date that is the next game or
+/// earlier is the feed's placeholder. A player listed out, or in a run of
+/// [`SPELL_MIN_MISSED`] games, is then priced for the expected remaining games of a run as
+/// long as his, read off the survival curve, when the games he has missed so far are
+/// known. Any other line with a status curve is priced for the games a line of its status
+/// has gone on to miss. Both are laid over the team's schedule. The rest, every line
+/// without a rule and a team without box scores take the status's default span. Without a
+/// curve to lean on, a return date of the report day or before prices nothing.
 pub fn span_for(
     r: &ReportedAbsence,
     report_date: NaiveDate,
     season_end: NaiveDate,
     rule: Option<&SpanRule>,
-) -> Option<(NaiveDate, SpanSource)> {
+) -> Option<Span> {
     if r.status.weight() <= 0.0 {
         return None;
     }
-    if r.status == AbsenceStatus::OutForSeason {
-        return Some((season_end, SpanSource::Season));
-    }
+    // A rule without a curve adds nothing: the line is priced as without one.
+    let rule = rule.filter(|x| x.survival.is_some() || x.statuses.is_some());
     let upcoming = rule.and_then(|x| x.upcoming.get(&r.team_id));
+    // The status curve in the player's state, when the stored reports back one and the
+    // state is known.
+    let curve = rule
+        .and_then(|x| x.statuses)
+        .filter(|_| r.status != AbsenceStatus::OutForSeason)
+        .and_then(|t| r.missed_so_far.and_then(|k| t.curve(r.status, k >= 1)));
+    let (weight, weight_source) = match curve {
+        Some(c) => (c.weight(), WeightSource::Measured),
+        None => (r.status.weight(), WeightSource::Status),
+    };
+    // Measured as never missing the next game: nothing to price.
+    if weight <= 0.0 {
+        return None;
+    }
+    let span_at = |to: NaiveDate, source, weight, weight_source| {
+        Some(Span {
+            to: to.min(season_end),
+            source,
+            weight,
+            weight_source,
+        })
+    };
+    let span = |to: NaiveDate, source| span_at(to, source, weight, weight_source);
+    if r.status == AbsenceStatus::OutForSeason {
+        return span(season_end, SpanSource::Season);
+    }
     let next_game = upcoming.and_then(|u| u.first().copied());
     // In a spell: listed out or absent, or demonstrably out for a run of games. The
     // expected rule needs the games missed so far to be known.
     let in_spell = (matches!(r.status, AbsenceStatus::Out | AbsenceStatus::Absent)
         || r.missed_so_far.is_some_and(|k| k >= SPELL_MIN_MISSED))
         && r.missed_so_far.is_some();
+    let survival = rule.and_then(|x| x.survival);
+    let expected_applies = in_spell && survival.is_some() && upcoming.is_some();
+    let measured_applies = curve.is_some() && upcoming.is_some();
     if let Some(d) = r.return_date {
         let placeholder = next_game.is_some_and(|g| d <= g);
-        // For a player in a spell with a rule, a date up to the next game, today's date
-        // included, is the feed's placeholder. Otherwise a date of today or before prices
-        // nothing, and a later one stands.
-        let expected_applies = in_spell && rule.is_some() && upcoming.is_some();
-        if d <= report_date && !(placeholder && expected_applies) {
+        // With a curve to lean on, a date up to the next game, today's date included, is
+        // the feed's placeholder. Otherwise a date of today or before prices nothing, and
+        // a later one stands.
+        if d <= report_date && !(placeholder && (expected_applies || measured_applies)) {
             return None;
         }
         if !placeholder {
-            return Some((
-                (d - Duration::days(1)).min(season_end),
+            // The source's own estimate: priced at the status's default weight, since the
+            // curve's weight is measured over every line of the status, dated or not.
+            return span_at(
+                d - Duration::days(1),
                 SpanSource::ReturnDate,
-            ));
+                r.status.weight(),
+                WeightSource::Status,
+            );
         }
     }
-    if let (Some(rule), Some(upcoming), true, Some(missed)) =
-        (rule, upcoming, in_spell, r.missed_so_far)
+    if let (Some(survival), Some(upcoming), true, Some(missed)) =
+        (survival, upcoming, in_spell, r.missed_so_far)
     {
-        let games = rule.survival.expected_remaining(missed).round().max(1.0) as usize;
+        let games = survival.expected_remaining(missed).round().max(1.0) as usize;
         let to = upcoming.get(games - 1).copied().unwrap_or(season_end);
-        return Some((to.min(season_end), SpanSource::Expected));
+        return span(to, SpanSource::Expected);
+    }
+    if let (Some(c), Some(upcoming)) = (curve, upcoming) {
+        let games = c.span_games().round().max(1.0) as usize;
+        let to = upcoming.get(games - 1).copied().unwrap_or(season_end);
+        return span(to, SpanSource::Measured);
     }
     let to = report_date + Duration::days(r.status.default_days() - 1);
-    Some((to.min(season_end), SpanSource::Status))
+    span(to, SpanSource::Status)
 }
 
-/// The penalties of a report dated `report_date`, each line's span from [`span_for`],
-/// never past `season_end`. A worth at or below zero gives no penalty: the model does not
+/// The penalties of a report dated `report_date`, each line's span and weight from
+/// [`span_for`], never past `season_end`. A worth at or below zero gives no penalty: the model does not
 /// reward an absence. A status that removes nothing (available, unknown) gives none
 /// either.
 pub fn absences_from_report(
@@ -670,12 +743,13 @@ pub fn absences_from_report(
         .iter()
         .filter(|r| r.worth_elo > 0.0)
         .filter_map(|r| {
-            let (to, _) = span_for(r, report_date, season_end, rule)?;
-            if to < report_date {
+            let span = span_for(r, report_date, season_end, rule)?;
+            if span.to < report_date {
                 return None;
             }
-            let elo = (r.worth_elo * r.status.weight()).min(MAX_ABSENCE_ELO);
-            let se_elo = (r.se_elo.max(0.0) * r.status.weight()).min(MAX_ABSENCE_ELO);
+            let elo = (r.worth_elo * span.weight).min(MAX_ABSENCE_ELO);
+            let se_elo = (r.se_elo.max(0.0) * span.weight).min(MAX_ABSENCE_ELO);
+            let to = span.to;
             (elo > 0.0).then_some(Absence {
                 team_id: r.team_id,
                 from: report_date,
@@ -1113,11 +1187,14 @@ mod tests {
             (0..10).map(|i| d(11 + 2 * i)).collect::<Vec<_>>(),
         );
         let rule = SpanRule {
-            survival: &survival,
+            survival: Some(&survival),
+            statuses: None,
             upcoming: &upcoming,
         };
         let report = d(10);
-        let span = |r: &ReportedAbsence, rule: Option<&SpanRule>| span_for(r, report, d(40), rule);
+        let span = |r: &ReportedAbsence, rule: Option<&SpanRule>| {
+            span_for(r, report, d(40), rule).map(|s| (s.to, s.source))
+        };
         // A return date that is the next game is the feed's placeholder: two games to go.
         assert_eq!(
             span(&reported(AbsenceStatus::Out, Some(11), 2), Some(&rule)),
@@ -1208,12 +1285,176 @@ mod tests {
         let mut short = HashMap::new();
         short.insert(TeamId::new(1), vec![d(11)]);
         let rule = SpanRule {
-            survival: &survival,
+            survival: Some(&survival),
+            statuses: None,
             upcoming: &short,
         };
         assert_eq!(
             span(&reported(AbsenceStatus::Out, None, 0), Some(&rule)),
             Some((d(40), SpanSource::Expected))
+        );
+    }
+
+    #[test]
+    fn the_status_curve_sets_the_weight_and_the_span() {
+        use crate::domain::spell::{Run, Survival};
+        use crate::domain::status::{StatusSample, StatusTable};
+        // Day-to-day lines: not yet out, three in five miss the next two games; already
+        // in a run, every line misses three more games.
+        let mut samples = Vec::new();
+        for i in 0..50 {
+            samples.push(StatusSample {
+                status: AbsenceStatus::DayToDay,
+                in_run: false,
+                missed: if i < 30 {
+                    vec![true, true, false]
+                } else {
+                    vec![false, false, false]
+                },
+            });
+            samples.push(StatusSample {
+                status: AbsenceStatus::DayToDay,
+                in_run: true,
+                missed: vec![true, true, true, false],
+            });
+        }
+        let statuses = StatusTable::fit(&samples);
+        let runs: Vec<Run> = std::iter::repeat_n(
+            Run {
+                missed: 5,
+                censored: false,
+            },
+            60,
+        )
+        .collect();
+        let survival = Survival::fit(&runs).unwrap();
+        let mut upcoming = HashMap::new();
+        upcoming.insert(
+            TeamId::new(1),
+            (0..10).map(|i| d(11 + 2 * i)).collect::<Vec<_>>(),
+        );
+        let rule = SpanRule {
+            survival: Some(&survival),
+            statuses: Some(&statuses),
+            upcoming: &upcoming,
+        };
+        let report = d(10);
+        let span = |r: &ReportedAbsence| span_for(r, report, d(40), Some(&rule)).unwrap();
+        // Not yet out, the placeholder date: the measured weight over the measured span,
+        // 1.2 games missed at 0.6 is two games.
+        let fresh = span(&reported(AbsenceStatus::DayToDay, Some(11), 0));
+        assert_eq!(
+            (fresh.to, fresh.source, fresh.weight_source),
+            (d(13), SpanSource::Measured, WeightSource::Measured)
+        );
+        assert!((fresh.weight - 0.6).abs() < 1e-12);
+        // A date of today is the placeholder too once a curve backs the status.
+        assert_eq!(
+            span(&reported(AbsenceStatus::DayToDay, Some(10), 0)).to,
+            d(13)
+        );
+        // Already in a run of one: the in-run curve, every line misses three.
+        let in_run = span(&reported(AbsenceStatus::DayToDay, None, 1));
+        assert_eq!((in_run.to, in_run.source), (d(15), SpanSource::Measured));
+        assert_eq!(in_run.weight, 1.0);
+        // In a spell of three or more the survival curve sets the span; the weight is
+        // still the in-run curve's.
+        let spell = span(&reported(AbsenceStatus::DayToDay, Some(11), 3));
+        assert_eq!(
+            (spell.source, spell.weight_source, spell.weight),
+            (SpanSource::Expected, WeightSource::Measured, 1.0)
+        );
+        // A date beyond the next game stands, at the status's default weight.
+        let dated = span(&reported(AbsenceStatus::DayToDay, Some(20), 0));
+        assert_eq!(
+            (dated.to, dated.source, dated.weight, dated.weight_source),
+            (d(19), SpanSource::ReturnDate, 0.5, WeightSource::Status)
+        );
+        // A status measured as never missing the next game prices nothing.
+        for _ in 0..50 {
+            samples.push(StatusSample {
+                status: AbsenceStatus::Probable,
+                in_run: false,
+                missed: vec![false, false],
+            });
+        }
+        let with_probable = StatusTable::fit(&samples);
+        let never = SpanRule {
+            survival: Some(&survival),
+            statuses: Some(&with_probable),
+            upcoming: &upcoming,
+        };
+        assert_eq!(
+            span_for(
+                &reported(AbsenceStatus::Probable, Some(11), 0),
+                report,
+                d(40),
+                Some(&never)
+            ),
+            None
+        );
+        // A status without a curve keeps its defaults.
+        let q = span(&reported(AbsenceStatus::Questionable, Some(11), 0));
+        assert_eq!(
+            (q.to, q.source, q.weight, q.weight_source),
+            (d(11), SpanSource::Status, 0.5, WeightSource::Status)
+        );
+        let out = span(&reported(AbsenceStatus::Out, None, 2));
+        assert_eq!((out.source, out.weight), (SpanSource::Expected, 1.0));
+        assert_eq!(
+            span(&reported(AbsenceStatus::OutForSeason, None, 0)).weight,
+            1.0
+        );
+        // A team without box scores: the state is unknown, the defaults stand.
+        let unknown = span(&reported_with(AbsenceStatus::DayToDay, None, None));
+        assert_eq!(
+            (unknown.source, unknown.weight_source),
+            (SpanSource::Status, WeightSource::Status)
+        );
+        // The penalty takes the measured weight.
+        let a = absences_from_report(
+            &[reported(AbsenceStatus::DayToDay, Some(11), 0)],
+            report,
+            d(40),
+            Some(&rule),
+        );
+        assert_eq!((a[0].elo, a[0].to), (60.0, d(13)));
+        // Status curves without a survival curve: out keeps its default span.
+        let rule = SpanRule {
+            survival: None,
+            statuses: Some(&statuses),
+            upcoming: &upcoming,
+        };
+        let out = span_for(
+            &reported(AbsenceStatus::Out, Some(11), 2),
+            report,
+            d(40),
+            Some(&rule),
+        )
+        .unwrap();
+        assert_eq!((out.to, out.source), (d(23), SpanSource::Status));
+        // A rule with neither curve is no rule: the placeholder date stands as it did.
+        let bare = SpanRule {
+            survival: None,
+            statuses: None,
+            upcoming: &upcoming,
+        };
+        let out = span_for(
+            &reported(AbsenceStatus::Out, Some(11), 2),
+            report,
+            d(40),
+            Some(&bare),
+        )
+        .unwrap();
+        assert_eq!((out.to, out.source), (d(10), SpanSource::ReturnDate));
+        assert_eq!(
+            span_for(
+                &reported(AbsenceStatus::Out, Some(10), 2),
+                report,
+                d(40),
+                Some(&bare)
+            ),
+            None
         );
     }
 

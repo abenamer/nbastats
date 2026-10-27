@@ -34,7 +34,7 @@ window.NBA = (() => {
   // Tables sort on a header click: numbers as numbers (commas, +, % and · suffixes stripped), the rest as text.
   // The rows are sorted in place in the DOM, so every table built here is sortable without keeping its data.
   function table(columns, rows) {
-    const th = columns.map((c, i) => `<th class="${c.left ? 'l' : ''}" data-col="${i}" title="Sort">${esc(c.label)}</th>`).join('');
+    const th = columns.map((c, i) => `<th class="${c.left ? 'l' : ''}" data-col="${i}" title="${esc(c.title ? `${c.title} (click to sort)` : 'Sort')}">${esc(c.label)}</th>`).join('');
     const body = rows.map(r => '<tr>' + columns.map(c => {
       const v = typeof c.value === 'function' ? c.value(r) : r[c.value];
       const cls = (c.left ? 'l ' : '') + (typeof c.cls === 'function' ? c.cls(r) : '');
