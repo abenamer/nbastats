@@ -1205,6 +1205,17 @@ pub async fn season_availability(
     Ok(Json(json!(a)))
 }
 
+/// Tonight's games priced at the ratings the teams play at, and every team's rating tonight.
+pub async fn season_tonight(
+    State(app): State<AppState>,
+    Path(season): Path<SeasonYear>,
+) -> ApiResult<Value> {
+    let t = worth::tonight(&app, season)
+        .await
+        .map_err(season_load_error)?;
+    Ok(Json(json!(t)))
+}
+
 /// A team's injury card: every report line priced for it and the sum as listed and held.
 pub async fn injury_card(
     State(app): State<AppState>,

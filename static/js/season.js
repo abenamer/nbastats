@@ -136,7 +136,40 @@
   document.getElementById('cardLoad').addEventListener('click', loadCard);
   document.getElementById('cardTeam').addEventListener('change', loadCard);
   document.getElementById('season').addEventListener('change', fillCardTeams);
-  document.getElementById('results').addEventListener('click', async e => {
+  // Tonight: the next night's games at the ratings the teams play at, and every team's rating tonight.
+  const teamLink = (code, season) => `<a href="#injuryCard" class="card-link" data-team="${esc(code)}" data-season="${esc(String(season))}" title="Open the team's injury card">${esc(code)}</a>`;
+  const statusNames = { out: 'out', out_for_season: 'out for season', absent: 'absent', doubtful: 'doubtful', questionable: 'questionable', day_to_day: 'day-to-day', probable: 'probable', available: 'available', unknown: 'listed' };
+  let tonightRequest = 0;
+  async function loadTonight() {
+    const season = parseInt(document.getElementById('season').value);
+    const note = document.getElementById('tonightNote');
+    const mine = ++tonightRequest;
+    try {
+      const t = await getJSON(`/api/seasons/${season}/tonight`);
+      if (mine !== tonightRequest) return;
+      // The night may not be today: an off day, a break, or every game of today played.
+      const when = t.night === t.as_of ? 'tonight' : `on ${t.night}`;
+      note.textContent = t.note ? t.note : t.night
+        ? `${labelOf(t.season)}: ${t.games.length} game${t.games.length === 1 ? '' : 's'} ${t.games_played ? `still to play of ${t.games.length + t.games_played} ` : ''}on ${t.night}${t.night === t.as_of ? ' (today)' : ', the next night with a game'}, read as of ${t.as_of} with the report of ${t.report_date}. Home bonus ${num(t.home_advantage, 0)}.`
+        : `${labelOf(t.season)}: no regular-season game remains on or after ${t.as_of}.`;
+      const sideCls = (p, q) => Math.abs(p - q) < 0.005 ? '' : q < p ? 'bad' : 'good';
+      document.getElementById('tonightGames').innerHTML = t.games.length ? table([
+        { label: 'Away', value: g => `${teamLink(g.away_code, t.season)} ${num(g.away_rating, 0)}${g.away_rated ? '' : '*'}${g.away_penalty ? ` → <span class="bad">${num(g.away_tonight, 0)}</span>` : ''}`, raw: true, left: true, title: `The away team, its rating and, when it is missing players, the rating it plays at ${when}; * marks a team without a rating, read at the league mean` },
+        { label: 'Home', value: g => `${teamLink(g.home_code, t.season)} ${num(g.home_rating, 0)}${g.home_rated ? '' : '*'}${g.home_penalty ? ` → <span class="bad">${num(g.home_tonight, 0)}</span>` : ''}${g.neutral ? ' (neutral)' : ''}`, raw: true, left: true, title: `The home team, its rating and, when it is missing players, the rating it plays at ${when}; * marks a team without a rating, read at the league mean` },
+        { label: 'P(home) full', value: g => pct(g.p_home_full, 0), title: 'Home win probability at full strength' },
+        { label: `P(home) ${when}`, value: g => pct(g.p_home_tonight, 0), cls: g => sideCls(g.p_home_full, g.p_home_tonight), title: `Home win probability at the ratings the teams play at ${when}; red when the home side is the one short-handed, green when the visitor is` }], t.games) : '';
+      document.getElementById('tonightTeams').innerHTML = t.teams.length ? table([
+        { label: 'Team', value: x => teamLink(x.code, t.season), raw: true, left: true },
+        { label: 'Elo', value: x => num(x.rating, 0), title: 'The rating as of the date' },
+        { label: `Out ${when} (Elo)`, value: x => x.penalty ? `−${num(x.penalty, 0)}` : '', cls: x => x.penalty ? 'bad' : '', title: 'The penalties of the absences that cover the night, each the mean of its draw when the worth has an error' },
+        { label: `Elo ${when}`, value: x => num(x.rating_tonight, 0), cls: x => x.penalty ? 'bad' : '', title: `The rating the team plays at ${when}` },
+        { label: 'Plays', value: x => x.opponent ? `${x.home ? 'vs' : 'at'} ${x.opponent}` : '', left: true, title: 'Blank for a team not playing, or whose game is already played' },
+        { label: 'Who is out', value: x => x.out.map(o => `${o.name} (${num(o.penalty_elo, 0)}, ${statusNames[o.status] || o.status_text.toLowerCase()} to ${o.until})`).join('; '), left: true, title: 'Each absence covering the night: the penalty it carries, the status and the last date it applies' }], t.teams) : '';
+    } catch (e) { note.textContent = `Tonight unavailable: ${e.message}`; document.getElementById('tonightGames').innerHTML = ''; document.getElementById('tonightTeams').innerHTML = ''; }
+  }
+  document.getElementById('season').addEventListener('change', loadTonight);
+  loadTonight();
+  document.addEventListener('click', async e => {
     const a = e.target.closest('a.card-link'); if (!a) return;
     e.preventDefault();
     // The card follows the forecast's season, which the select may have left.

@@ -824,6 +824,100 @@ pub fn absence_effect(
     effect
 }
 
+/// One game of the next night, priced at the ratings both teams play at that night.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct NightGame {
+    pub game_id: i64,
+    pub home_team_id: TeamId,
+    pub away_team_id: TeamId,
+    pub neutral: bool,
+    /// False when the team had no rating and the league mean stands in.
+    pub home_rated: bool,
+    pub away_rated: bool,
+    /// The ratings as of the night, the penalties on the night's date, and the ratings
+    /// the teams play at.
+    pub home_rating: f64,
+    pub away_rating: f64,
+    pub home_penalty: f64,
+    pub away_penalty: f64,
+    pub home_tonight: f64,
+    pub away_tonight: f64,
+    /// The home team's win probability at full strength and at the penalized ratings.
+    pub p_home_full: f64,
+    pub p_home_tonight: f64,
+}
+
+/// The next night with regular-season games still to play.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Night {
+    pub date: NaiveDate,
+    /// The night's regular-season games already played, when the night is today and
+    /// partly over.
+    pub played: u32,
+    /// The games still to play, priced.
+    pub games: Vec<NightGame>,
+}
+
+/// The next night with regular-season games: the earliest date on or after `as_of` with
+/// an unplayed regular-season game, and its unplayed games priced at the ratings the
+/// teams play at. None when no such game remains. A team without a rating is read at the
+/// league mean, and `NightGame` says so.
+pub fn tonight(
+    games: &[Game],
+    as_of: NaiveDate,
+    ratings: &HashMap<TeamId, f64>,
+    absences: &[Absence],
+    home_advantage: f64,
+) -> Option<Night> {
+    let regular = |g: &&Game| g.game_type == crate::domain::models::GameType::Regular;
+    let unplayed = |g: &&Game| regular(g) && !g.is_played() && g.game_date >= as_of;
+    let night = games.iter().filter(unplayed).map(|g| g.game_date).min()?;
+    let played = games
+        .iter()
+        .filter(regular)
+        .filter(|g| g.is_played() && g.game_date == night)
+        .count() as u32;
+    let mut slate: Vec<&Game> = games
+        .iter()
+        .filter(unplayed)
+        .filter(|g| g.game_date == night)
+        .collect();
+    slate.sort_by_key(|g| (g.seq, g.id));
+    let rating = |t: TeamId| ratings.get(&t).copied().unwrap_or(elo::SEASON_MEAN);
+    let priced = slate
+        .into_iter()
+        .map(|g| {
+            let home_rating = rating(g.home_team_id);
+            let away_rating = rating(g.away_team_id);
+            let home_penalty = penalty(absences, g.home_team_id, night);
+            let away_penalty = penalty(absences, g.away_team_id, night);
+            let p =
+                |h: f64, a: f64| elo::game_probability(h, a, true, g.neutral, home_advantage, 1.0);
+            NightGame {
+                game_id: g.id,
+                home_team_id: g.home_team_id,
+                away_team_id: g.away_team_id,
+                neutral: g.neutral,
+                home_rated: ratings.contains_key(&g.home_team_id),
+                away_rated: ratings.contains_key(&g.away_team_id),
+                home_rating,
+                away_rating,
+                home_penalty,
+                away_penalty,
+                home_tonight: home_rating - home_penalty,
+                away_tonight: away_rating - away_penalty,
+                p_home_full: p(home_rating, away_rating),
+                p_home_tonight: p(home_rating - home_penalty, away_rating - away_penalty),
+            }
+        })
+        .collect();
+    Some(Night {
+        date: night,
+        played,
+        games: priced,
+    })
+}
+
 /// The absences that cover `as_of`, each held to `until` (inclusive) when it ends before
 /// that: the roster of `as_of` kept to the season's end.
 pub fn held(absences: &[Absence], as_of: NaiveDate, until: NaiveDate) -> Vec<Absence> {
@@ -1604,6 +1698,87 @@ mod tests {
         let none = absence_effect(&listed, &games, &ratings, TeamId::new(9), d(10), 60.0);
         assert_eq!(none.games, 0);
         assert_eq!(none.mean_penalty, 0.0);
+    }
+
+    #[test]
+    fn tonight_prices_the_next_nights_unplayed_games() {
+        use crate::domain::models::{EloSource, GameType, ResultSource};
+        let game = |id: i64, day: u32, home: i32, away: i32, game_type: GameType| Game {
+            id,
+            season: SeasonYear::of(2026),
+            game_date: d(day),
+            seq: 0,
+            home_team_id: TeamId::new(home),
+            away_team_id: TeamId::new(away),
+            neutral: false,
+            game_type,
+            home_score: None,
+            away_score: None,
+            home_elo_pre: 1500.0,
+            away_elo_pre: 1500.0,
+            home_elo_post: 1500.0,
+            away_elo_post: 1500.0,
+            home_win_prob: None,
+            elo_source: EloSource::Computed,
+            result_source: ResultSource::Results,
+            ref_home_elo_pre: None,
+            ref_away_elo_pre: None,
+            ref_home_elo_post: None,
+            ref_away_elo_post: None,
+        };
+        let played = |mut g: Game| {
+            g.home_score = Some(100);
+            g.away_score = Some(90);
+            g
+        };
+        let games = vec![
+            // A played game on the night, an unplayed one before the date (a postponed
+            // game is not tonight), a playoff game earlier, and the night's two games.
+            played(game(1, 10, 1, 2, GameType::Regular)),
+            game(2, 8, 3, 4, GameType::Regular),
+            game(3, 9, 1, 3, GameType::Playoff),
+            game(4, 10, 2, 3, GameType::Regular),
+            game(5, 10, 4, 1, GameType::Regular),
+            game(6, 14, 1, 3, GameType::Regular),
+        ];
+        let mut ratings = HashMap::new();
+        ratings.insert(TeamId::new(1), 1600.0);
+        ratings.insert(TeamId::new(2), 1500.0);
+        ratings.insert(TeamId::new(4), 1550.0);
+        let absences = vec![Absence {
+            team_id: TeamId::new(1),
+            from: d(9),
+            to: d(12),
+            elo: 150.0,
+            player_id: Some(PlayerId::new(1)),
+            se_elo: 0.0,
+        }];
+        let night = tonight(&games, d(10), &ratings, &absences, 60.0).unwrap();
+        assert_eq!((night.date, night.played, night.games.len()), (d(10), 1, 2));
+        let p = |h: f64, a: f64| elo::game_probability(h, a, true, false, 60.0, 1.0);
+        // Game 5: team 4 hosts team 1, who plays 150 down.
+        let g = night.games.iter().find(|g| g.game_id == 5).unwrap();
+        assert_eq!(
+            (
+                g.away_rating,
+                g.away_penalty,
+                g.away_tonight,
+                g.home_penalty
+            ),
+            (1600.0, 150.0, 1450.0, 0.0)
+        );
+        assert!((g.p_home_full - p(1550.0, 1600.0)).abs() < 1e-12);
+        assert!((g.p_home_tonight - p(1550.0, 1450.0)).abs() < 1e-12);
+        // Team 3 has no rating: the league mean stands in, and the game says so.
+        let g = night.games.iter().find(|g| g.game_id == 4).unwrap();
+        assert_eq!(
+            (g.away_rating, g.away_rated, g.home_rated),
+            (elo::SEASON_MEAN, false, true)
+        );
+        // A later date finds the later night; past the last game there is none.
+        let later = tonight(&games, d(11), &ratings, &absences, 60.0).unwrap();
+        assert_eq!((later.date, later.played, later.games.len()), (d(14), 0, 1));
+        assert!(tonight(&games, d(15), &ratings, &absences, 60.0).is_none());
     }
 
     #[test]
