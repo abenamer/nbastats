@@ -1,5 +1,8 @@
 # Bundle update log
 
+## 2026-10-27
+* **Update**: [Player worth](/concepts/player-worth.md) gains the section How long an absence lasts: the return-date placeholder, the survival curve of the absence spells, the games missed so far and the players absent without a report line. The API reference, the [Question box](/concepts/question-box.md) tool table and the terms Absence spell and Survival curve follow.
+
 ## 2026-10-26
 * **New**: [Return from absence](/concepts/return-from-absence.md) defines the return event, the three windows, the brackets and lengths, the control samples and the cells of the report, and says that it changes no forecast. The [Application overview](/concepts/application.md), the API reference and the index follow. The terms Return event and Control sample are defined.
 * **Update**: [Question box](/concepts/question-box.md): the availability and team-games tools say when a Cup-season schedule still lacks its December games; the [NBA Cup forecast](/concepts/nba-cup.md) states the 80-game rule.

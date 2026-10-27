@@ -97,6 +97,8 @@ pub struct App {
     /// The return events and control samples of each season, likewise.
     pub(crate) return_seasons:
         RwLock<HashMap<SeasonYear, Arc<crate::domain::recovery::SeasonReturns>>>,
+    /// The runs of missed games of each season, likewise.
+    pub(crate) spell_runs: RwLock<HashMap<SeasonYear, Arc<crate::domain::spell::SeasonRuns>>>,
     /// Counts the cache invalidations, so a load that began before one is not cached after it.
     pub(crate) cache_generation: AtomicU64,
     teams: RwLock<Option<Arc<HashMap<TeamId, Team>>>>,
@@ -137,6 +139,7 @@ impl App {
             worths: RwLock::new(HashMap::new()),
             box_tables: RwLock::new(HashMap::new()),
             return_seasons: RwLock::new(HashMap::new()),
+            spell_runs: RwLock::new(HashMap::new()),
             cache_generation: AtomicU64::new(0),
             teams: RwLock::new(None),
         }
@@ -276,6 +279,10 @@ impl App {
             .unwrap_or_else(|e| e.into_inner())
             .clear();
         self.return_seasons
+            .write()
+            .unwrap_or_else(|e| e.into_inner())
+            .clear();
+        self.spell_runs
             .write()
             .unwrap_or_else(|e| e.into_inner())
             .clear();

@@ -18,6 +18,7 @@ These are project-specific technical terms. They are not a reproduction of the A
 | --- | --- |
 | Alpha | Strength weight of a franchise in Engine A. The title probability is alpha divided by the sum of all alphas. |
 | Absence | A game of a player's team between his first and last game for it in the season that he did not play. The unit the worth is measured on; also, in a forecast, a rating penalty for a team over a span of dates, with an optional standard error the engine draws from. |
+| Absence spell | A run of a team's games that a regular player did not play, read from the box scores. Its length, given how long it has lasted, is what the survival curve estimates. |
 | Active player | A player the last roster refresh listed on a team. Stored as the `active` flag with the current team; every other player of the source is inactive. |
 | Appearance | One player's box-score line in one stored game: team, seconds played, the counting statistics and plus/minus. Stored in `appearances`, keyed by game and player. |
 | Bargaining period | A run of NBA/BAA seasons under one collective bargaining agreement, from the first season the agreement applied to. The table of periods and their changes is curated in `domain::cba`; see [Rule periods and bargaining periods](/concepts/periods.md). |
@@ -89,6 +90,7 @@ These are project-specific technical terms. They are not a reproduction of the A
 | Residual (game) | The actual margin minus the margin the pre-game ratings expected, at 28 Elo per point (FiveThirtyEight's spread rule for these ratings) with the ratings' home bonus. |
 | Settling window | The last 2 days before today. The daily player sync fetches their box scores again, because a date fetched while a game was on holds partial lines. |
 | Store | The `PostgresStore` adapter, which implements every store port. |
+| Survival curve | The share of absence spells still going after each number of games, fitted on the runs of the five seasons before (Kaplan-Meier, with the runs cut off by a season's end counted for the games they lasted). It gives the expected remaining games of a run of a given length, which prices a report line whose return date is only the next game. |
 | Threshold (K) | The title count that counts as a dynasty in the Alpha Simulator: the results report how often a franchise wins K or more titles. |
 | Team | A team code and era, such as SEA or OKC. Identified by `TeamId`. |
 | Themed era | A curated span of NBA/BAA seasons named for how the game was played or followed (the Reddit NBA era, the three-point dominance era); a season belongs to every theme active in it. |

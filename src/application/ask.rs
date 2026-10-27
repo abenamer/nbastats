@@ -308,7 +308,7 @@ pub fn tool_specs() -> Vec<ToolSpec> {
         },
         ToolSpec {
             name: "team_availability",
-            description: "One team's current Elo rating and the latest injury report priced for it: each listed player with his status, return date, worth and the penalty his absence costs, the total Elo the team plays without today (what it would gain with everyone healthy) and the mean penalty over its remaining games. When the current season has no games yet, ask for the latest season from list_seasons.",
+            description: "One team's current Elo rating and the latest injury report priced for it: each listed player with his status, return date, games missed so far, worth and the penalty his absence costs with the date it runs to and what set that date, plus regular players absent from the team's last games who are not on the report; the total Elo the team plays without today (what it would gain with everyone healthy) and the mean penalty over its remaining games. When the current season has no games yet, ask for the latest season from list_seasons.",
             parameters: json!({ "type": "object", "required": ["team"], "properties": {
                 "team": { "type": "string", "description": "Team code, for example GSW" },
                 "season": season_schema("Season end year (default: the current season)") }, "additionalProperties": false }),
