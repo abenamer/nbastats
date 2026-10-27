@@ -15,6 +15,7 @@ pub mod recompute;
 pub mod recovery;
 pub mod reports;
 pub mod results_sync;
+pub mod rookie;
 pub mod scheduler;
 pub mod state;
 pub mod strength;

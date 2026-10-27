@@ -102,6 +102,9 @@ pub struct App {
     /// The report lines of each season followed through its game logs, likewise.
     pub(crate) status_samples:
         RwLock<HashMap<SeasonYear, Arc<Vec<crate::domain::status::StatusSample>>>>,
+    /// The draft priors for pricing each season, likewise.
+    pub(crate) draft_tables:
+        RwLock<HashMap<SeasonYear, Arc<crate::application::rookie::DraftSummary>>>,
     /// Counts the cache invalidations, so a load that began before one is not cached after it.
     pub(crate) cache_generation: AtomicU64,
     teams: RwLock<Option<Arc<HashMap<TeamId, Team>>>>,
@@ -144,6 +147,7 @@ impl App {
             return_seasons: RwLock::new(HashMap::new()),
             spell_runs: RwLock::new(HashMap::new()),
             status_samples: RwLock::new(HashMap::new()),
+            draft_tables: RwLock::new(HashMap::new()),
             cache_generation: AtomicU64::new(0),
             teams: RwLock::new(None),
         }
@@ -294,6 +298,10 @@ impl App {
             .write()
             .unwrap_or_else(|e| e.into_inner())
             .clear();
+        self.draft_tables
+            .write()
+            .unwrap_or_else(|e| e.into_inner())
+            .clear();
         *self.teams.write().unwrap_or_else(|e| e.into_inner()) = None;
     }
 
@@ -319,6 +327,10 @@ impl App {
             .unwrap_or_else(|e| e.into_inner())
             .clear();
         self.status_samples
+            .write()
+            .unwrap_or_else(|e| e.into_inner())
+            .clear();
+        self.draft_tables
             .write()
             .unwrap_or_else(|e| e.into_inner())
             .clear();

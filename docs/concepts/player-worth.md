@@ -61,6 +61,16 @@ The feed's return date is most often the date of the team's next game, whatever 
 
 The games a player has missed so far are read from the box scores: his run at his team's latest game with lines, plus the games the team played since without lines, which nobody has a line for. The Players page shows them beside each line, and what set each span and each weight.
 
+## Rookies: the draft prior
+
+A player with no stored regular-season line has no worth from either estimate, and a first pick is not nothing. The application measures what a draft slot has been worth, in `domain::rookie` (model `draft-prior-1.0`):
+
+1. Over the six seasons before the one priced, every rookie (drafted the year before his first season) gives one sample: his box worth in that season, weighted over his stints by minutes.
+2. The rookies are pooled by draft bracket: the first pick, picks 2 to 5, picks 6 to 14, the rest of the first round, the second round and later, undrafted. A bracket with at least 10 rookies gets a prior: the mean of their first-season box worth, the error of that mean (the spread over the square root of the count) and the spread itself. The first pick gives one rookie a season at most, so picks 2 to 5 stand in for it when it has too few, picks 6 to 14 for those, and the rest of the first round for those; the second round and the undrafted have no stand-in. Nothing is fitted per player.
+3. A rookie on the report (drafted the year before and not seen in a stored season before this one, or undrafted and not seen before) is priced by the prior when he has no estimate: the mean, with the error of the mean as his error. Once he has a box worth this season, it is pulled toward him by his minutes over his stints: at 500 minutes the prior and his own worth weigh the same, and the error shrinks in step. A rookie with a worth from the missed games keeps it. A prior within one error of zero prices nothing, as a worth from the missed games does: the box worth stands when he has one. A rookie whose bracket has no prior and no stand-in keeps his box worth or stays without an estimate.
+
+The Players page lists the priors in the panel "What a draft slot has been worth as a rookie", with the spread beside the error, and a rookie's line names the bracket that priced him. The measured figures are the means, their errors and the spreads. The choices are the bracket edges, the minimum of 10, the six-season window, the minutes weighting over stints, the stand-in order and the 500 minutes at which the prior and the player weigh the same.
+
 ## What a status has meant
 
 A status is a word from the feed. "Day-to-day" on the first morning of a sprain and "day-to-day" ten games into a fracture are the same word and different facts, and the default weights priced both at half the worth for three days. The application therefore measures the statuses on its own data, in `domain::status` (model `status-curve-1.0`):
@@ -92,6 +102,7 @@ With **Draw each worth from its uncertainty** ticked, every simulated season dra
 * The report is a snapshot, and its return date is a placeholder more often than an estimate. The expected remaining games correct the typical case; a particular player returns earlier or later than the curve says, and the forecast does not yet draw that length from the curve as it draws the worth from its error.
 * An absent regular player is priced whatever the reason: a suspension, a rest or a coach's decision look like an injury. The team plays without him either way.
 * The curves are read over each line's team, whether or not the player has played for it yet, so a player who joins or leaves the team mid-season is counted for the team the report names. A report fetched after the day's game reads that game as the next one, where the pricing takes the next unplayed game. The in-run curve pools runs of one game and more; a player in a spell of three or more takes the survival curve's span and the in-run curve's weight.
+* The draft prior is what rookies of a slot have been worth on average; it says nothing about the player himself until his minutes do, and its error is the error of that average, not the range of the rookies, which runs far wider. The first pick's own sample is almost always too small, so a first pick is priced as a top-five pick.
 * The status curves rest on the reports stored since the feed was connected, so they fill in over time and the first seasons lean on few lines. A player who leaves his team (traded, waived) reads as missing every game that follows, which runs the long end of a curve high; the thirty-game horizon bounds it. A status whose meaning drifts from season to season is averaged over the seasons pooled.
 * Only the simulated regular-season games take the penalty. The play-in and the playoffs run at the full ratings. A player out for the season still counts for his team in April.
 * Nothing here changes a rating. A later change may use the worth in the ratings themselves.

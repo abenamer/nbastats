@@ -34,6 +34,7 @@ These are project-specific technical terms. They are not a reproduction of the A
 | Current season | The season the daily sync targets: ends next year from September to December, ends this year from January to August. |
 | Decade | Ten seasons grouped by the start year of the season: 1959-60 belongs to the 1950s. |
 | Dimension | A way to label seasons on the Records page: bargaining period, rule period, league size, league, decade, competition format, dynasty era, player era or themed era. A facet picks one label; a group query combines dimensions. |
+| Draft prior | What a draft slot's rookies have been worth in their first season, pooled over the six seasons before: the mean box worth, the error of that mean and the spread per bracket (first pick, picks 2 to 5, 6 to 14, the rest of the first round, the second round, undrafted; a wider bracket stands in for a short one), which prices a rookie's report line until his minutes let his own box worth take over. |
 | Dynasty era | A franchise's run of titles, at least a given number with no gap longer than a given number of seasons, from its first title to its last; computed from the champions. |
 | Elo | A rating that gives game probabilities from the rating difference. |
 | Elo continuation | The computation of every rating by the application, season after season from the first season in the store. |

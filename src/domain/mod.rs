@@ -15,6 +15,7 @@ pub mod playoffs;
 pub mod records;
 pub mod recovery;
 pub mod reference;
+pub mod rookie;
 pub mod simulation;
 pub mod spell;
 pub mod status;

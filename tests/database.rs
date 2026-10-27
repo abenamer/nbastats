@@ -10,7 +10,7 @@ use nba_elo_simulator::application::ports::{
     AnalysisStore, FetchProgress, FetchProgressSink, FetchWindow, GameLog, GameStore, ImportLog,
     JobOutcome, JobStore, NewJob, ResultRecord, ResultsFetch, ResultsSource, SourceError,
 };
-use nba_elo_simulator::domain::ids::{SeasonYear, TeamId};
+use nba_elo_simulator::domain::ids::{PlayerId, SeasonYear, TeamId};
 use nba_elo_simulator::domain::models::{
     Conference, GameType, ImportStatus, JobKind, JobStatus, PlayoffResult, Team,
 };
@@ -1925,6 +1925,13 @@ mod players {
         // and a null stays null.
         let full = store.season_box_lines(S2016).await.unwrap();
         assert_eq!(full.len(), games.len());
+        // The first season with a line, per player; a player without one is absent.
+        let first = store
+            .first_appearance_seasons(&[full[0].player_id, PlayerId::new(424_242)])
+            .await
+            .unwrap();
+        assert_eq!(first.get(&full[0].player_id), Some(&S2016));
+        assert_eq!(first.len(), 1);
         let played_line = full.iter().find(|l| l.seconds == Some(2100)).unwrap();
         assert_eq!(
             (

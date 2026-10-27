@@ -10,6 +10,7 @@ use serde::Serialize;
 
 use crate::domain::bpm::BoxTable;
 use crate::domain::ids::{PlayerId, SeasonYear, TeamId};
+use crate::domain::rookie::{self, DraftBracket};
 use crate::domain::spell::{self, SeasonRuns, Survival};
 use crate::domain::status::{self, StatusSample, StatusTable};
 use crate::domain::worth::{
@@ -19,6 +20,7 @@ use crate::domain::worth::{
 
 use super::boxscore;
 use super::ports::{GameLog, Player, PlayerStore, StoreError};
+use super::rookie::{self as app_rookie, DraftSummary};
 use super::state::{App, SeasonLoadError};
 use crate::domain::models::{Game, GameType};
 
@@ -73,6 +75,9 @@ pub struct CurrentAbsence {
     pub lines_through: Option<NaiveDate>,
     /// On the injury report; false for a player read from the box scores alone.
     pub listed: bool,
+    /// The bracket of the draft prior, when one priced the line (`worth_source` draft):
+    /// the rookie's own bracket, or the wider one standing in for it.
+    pub draft_bracket: Option<DraftBracket>,
 }
 
 /// The survival curve the spans lean on, for the reader.
@@ -134,6 +139,9 @@ pub struct Availability {
     /// None when no stored report line could be followed through the game logs. A status
     /// without a curve keeps its default weight and span.
     pub statuses: Option<StatusSummary>,
+    /// The draft priors the rookies' lines lean on; a rookie in a bracket without one (or a
+    /// stand-in) keeps his box worth or stays without an estimate.
+    pub draft: Option<DraftSummary>,
     /// Lines added from the box scores: regular players in a run not on the report.
     pub unlisted: u32,
     /// Why nothing is priced, when nothing is.
@@ -434,6 +442,10 @@ pub enum WorthSource {
     Worth,
     /// Box Plus/Minus over replacement, per game played; it has no standard error.
     Box,
+    /// A rookie's draft prior: what his draft slot's rookies have been worth, pulled
+    /// toward his own box worth by his minutes; the error is the bracket's spread, shrunk
+    /// the same way.
+    Draft,
 }
 
 /// The box-score estimate for a player among the tables given (latest season first): the
@@ -516,6 +528,7 @@ pub async fn availability(app: &App, season: SeasonYear) -> Result<Availability,
         absences: vec![],
         survival: None,
         statuses: None,
+        draft: None,
         unlisted: 0,
         note,
     };
@@ -579,6 +592,70 @@ pub async fn availability(app: &App, season: SeasonYear) -> Result<Availability,
         }
     }
     let measured = status_table(app, season).await?;
+    let draft = app_rookie::draft_table(app, season).await?;
+    // The listed players, for the draft of each: a rookie is priced by his draft slot
+    // until his minutes say otherwise.
+    let listed_ids: Vec<PlayerId> = report.iter().map(|l| l.player_id).collect();
+    let listed_players: HashMap<PlayerId, Player> = if listed_ids.is_empty() {
+        HashMap::new()
+    } else {
+        app.store
+            .players_by_id(&listed_ids)
+            .await?
+            .into_iter()
+            .map(|p| (p.id, p))
+            .collect()
+    };
+    // The first season each listed player has a line in: seen before this one, he is no
+    // rookie whatever the draft fields say.
+    let first_seasons = app.store.first_appearance_seasons(&listed_ids).await?;
+    // A player's box worth and minutes this season, over his stints.
+    let this_season = |player: PlayerId| -> Option<(f64, f64)> {
+        box_tables
+            .iter()
+            .find(|(s, _)| *s == season)
+            .and_then(|(_, t)| app_rookie::season_box(t, player))
+    };
+    // The estimate a line is priced with, and the bracket of the prior when one priced it.
+    let estimate = |player_id: PlayerId, player: Option<&Player>| {
+        let found = choose_estimate(
+            pick_estimate(&tables, player_id),
+            pick_box_estimate(&box_tables, player_id),
+        );
+        let Some(p) = player else {
+            return (found, None);
+        };
+        let seen_before = first_seasons.get(&player_id).is_some_and(|s| *s < season);
+        let rookie =
+            !seen_before && (p.draft_year == Some(i32::from(season) - 1) || p.draft_year.is_none());
+        if !rookie {
+            return (found, None);
+        }
+        let Some(prior) = draft.prior_for(DraftBracket::of(p.draft_round, p.draft_number)) else {
+            return (found, None);
+        };
+        match found {
+            Some(e) if e.source == WorthSource::Worth => (Some(e), None),
+            other => {
+                let own = other.and_then(|_| this_season(player_id));
+                let (elo, se_elo) = rookie::shrink(prior, own);
+                // Within one error of zero, the prior says nothing: the box worth stands,
+                // or nothing does, as for a worth from the missed games.
+                if elo.abs() < se_elo {
+                    return (other, None);
+                }
+                (
+                    Some(Estimate {
+                        elo,
+                        se_elo,
+                        season,
+                        source: WorthSource::Draft,
+                    }),
+                    Some(prior.bracket),
+                )
+            }
+        }
+    };
     let rule = Some(SpanRule {
         survival: fitted.as_ref().map(|(s, _)| s),
         statuses: measured.as_ref().map(|(t, _)| t),
@@ -594,16 +671,14 @@ pub async fn availability(app: &App, season: SeasonYear) -> Result<Availability,
                      status: AbsenceStatus,
                      status_text: String,
                      return_date: Option<NaiveDate>,
-                     is_listed: bool| {
+                     is_listed: bool,
+                     player: Option<&Player>| {
         let missed_so_far = lines_through.get(&team_id).map(|_| {
             in_progress
                 .get(&(team_id, player_id))
                 .map_or(0, |c| c.missed + since_lines(team_id))
         });
-        let found = choose_estimate(
-            pick_estimate(&tables, player_id),
-            pick_box_estimate(&box_tables, player_id),
-        );
+        let (found, draft_bracket) = estimate(player_id, player);
         let entry = found.map(|e| ReportedAbsence {
             player_id,
             team_id,
@@ -648,6 +723,7 @@ pub async fn availability(app: &App, season: SeasonYear) -> Result<Availability,
             missed_so_far,
             lines_through: lines_through.get(&team_id).copied(),
             listed: is_listed,
+            draft_bracket,
         });
         if let Some(r) = entry {
             reported.push(r);
@@ -668,6 +744,7 @@ pub async fn availability(app: &App, season: SeasonYear) -> Result<Availability,
             l.status.clone(),
             l.return_date,
             true,
+            listed_players.get(&l.player_id),
         );
     }
     // Regular players in a run not on the report: out, whatever the reason.
@@ -724,6 +801,7 @@ pub async fn availability(app: &App, season: SeasonYear) -> Result<Availability,
                 ),
                 None,
                 false,
+                player,
             );
         }
     }
@@ -772,6 +850,7 @@ pub async fn availability(app: &App, season: SeasonYear) -> Result<Availability,
         absences,
         survival,
         statuses,
+        draft: Some((*draft).clone()),
         unlisted,
         note: None,
     })

@@ -70,12 +70,27 @@
         { label: 'Player', value: 'name', left: true }, { label: 'Team', value: 'team_code', left: true }, { label: 'Status', value: 'status_text', left: true },
         { label: 'Return', value: l => l.return_date || '', left: true },
         { label: 'Missed', value: 'missed_so_far', title: 'Team games missed in a row up to the latest game with box scores' },
-        { label: 'Worth (Elo)', value: l => l.worth_elo == null ? 'no estimate' : `${signed(l.worth_elo, 0)}${l.se_elo ? ` ± ${num(l.se_elo, 0)}` : ''} (${labelOf(l.worth_season)}, ${l.worth_source === 'box' ? 'box score' : 'missed games'})`, left: true, title: 'The estimate the line is priced with: the worth from the missed games with its error, or the box-score worth when the first is missing or within one error of zero' },
+        { label: 'Worth (Elo)', value: l => l.worth_elo == null ? 'no estimate' : `${signed(l.worth_elo, 0)}${l.se_elo ? ` ± ${num(l.se_elo, 0)}` : ''} (${labelOf(l.worth_season)}, ${l.worth_source === 'box' ? 'box score' : l.worth_source === 'draft' ? `draft prior, ${bracketNames[l.draft_bracket] || l.draft_bracket}` : 'missed games'})`, left: true, title: 'The estimate the line is priced with: the worth from the missed games with its error, the box-score worth when the first is missing or within one error of zero, or for a rookie the draft prior pulled toward his box worth by his minutes' },
         { label: 'Weight', value: l => l.weight == null ? '' : `${num(100 * l.weight, 0)}% (${l.weight_source === 'measured' ? 'measured' : 'default'})`, left: true, title: 'The share of the worth taken off: the measured chance that a line of this status, in this state, misses the next game, or the status default' },
         { label: 'Penalty', value: l => l.penalty_elo == null ? '' : `${num(l.penalty_elo, 0)} to ${l.until} (${{ return_date: 'return date', expected: 'expected run', measured: 'status curve', status: 'status default', season: 'season' }[l.span] || l.span})`, left: true, cls: l => l.penalty_elo ? 'bad' : '', title: 'The penalty and the last date it applies, with what set that date' }], lines) : '';
       renderStatuses(a.statuses);
+      renderDraft(a.draft);
       setStatus(status, '');
     } catch (e) { setStatus(status, e.message, true); rows = []; boxRows = []; boxByPlayer = new Map(); renderWorth(); renderBox(null); }
+  }
+  // What a draft slot has been worth as a rookie: the prior behind a rookie's line.
+  const bracketNames = { first_pick: 'first pick', top5: 'picks 2 to 5', lottery: 'picks 6 to 14', first_round: 'picks 15 and later, first round', second_round: 'second round', undrafted: 'undrafted' };
+  function renderDraft(d) {
+    document.getElementById('draftNote').textContent = !d
+      ? 'Nothing is priced, so no draft prior is shown.'
+      : !d.seasons.length
+      ? 'No draft priors: no box scores for the seasons before this one.'
+      : `${d.players.toLocaleString()} rookies of ${d.seasons.map(labelOf).join(', ')}: each one's box worth in his first season, over his stints, pooled by where he was drafted. A bracket needs ${d.min_players} rookies for a prior; the first pick rarely has them, so picks 2 to 5 stand in, and so on through the first round. A rookie with no line yet is priced at his bracket's mean with the error of that mean; as his minutes grow his own box worth takes over, the two weighing the same at ${d.prior_minutes} minutes. The spread is how far the bracket's rookies have ranged, not the error. A mean within one error of zero prices nothing.`;
+    document.getElementById('draft').innerHTML = d && d.priors.length ? table([
+      { label: 'Drafted', value: p => bracketNames[p.bracket] || p.bracket, left: true },
+      { label: 'Rookies', value: 'players', title: 'First seasons pooled' },
+      { label: 'Worth (Elo)', value: p => `${signed(p.mean_elo, 0)} ± ${num(p.se_elo, 0)}`, left: true, title: 'The mean first-season box worth and the error of that mean' },
+      { label: 'Spread', value: p => num(p.sd_elo, 0), title: 'The standard deviation across the bracket\'s rookies' }], d.priors) : '';
   }
   // What a status has meant: the measured weight and span behind each status.
   const statusNames = { out: 'Out', out_for_season: 'Out for season', absent: 'Absent', doubtful: 'Doubtful', questionable: 'Questionable', day_to_day: 'Day-to-day', probable: 'Probable', available: 'Available', unknown: 'Unknown' };
