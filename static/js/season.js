@@ -1,5 +1,5 @@
 (async () => {
-  const { pct, num, esc, runJob, table, setStatus, chart, RESULT, getJSON, labelOf, bracketHtml } = NBA;
+  const { pct, num, esc, runJob, table, setStatus, chart, RESULT, getJSON, labelOf, bracketHtml, knockoutHtml } = NBA;
   // A probability cell shaded by its value; the text stays readable on every shade.
   const shade = p => p == null ? '' : `<span class="heat" style="background:rgba(37,99,235,${(0.08 + 0.72 * p).toFixed(2)});color:${p > 0.5 ? '#fff' : 'inherit'}">${pct(p, 0)}</span>`;
   const heatmap = (teams, pick, n, head) => {
@@ -25,9 +25,7 @@
     if (!pb) { document.getElementById('cupBracket').innerHTML = '<p class="muted small">No simulated season formed a knockout.</p>'; document.getElementById('cupBracketNote').textContent = ''; return; }
     const times = c => c === 0 ? 'in none' : c === 1 ? 'in 1' : `in ${c.toLocaleString()}`;
     document.getElementById('cupBracketNote').textContent = `Each seed in turn to the team that held it most often among the teams not yet placed; the chances are exact at the cutoff date's ratings. This exact bracket occurred ${times(pb.exact_count)} of the ${pb.sampled.toLocaleString()} simulated seasons counted, these eight teams in any seeding ${times(pb.field_count)}, and the most frequent bracket of all ${times(pb.most_common_count)}.`;
-    const slot = (s, i) => `<div class="t"><span>${s.seed} ${esc(s.code)}</span><span>${num(s.elo, 0)} · ${pct(pb.exact[i][2], 1)}</span></div>`;
-    const conf = (ci, name) => `<div class="conf"><h4>${name}</h4>` + pb.quarterfinals.filter(q => Math.floor(q.slot_a / 4) === ci).map(q => `<div class="series">${slot(pb.slots[q.slot_a], q.slot_a)}${slot(pb.slots[q.slot_b], q.slot_b)}<div class="round">${esc(pb.slots[q.slot_a].code)} wins quarterfinal ${pct(q.p_a)}</div></div>`).join('') + '</div>';
-    document.getElementById('cupBracket').innerHTML = conf(0, 'East') + conf(1, 'West');
+    document.getElementById('cupBracket').innerHTML = knockoutHtml({ slots: pb.slots, rounds: 3, exact: pb.exact, actual: [], firstRound: pb.quarterfinals, champion: 'Cup winner', seriesWord: 'quarterfinal', finalWord: 'Final' });
   }
   function renderProjected(r) {
     const pb = r.projected_bracket;

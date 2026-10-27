@@ -66,13 +66,53 @@ td.good { color:var(--good); font-weight:600; } td.warn { color:var(--warn); } t
 .alpha-editor { display:grid; grid-template-columns:repeat(auto-fill, minmax(150px, 1fr)); gap:.3rem; max-height:320px; overflow:auto; border:1px solid var(--line); border-radius:6px; padding:.4rem; }
 .alpha-editor label { display:flex; justify-content:space-between; gap:.3rem; font-size:.8rem; align-items:center; }
 .alpha-editor input { width:4.5rem; min-width:0; }
-.bracket { display:grid; grid-template-columns:repeat(2, 1fr); gap:1rem; }
-.conf { display:grid; grid-template-columns:repeat(4, 1fr); gap:.4rem; }
-.conf h4 { grid-column:1 / -1; margin:.2rem 0; font-size:.9rem; color:var(--muted); }
-.series { border:1px solid var(--line); border-radius:6px; padding:.3rem .4rem; font-size:.78rem; background:#fafafa; }
-.series .t { display:flex; justify-content:space-between; gap:.3rem; }
-.series .w { font-weight:700; }
-.series .round { color:var(--muted); font-size:.7rem; }
+/* The full bracket: East on the left, the final in the middle, West mirrored on the right.
+   Each column spreads its boxes evenly and each box sits centred in its own half of a pair,
+   so a pair's two boxes are at a quarter and three quarters of its height whatever their
+   heights, which the connector lines rely on. */
+.bracket { --bk-gap:1rem; --bk-foot:3rem; display:grid; grid-template-columns:3fr 1.2fr 3fr; gap:var(--bk-gap); }
+.bk-conf { display:grid; grid-template-rows:auto 1fr; column-gap:var(--bk-gap); position:relative; padding-bottom:var(--bk-foot); min-width:0; }
+.bk-conf.west { direction:rtl; }
+.bk-conf.west .bk-match, .bk-conf.west h4 { direction:ltr; }
+.bk-conf.final { grid-template-columns:1fr; }
+.bk-conf h4 { grid-column:1 / -1; margin:.2rem 0; font-size:.9rem; color:var(--muted); text-align:center; }
+.bk-col { display:flex; flex-direction:column; justify-content:space-around; min-height:100%; min-width:0; }
+.bk-pair { display:flex; flex-direction:column; flex:1; position:relative; min-width:0; }
+.bk-slot { flex:1; display:flex; flex-direction:column; justify-content:center; min-width:0; }
+.bk-match { position:relative; border:1px solid var(--line); border-radius:6px; padding:.25rem .35rem; font-size:.72rem; background:#fafafa; margin:.25rem 0; min-width:0; }
+.bk-match .t { display:flex; justify-content:space-between; gap:.3rem; min-width:0; }
+.bk-match .t span { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.bk-match .t span + span { color:var(--muted); flex:none; }
+.bk-match .w span + span, .bk-match .proj span + span { color:inherit; }
+.bk-match .w { font-weight:700; }
+.bk-match .proj { color:#1d4ed8; }
+.bk-match .proj em { font-style:normal; font-size:.65rem; color:var(--muted); }
+.bk-match .tbd { color:var(--muted); font-style:italic; }
+.bk-match .round { color:var(--muted); font-size:.7rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+/* Connectors: a stub from each box to the pair's vertical line, the line from the first box's
+   centre to the second's, and a stub from the line's middle on to the next column. The West is
+   mirrored by the writing direction, so its stubs point left. */
+.bk-pair .bk-match::after { content:""; position:absolute; top:50%; right:calc(var(--bk-gap) / -2 - 1px); width:calc(var(--bk-gap) / 2); border-top:1px solid var(--line); }
+.bk-pair::before { content:""; position:absolute; top:25%; bottom:25%; right:calc(var(--bk-gap) / -2); border-right:1px solid var(--line); }
+.bk-pair::after { content:""; position:absolute; top:50%; right:calc(var(--bk-gap) * -1); width:calc(var(--bk-gap) / 2); border-top:1px solid var(--line); }
+.bk-conf.west .bk-pair .bk-match::after { right:auto; left:calc(var(--bk-gap) / -2 - 1px); }
+.bk-conf.west .bk-pair::before { right:auto; left:calc(var(--bk-gap) / -2); }
+.bk-conf.west .bk-pair::after { right:auto; left:calc(var(--bk-gap) * -1); }
+/* The last conference round joins the final across the gap. */
+.bk-conf.east .bk-col:last-child .bk-match::after { content:""; position:absolute; top:50%; right:calc(var(--bk-gap) * -1 - 1px); width:var(--bk-gap); border-top:1px solid var(--line); }
+.bk-conf.west .bk-col:last-child .bk-match::before { content:""; position:absolute; top:50%; left:calc(var(--bk-gap) * -1 - 1px); width:var(--bk-gap); border-top:1px solid var(--line); }
+/* The champion box sits in the foot below the final, outside the row the lines are centred on. */
+.bk-champ { position:absolute; left:0; right:0; bottom:0; text-align:center; font-weight:700; font-size:.85rem; padding:.4rem; border:1px solid var(--line); border-radius:6px; background:#fafafa; }
+.bk-champ.projected { color:#1d4ed8; }
+@media (max-width: 1150px) {
+  .bracket { grid-template-columns:1fr; }
+  .bk-conf.west { direction:ltr; }
+  .bk-conf.west .bk-pair .bk-match::after { left:auto; right:calc(var(--bk-gap) / -2 - 1px); }
+  .bk-conf.west .bk-pair::before { left:auto; right:calc(var(--bk-gap) / -2); }
+  .bk-conf.west .bk-pair::after { left:auto; right:calc(var(--bk-gap) * -1); }
+  .bk-conf.east .bk-col:last-child .bk-match::after, .bk-conf.west .bk-col:last-child .bk-match::before { display:none; }
+  .bk-conf.east, .bk-conf.west { padding-bottom:0; }
+}
 .heat { display:inline-block; min-width:2.6em; padding:.05rem .25rem; border-radius:3px; text-align:right; }
 pre { background:#f8fafc; border:1px solid var(--line); border-radius:6px; padding:.6rem; overflow:auto; max-height:260px; }
 .status-queued { color:var(--muted); } .status-running { color:var(--accent); } .status-completed { color:var(--good); }

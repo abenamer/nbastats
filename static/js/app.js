@@ -114,20 +114,86 @@ window.NBA = (() => {
     // One retry for the dates still to be looked up, a few times at most.
     if (pending.length && attempt < 4) setTimeout(() => attachReports(container, pending, attempt + 1), 2500);
   }
-  // A sixteen-slot bracket as HTML: East then West, slots paired into first-round series.
-  // `exact` gives each slot's title chance; `series` ({slot_a, slot_b, p_a}) the first-round
-  // probabilities of a projected bracket; a played series shows its actual result instead.
-  function bracketHtml(b, exact, series) {
-    const slots = b.teams, byPos = [[0, 1], [2, 3], [4, 5], [6, 7]];
-    const conf = (ci, name) => `<div class="conf"><h4>${name}</h4>` + byPos.map(([p, q]) => {
-      const sa = ci * 8 + p, sb = ci * 8 + q, a = slots[sa], c = slots[sb];
-      const s = (b.actual_series || []).find(x => (x.slot_a === sa && x.slot_b === sb) || (x.slot_b === sa && x.slot_a === sb));
-      const f = (series || []).find(x => x.slot_a === sa && x.slot_b === sb);
-      const w = (t, slot) => `<div class="t ${s && s.winner_slot === slot ? 'w' : ''}"><span>${t.seed} ${esc(t.code)} (${t.wins}-${t.losses})</span><span>${num(t.elo, 0)}${exact ? ' · ' + pct(exact[slot][3]) : ''}</span></div>`;
-      const line = s ? `actual ${s.wins_a}-${s.wins_b}` : f ? `${esc(a.code)} wins series ${pct(f.p_a)}` : 'not played';
-      return `<div class="series">${w(a, sa)}${w(c, sb)}<div class="round">${line}</div></div>`;
-    }).join('') + '</div>';
-    return conf(0, 'East') + conf(1, 'West');
+  // A knockout drawn NBA.com style: each conference's rounds converging on the final in the
+  // middle, with connector lines, the second conference mirrored. The slots pair up by blocks:
+  // round r (from 1) pairs the blocks of 2^r slots, so the playoff bracket (16 slots, four
+  // rounds, seeds 1, 8, 4, 5, 2, 7, 3, 6) and the Cup knockout (8 slots, three rounds) share
+  // the drawing. `exact[slot][r]` is the chance of winning round r (from 0) from the start,
+  // the stage columns of the probability tables. A played series fills its winner; an
+  // unplayed one shows the team more likely to have won the round before, marked projected.
+  // `firstRound` (optional) carries exact first-round chances by pair {slot_a, slot_b, p_a}.
+  // An occupant carries the deepest round it has actually won (`from`, -1 for none), so its
+  // chances are read from there: the rounds already won are facts, not odds.
+  function knockoutHtml({ slots, rounds, exact, actual, firstRound, champion, seriesWord, finalWord }) {
+    actual = actual || []; champion = esc(champion); seriesWord = esc(seriesWord); finalWord = esc(finalWord || 'Final');
+    const roundOf = (a, c) => { let r = 1; while ((a >> r) !== (c >> r)) r++; return r; };
+    // The played series of the block of 2^r slots starting at `start`, if any.
+    const seriesIn = (start, r) => actual.find(x => x.slot_a >= start && x.slot_a < start + (1 << r) && x.slot_b >= start && x.slot_b < start + (1 << r) && roundOf(x.slot_a, x.slot_b) === r);
+    // A team's chance of winning round r: from the start, or from here once it has won its way in.
+    const chance = (o, r) => {
+      if (!exact) return null;
+      const p = exact[o.slot][r];
+      return o.from >= 0 && exact[o.slot][o.from] > 0 ? p / exact[o.slot][o.from] : p;
+    };
+    // The team a recorded series of round r names in the half starting at `start`: won its way in.
+    const participant = (s, start, r) => {
+      const slot = s.slot_a >= start && s.slot_a < start + (1 << (r - 1)) ? s.slot_a : s.slot_b;
+      return r === 1 ? { slot, how: 'seeded', from: -1 } : { slot, how: 'won', from: r - 2 };
+    };
+    // The occupant of a block of 2^r slots after round r: {slot, how: 'seeded'|'won'|'projected', from}, or null.
+    const occupant = (start, r) => {
+      if (r === 0) return { slot: start, how: 'seeded', from: -1 };
+      const s = seriesIn(start, r);
+      if (s) return s.winner_slot != null ? { slot: s.winner_slot, how: 'won', from: r - 1 } : null; // decided, or in progress
+      const half = 1 << (r - 1), a = occupant(start, r - 1), c = occupant(start + half, r - 1);
+      if (!a || !c || !exact) return null;
+      const pick = chance(a, r - 1) >= chance(c, r - 1) ? a : c;
+      return { slot: pick.slot, how: 'projected', from: pick.from };
+    };
+    const teamRow = (o, r, s) => {
+      if (!o) return '<div class="t tbd"><span>to be decided</span><span></span></div>';
+      const t = slots[o.slot], won = s && s.winner_slot === o.slot, p = chance(o, r);
+      const why = o.how === 'projected' ? 'Projected: the likelier team to have won the round before' : o.how === 'won' ? 'Won the round before' : 'Seeded';
+      const odds = p == null ? '' : o.from >= 0 ? `; ${pct(p)} to win this round from where it stands` : `; ${pct(p)} to win this round, from the start`;
+      const record = t.wins != null && o.how === 'seeded' ? ` (${t.wins}-${t.losses})` : ''; // the record once, where the team is seeded
+      return `<div class="t ${won ? 'w' : ''} ${o.how === 'projected' ? 'proj' : ''}" title="${why}${odds}"><span>${t.seed} ${esc(t.code)}${record}${o.how === 'projected' ? ' <em>proj.</em>' : ''}</span><span>${num(t.elo, 0)}${p == null ? '' : ' · ' + pct(p)}</span></div>`;
+    };
+    // One series box: the occupants of the two halves of a block of 2^(r+1) slots, and the line under them.
+    const match = (start, r) => {
+      const half = 1 << r, s = seriesIn(start, r + 1);
+      // A recorded series names its two teams; without one, each half's occupant.
+      const a = s ? participant(s, start, r + 1) : occupant(start, r), c = s ? participant(s, start + half, r + 1) : occupant(start + half, r);
+      const f = r === 0 && firstRound ? firstRound.find(x => x.slot_a === start && x.slot_b === start + half) : null;
+      let line;
+      if (s && s.winner_slot != null) line = `${esc(slots[s.winner_slot].code)} won ${s.winner_slot === s.slot_a ? `${s.wins_a}-${s.wins_b}` : `${s.wins_b}-${s.wins_a}`}`;
+      else if (s && a && c) { const top = s.slot_a === a.slot ? s.wins_a : s.wins_b, bot = s.slot_a === a.slot ? s.wins_b : s.wins_a; line = top === bot ? `tied ${top}-${bot}` : `${esc(slots[top > bot ? a.slot : c.slot].code)} leads ${Math.max(top, bot)}-${Math.min(top, bot)}`; }
+      else if (f && a && c) line = `${esc(slots[a.slot].code)} wins ${seriesWord} ${pct(f.p_a)}`;
+      else if (a && c) line = a.how === 'projected' || c.how === 'projected' ? 'projected pairing' : 'not played';
+      else line = 'to be decided';
+      return `<div class="bk-slot"><div class="bk-match">${teamRow(a, r, s)}${teamRow(c, r, s)}<div class="round">${line}</div></div></div>`;
+    };
+    const pair = (start, r) => `<div class="bk-pair">${match(start, r)}${match(start + (2 << r), r)}</div>`;
+    const confRounds = rounds - 1, confSize = slots.length / 2;
+    const conf = (base, name, side) => {
+      let cols = '';
+      for (let r = 0; r < confRounds; r++) {
+        const blocks = confSize >> (r + 1); // matches in this round's column
+        const boxes = blocks >= 2 ? Array.from({ length: blocks / 2 }, (_, i) => pair(base + i * (4 << r), r)).join('') : match(base, r);
+        cols += `<div class="bk-col r${r + 1}">${boxes}</div>`;
+      }
+      return `<div class="bk-conf ${side}" style="grid-template-columns:repeat(${confRounds}, 1fr)"><h4>${esc(name)}</h4>${cols}</div>`;
+    };
+    const champ = occupant(0, rounds), finalists = [occupant(0, rounds - 1), occupant(confSize, rounds - 1)];
+    const titleChance = champ ? chance(champ, rounds - 1) : null;
+    const title = titleChance == null ? '' : ` ${pct(titleChance, 1)}`;
+    const titleWhy = titleChance == null ? '' : champ.how === 'won' ? `title chance from the start of the playoffs; the title is won` : champ.from >= 0 ? 'title chance from where it stands' : 'title chance from the start';
+    const final = `<div class="bk-conf final"><h4>${finalWord}</h4><div class="bk-col r${rounds}">${match(0, rounds - 1)}</div>` +
+      `<div class="bk-champ ${champ ? champ.how : ''}" title="${titleWhy}">${champ ? `${esc(slots[champ.slot].code)}${champ.how === 'won' ? '' : title} · ${champ.how === 'projected' ? `projected ${champion}` : champion}` : finalists.every(Boolean) ? `${champion} to be decided` : `${finalWord.toLowerCase()} to be decided`}</div></div>`;
+    return conf(0, 'East', 'east') + final + conf(confSize, 'West', 'west');
   }
-  return { pct, num, esc, labelOf, RESULT, getJSON, postJSON, runJob, table, bar, cards, setStatus, chart, color, dayOf, dateOf, dateScale, unplayedShade, scoreCell, attachReports, bracketHtml };
+  // The playoff bracket of the Playoff Simulator and the Season Forecast.
+  function bracketHtml(b, exact, series) {
+    return knockoutHtml({ slots: b.teams, rounds: 4, exact, actual: b.actual_series, firstRound: series, champion: 'champion', seriesWord: 'series', finalWord: 'Finals' });
+  }
+  return { pct, num, esc, labelOf, RESULT, getJSON, postJSON, runJob, table, bar, cards, setStatus, chart, color, dayOf, dateOf, dateScale, unplayedShade, scoreCell, attachReports, bracketHtml, knockoutHtml };
 })();
