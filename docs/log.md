@@ -1,6 +1,8 @@
 # Bundle update log
 
 ## 2026-10-27
+* **Update**: [Season forecast engine](/concepts/season-engine.md) gains the Tonight panel in the Availability section. The API reference and the term Rating tonight follow.
+* **Update**: [Season forecast engine](/concepts/season-engine.md) gains the injury card in the Availability section: the per-line arithmetic, the first-order wins lost and the two totals. The API reference and the term Injury card follow.
 * **Update**: [Player worth](/concepts/player-worth.md) gains the section What a status has meant: the status curves measured from the stored reports and the box scores, the two states, the measured weight and span and the 50-line minimum; the table of defaults is named as such and the span rules take the measured span. The API reference, the [Question box](/concepts/question-box.md) tool table and the term Status curve follow.
 * **Update**: [Season forecast engine](/concepts/season-engine.md) gains the held run in the Availability section; the API reference, the [Question box](/concepts/question-box.md) tool table and example, and the term Held forecast follow.
 * **Update**: [Player worth](/concepts/player-worth.md) gains the section How long an absence lasts: the return-date placeholder, the survival curve of the absence spells, the games missed so far and the players absent without a report line. The API reference, the [Question box](/concepts/question-box.md) tool table and the terms Absence spell and Survival curve follow.

@@ -13,14 +13,14 @@ use crate::domain::ids::{PlayerId, SeasonYear, TeamId};
 use crate::domain::spell::{self, SeasonRuns, Survival};
 use crate::domain::status::{self, StatusSample, StatusTable};
 use crate::domain::worth::{
-    self, Absence, AbsenceStatus, PlayerWorth, ReportedAbsence, SpanRule, SpanSource, WeightSource,
-    WorthParams, WorthTable,
+    self, Absence, AbsenceEffect, AbsenceStatus, NightGame, PlayerWorth, ReportedAbsence, SpanRule,
+    SpanSource, WeightSource, WorthParams, WorthTable,
 };
 
 use super::boxscore;
 use super::ports::{GameLog, Player, PlayerStore, StoreError};
 use super::state::{App, SeasonLoadError};
-use crate::domain::models::GameType;
+use crate::domain::models::{Game, GameType};
 
 /// A report is priced with the estimate of the smallest error among the season's own table
 /// and those of this many earlier seasons.
@@ -774,6 +774,400 @@ pub async fn availability(app: &App, season: SeasonYear) -> Result<Availability,
         statuses,
         unlisted,
         note: None,
+    })
+}
+
+/// A team's current rating: the post-game rating of its last played game, else the
+/// pre-game rating of its first scheduled game (preseason). The date is the game's, and the
+/// flag says whether a game was played.
+pub fn rating_now(games: &[Game], team: TeamId) -> Option<(f64, NaiveDate, bool)> {
+    rating_as_of(games, team, NaiveDate::MAX)
+}
+
+/// The same, read as of a date: the last played game dated `as_of` or before.
+pub fn rating_as_of(
+    games: &[Game],
+    team: TeamId,
+    as_of: NaiveDate,
+) -> Option<(f64, NaiveDate, bool)> {
+    let last_played = games
+        .iter()
+        .filter(|g| g.is_played() && g.involves(team) && g.game_date <= as_of)
+        .max_by_key(|g| (g.game_date, g.seq));
+    if let Some(g) = last_played {
+        let elo = if g.home_team_id == team {
+            g.home_elo_post
+        } else {
+            g.away_elo_post
+        };
+        return Some((elo, g.game_date, true));
+    }
+    let first = games
+        .iter()
+        .filter(|g| g.involves(team))
+        .min_by_key(|g| (g.game_date, g.seq))?;
+    let elo = if first.home_team_id == team {
+        first.home_elo_pre
+    } else {
+        first.away_elo_pre
+    };
+    Some((elo, first.game_date, false))
+}
+
+/// One line of a team's injury card: the priced line and what it costs over the games it
+/// covers.
+#[derive(Debug, Clone, Serialize)]
+pub struct CardLine {
+    #[serde(flatten)]
+    pub line: CurrentAbsence,
+    /// The penalty that prices the games: the fixed penalty when the worth has no error,
+    /// else the mean of the draw held between zero and the cap (see
+    /// `domain::worth::expected_penalty`), which the forecast applies on average. None
+    /// when nothing is priced.
+    pub expected_penalty_elo: Option<f64>,
+    /// Remaining games the penalty covers.
+    pub games_covered: u32,
+    /// The penalty summed over them, in Elo times games.
+    pub elo_games: f64,
+    /// Its part of the team's mean penalty over the remaining games.
+    pub mean_penalty_elo: f64,
+    /// Expected wins lost to this line alone, to first order.
+    pub wins_lost_alone: f64,
+}
+
+/// A team's injury card: every report line priced for it, what each costs over the games
+/// it covers, and the sum two ways: as listed, and with today's absences held to the
+/// season's end.
+#[derive(Debug, Clone, Serialize)]
+pub struct InjuryCard {
+    pub season: SeasonYear,
+    pub team_id: TeamId,
+    pub team_code: String,
+    pub team_name: String,
+    pub report_date: Option<NaiveDate>,
+    /// The date the card is read as of: today, or the report date for a season already
+    /// over, so a stored report of a past season still reads.
+    pub today: NaiveDate,
+    pub season_end: NaiveDate,
+    /// The team's rating as of that date, the date it is from, and whether no game is
+    /// played yet.
+    pub rating_elo: Option<f64>,
+    pub rating_date: Option<NaiveDate>,
+    pub rating_is_preseason: Option<bool>,
+    /// The regular-season home bonus the win probabilities use.
+    pub home_advantage: f64,
+    /// The penalty on today's date, and the rating the team plays at today.
+    pub penalty_today: f64,
+    pub rating_today: Option<f64>,
+    pub lines: Vec<CardLine>,
+    /// The date of the last regular-season game, which the held total runs to.
+    pub last_regular_game: NaiveDate,
+    /// The absences as listed, each to its own end.
+    pub listed: AbsenceEffect,
+    /// Today's absences held to the last regular-season game.
+    pub held: AbsenceEffect,
+    /// The season's regular-season home bonus and the survival and status curves are
+    /// those of the availability answer; its note, when nothing is priced.
+    pub note: Option<String>,
+}
+
+/// The injury card of `code` in `season`; none for a team not in the season.
+pub async fn injury_card(
+    app: &App,
+    season: SeasonYear,
+    code: &str,
+) -> Result<Option<InjuryCard>, SeasonLoadError> {
+    let data = app.season_data(season).await?;
+    let teams = app.store.team_code_map().await?;
+    let code = code.trim().to_ascii_uppercase();
+    let Some(team) = teams.get(&code) else {
+        return Ok(None);
+    };
+    if !data.games.iter().any(|g| g.involves(team.id)) {
+        return Ok(None);
+    }
+    let a = availability(app, season).await?;
+    let today = match a.report_date {
+        Some(report) if app.today() > a.season_end => report,
+        _ => app.today(),
+    };
+    let home_advantage = app.home_advantage(season).await?.regular;
+    let mut ratings: HashMap<TeamId, f64> = HashMap::new();
+    for g in &data.games {
+        for t in [g.home_team_id, g.away_team_id] {
+            if let std::collections::hash_map::Entry::Vacant(e) = ratings.entry(t) {
+                if let Some((elo, _, _)) = rating_as_of(&data.games, t, today) {
+                    e.insert(elo);
+                }
+            }
+        }
+    }
+    let rating = rating_as_of(&data.games, team.id, today);
+    let absences: Vec<Absence> = a
+        .absences
+        .iter()
+        .filter(|x| x.team_id == team.id)
+        .cloned()
+        .collect();
+    let effect = |abs: &[Absence]| {
+        worth::absence_effect(abs, &data.games, &ratings, team.id, today, home_advantage)
+    };
+    let last_regular_game = data
+        .games
+        .iter()
+        .filter(|g| g.game_type == GameType::Regular)
+        .map(|g| g.game_date)
+        .max()
+        .unwrap_or(a.season_end);
+    let listed = effect(&absences);
+    let held = effect(&worth::held(&absences, today, last_regular_game));
+    let penalty_today = worth::penalty(&absences, team.id, today);
+    let lines = a
+        .lines
+        .iter()
+        .filter(|l| l.team_id == team.id)
+        .map(|l| {
+            let own: Vec<Absence> = absences
+                .iter()
+                .filter(|x| x.player_id == Some(l.player_id))
+                .cloned()
+                .collect();
+            let e = effect(&own);
+            CardLine {
+                line: l.clone(),
+                expected_penalty_elo: own
+                    .first()
+                    .map(|x| worth::expected_penalty(x.elo, x.se_elo)),
+                games_covered: e.games_covered,
+                elo_games: e.elo_games,
+                mean_penalty_elo: e.mean_penalty,
+                wins_lost_alone: e.wins_lost,
+            }
+        })
+        .collect();
+    Ok(Some(InjuryCard {
+        season,
+        team_id: team.id,
+        team_code: team.code.clone(),
+        team_name: team.name.clone(),
+        report_date: a.report_date,
+        today,
+        season_end: a.season_end,
+        rating_elo: rating.map(|(e, _, _)| e),
+        rating_date: rating.map(|(_, d, _)| d),
+        rating_is_preseason: rating.map(|(_, _, played)| !played),
+        home_advantage,
+        penalty_today,
+        rating_today: rating.map(|(e, _, _)| e - penalty_today),
+        lines,
+        last_regular_game,
+        listed,
+        held,
+        note: a.note,
+    }))
+}
+
+/// A player out on the night, for the Tonight panel: one absence that covers it.
+#[derive(Debug, Clone, Serialize)]
+pub struct OutTonight {
+    pub player_id: Option<PlayerId>,
+    pub name: String,
+    pub status: Option<AbsenceStatus>,
+    pub status_text: String,
+    /// The penalty the night carries for him: the fixed one, or with an error on the
+    /// worth the mean of the draw held between zero and the cap. The team's penalty is
+    /// the sum of these.
+    pub penalty_elo: f64,
+    /// Worth times weight, before the error is taken into account.
+    pub fixed_penalty_elo: f64,
+    pub until: NaiveDate,
+}
+
+/// One team on the night: its rating, what it plays without, and whom it plays.
+#[derive(Debug, Clone, Serialize)]
+pub struct TeamTonight {
+    pub team_id: TeamId,
+    pub code: String,
+    pub name: String,
+    /// The rating as of the date; the league mean for a team without one.
+    pub rating: f64,
+    /// The sum of the `out` penalties.
+    pub penalty: f64,
+    pub rating_tonight: f64,
+    pub out: Vec<OutTonight>,
+    /// The opponent's code when the team plays on the night.
+    pub opponent: Option<String>,
+    pub home: Option<bool>,
+}
+
+/// A game of the night with the codes beside the identifiers.
+#[derive(Debug, Clone, Serialize)]
+pub struct GameTonight {
+    #[serde(flatten)]
+    pub game: NightGame,
+    pub home_code: String,
+    pub away_code: String,
+}
+
+/// The next night with regular-season games: every team's rating tonight and the games
+/// priced at those ratings.
+#[derive(Debug, Clone, Serialize)]
+pub struct Tonight {
+    pub season: SeasonYear,
+    /// The date the panel is read as of (see [`InjuryCard::today`]).
+    pub as_of: NaiveDate,
+    /// The night: the earliest date on or after `as_of` with an unplayed regular-season
+    /// game; none when the regular season is over.
+    pub night: Option<NaiveDate>,
+    /// The night's regular-season games already played, when it is partly over.
+    pub games_played: u32,
+    pub report_date: Option<NaiveDate>,
+    pub home_advantage: f64,
+    pub games: Vec<GameTonight>,
+    /// Every team of the season, by rating tonight, highest first; empty when no night
+    /// remains.
+    pub teams: Vec<TeamTonight>,
+    pub note: Option<String>,
+}
+
+/// Tonight's slate and every team's rating tonight for `season`.
+pub async fn tonight(app: &App, season: SeasonYear) -> Result<Tonight, SeasonLoadError> {
+    let data = app.season_data(season).await?;
+    let teams = app.store.team_code_map().await?;
+    let a = availability(app, season).await?;
+    let as_of = match a.report_date {
+        Some(report) if app.today() > a.season_end => report,
+        _ => app.today(),
+    };
+    let home_advantage = app.home_advantage(season).await?.regular;
+    let mut ratings: HashMap<TeamId, f64> = HashMap::new();
+    for g in &data.games {
+        for t in [g.home_team_id, g.away_team_id] {
+            if let std::collections::hash_map::Entry::Vacant(e) = ratings.entry(t) {
+                if let Some((elo, _, _)) = rating_as_of(&data.games, t, as_of) {
+                    e.insert(elo);
+                }
+            }
+        }
+    }
+    let slate = worth::tonight(&data.games, as_of, &ratings, &a.absences, home_advantage);
+    let night = slate.as_ref().map(|n| n.date);
+    let games_played = slate.as_ref().map_or(0, |n| n.played);
+    let by_id: HashMap<TeamId, (&String, &str)> = teams
+        .iter()
+        .map(|(code, t)| (t.id, (code, t.name.as_str())))
+        .collect();
+    let code_of = |t: TeamId| {
+        by_id
+            .get(&t)
+            .map_or_else(|| t.to_string(), |(c, _)| (*c).clone())
+    };
+    let games: Vec<GameTonight> = slate
+        .as_ref()
+        .map(|n| {
+            n.games
+                .iter()
+                .map(|game| GameTonight {
+                    game: game.clone(),
+                    home_code: code_of(game.home_team_id),
+                    away_code: code_of(game.away_team_id),
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    // Every team of the season's games; without a night there is nothing to price.
+    let mut season_teams: Vec<TeamId> = data
+        .games
+        .iter()
+        .flat_map(|g| [g.home_team_id, g.away_team_id])
+        .collect();
+    season_teams.sort();
+    season_teams.dedup();
+    let team_row = |team_id: TeamId, on_date: NaiveDate| {
+        let rating = ratings
+            .get(&team_id)
+            .copied()
+            .unwrap_or(crate::domain::elo::SEASON_MEAN);
+        // The list and the sum come from the same absences, so they agree.
+        let out: Vec<OutTonight> = a
+            .absences
+            .iter()
+            .filter(|x| x.team_id == team_id && x.covers(on_date))
+            .map(|x| {
+                let line = x.player_id.and_then(|id| {
+                    a.lines
+                        .iter()
+                        .find(|l| l.player_id == id && l.team_id == team_id)
+                });
+                OutTonight {
+                    player_id: x.player_id,
+                    name: line.map_or_else(
+                        || {
+                            x.player_id
+                                .map_or_else(|| "marked out".to_string(), |id| id.to_string())
+                        },
+                        |l| l.name.clone(),
+                    ),
+                    status: line.map(|l| l.status),
+                    status_text: line.map_or_else(|| "out".to_string(), |l| l.status_text.clone()),
+                    penalty_elo: worth::expected_penalty(x.elo, x.se_elo),
+                    fixed_penalty_elo: x.elo,
+                    until: x.to,
+                }
+            })
+            .collect();
+        let penalty = out
+            .iter()
+            .map(|o| o.penalty_elo)
+            .fold(0.0, |acc, p| acc + p);
+        let game = games
+            .iter()
+            .find(|g| g.game.home_team_id == team_id || g.game.away_team_id == team_id);
+        let (name, code) = by_id.get(&team_id).map_or_else(
+            || (team_id.to_string(), team_id.to_string()),
+            |(c, n)| (n.to_string(), (*c).clone()),
+        );
+        TeamTonight {
+            team_id,
+            code,
+            name,
+            rating,
+            penalty,
+            rating_tonight: rating - penalty,
+            out,
+            opponent: game.map(|g| {
+                if g.game.home_team_id == team_id {
+                    g.away_code.clone()
+                } else {
+                    g.home_code.clone()
+                }
+            }),
+            home: game.map(|g| g.game.home_team_id == team_id),
+        }
+    };
+    let mut rows: Vec<TeamTonight> = night
+        .map(|on_date| {
+            season_teams
+                .iter()
+                .map(|&team_id| team_row(team_id, on_date))
+                .collect()
+        })
+        .unwrap_or_default();
+    rows.sort_by(|x, y| {
+        y.rating_tonight
+            .total_cmp(&x.rating_tonight)
+            .then_with(|| x.code.cmp(&y.code))
+    });
+    Ok(Tonight {
+        season,
+        as_of,
+        night,
+        games_played,
+        report_date: a.report_date,
+        home_advantage,
+        games,
+        teams: rows,
+        note: a.note,
     })
 }
 

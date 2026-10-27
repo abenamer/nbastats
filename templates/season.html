@@ -29,7 +29,23 @@
 <ul id="absences" class="small" style="margin:0 0 .5rem 0;padding-left:1.2rem"></ul>
 <p class="muted small" id="advNote"></p>
 <p class="muted small" id="note"></p>
+<section class="panel" id="tonightPanel"><h2>Tonight</h2>
+<p class="muted small">The next night with regular-season games, at the ratings the teams play at that night: each team's rating less the penalties of the absences that cover the date, from the latest injury report. The win probability is given at full strength and as listed, with the season's regular-season home bonus. The team table lists every team by its rating tonight; a code opens the team's injury card. Nothing here averages over the season.</p>
+<p class="muted small" id="tonightNote"></p>
+<div class="grid2"><div id="tonightGames" class="table-wrap"></div><div id="tonightTeams" class="table-wrap"></div></div>
+</section>
 <section class="panel"><div id="results" class="table-wrap"></div></section>
+<section class="panel" id="injuryCard"><h2>Injury card</h2>
+<p class="muted small">Every line of the latest injury report priced for one team, with the arithmetic in the open. Each player's penalty per game is his worth times the weight of his status; when the worth carries an error, the games are priced at the mean of the draw held between zero and the cap, as the forecast prices them, and the card shows both when they differ. The penalty applies from the report date to the end of his span, over the team's remaining regular-season games. The team's mean penalty is the sum of the penalties over those games divided by the games, so a large penalty over a few games is a small mean. Wins lost is the win probability at the full rating less the probability at the penalized one, game by game at today's ratings with the opponents at full strength: a first-order figure, where the forecast simulates the season. As listed is the dated estimate, with each absence ending when the report, the curve or the status default says. Held, with today's absences lasting to the last regular-season game, is the upper bound; the forecast at full strength is the lower.</p>
+<div class="controls">
+  <label>Team <select id="cardTeam"></select></label>
+  <button id="cardLoad" type="button">Show</button>
+  <span id="cardStatus" class="muted"></span>
+</div>
+<p class="muted small" id="cardNote"></p>
+<div id="cardTotals" class="table-wrap"></div>
+<div id="cardLines" class="table-wrap"></div>
+</section>
 <section class="panel"><h2>Projected bracket</h2>
 <p class="muted small">One bracket of very many. Each seed goes, in turn, to the team that held it most often in the simulated seasons among the teams not yet placed. The record is the projected final record, so a higher seed can show a worse record than a lower one. The chance beside each rating is the exact title chance through this bracket, at the ratings of the cutoff date with fixed ratings. Each series line is the exact series chance. The simulation does not predict this bracket. The line under it says how rarely this exact seeding, or even this sixteen-team field, occurred.</p>
 <p class="small" id="bracketNote"></p>

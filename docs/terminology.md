@@ -57,6 +57,7 @@ These are project-specific technical terms. They are not a reproduction of the A
 | Implied strength | The rating gap above the league mean at which a team of constant strength, against the actual playoff fields of a window of seasons, has the title chance a record implies; given in Elo points, points per game and wins per 82. Computed in `domain::strength`. |
 | Information cutoff | The last date whose games a forecast may use. |
 | Job | A stored simulation request with parameters, seed, versions, progress and result. |
+| Injury card | One team's lines of the latest injury report priced with the arithmetic in the open: penalty per game, span, games covered, the part of the mean penalty and the expected wins lost to first order, totalled as listed and with today's absences held to the season's end. |
 | Injury report | The source's list of players with a status (out, day-to-day, questionable), the expected return date and a description, stored once per day under the day it was fetched. |
 | Language model | A chat model with tool calling behind the `LanguageModel` port; the `OpenRouterModel` adapter calls it through OpenRouter's OpenAI-compatible API. |
 | League size | The number of teams of one league (NBA/BAA or ABA) in one season. |
@@ -88,6 +89,7 @@ These are project-specific technical terms. They are not a reproduction of the A
 | Seed | Playoff position 1 to 8 inside a conference. |
 | Series | A best-of-five or best-of-seven playoff matchup. A `SeriesState` is either in progress or decided. |
 | Return event | A run of five or more of a team's games that a regular player did not play, with a played game before and after, with twenty team games before the run and ten after the return. The unit of the return-from-absence report. |
+| Rating tonight | A team's rating as of the date less the penalties of the absences that cover the next night with a regular-season game: what the team plays at tonight, which the Tonight panel shows beside the win probability at full strength and at those ratings. |
 | Residual (game) | The actual margin minus the margin the pre-game ratings expected, at 28 Elo per point (FiveThirtyEight's spread rule for these ratings) with the ratings' home bonus. |
 | Settling window | The last 2 days before today. The daily player sync fetches their box scores again, because a date fetched while a game was on holds partial lines. |
 | Status curve | What a report status has meant on the stored reports: for each status and state (the player not yet out, or already in a run), the share of the lines whose player missed the team's next game and each of the next thirty. It gives the measured weight (the share missing tonight) and span (the games missed divided by the weight) that replace a status's defaults from 50 lines on. |

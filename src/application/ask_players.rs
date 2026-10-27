@@ -19,6 +19,7 @@ use super::ports::{PlayerStore, StoreError};
 use super::scheduler::current_season;
 use super::state::{App, SeasonLoadError};
 use super::worth as app_worth;
+use super::worth::rating_now;
 
 /// Players a name search returns to the model.
 const MAX_PLAYERS: i64 = 8;
@@ -56,33 +57,6 @@ fn round(v: f64, digits: i32) -> f64 {
     let f = 10f64.powi(digits);
     // `+ 0.0` turns a negative zero (the sum of nothing) into a plain zero.
     (v * f).round() / f + 0.0
-}
-
-/// A team's rating at the latest played game of the season, or at the start of the season
-/// when none is played, with the date it stands at.
-pub fn rating_now(games: &[Game], team: TeamId) -> Option<(f64, NaiveDate, bool)> {
-    let last_played = games
-        .iter()
-        .filter(|g| g.is_played() && (g.home_team_id == team || g.away_team_id == team))
-        .max_by_key(|g| (g.game_date, g.seq));
-    if let Some(g) = last_played {
-        let elo = if g.home_team_id == team {
-            g.home_elo_post
-        } else {
-            g.away_elo_post
-        };
-        return Some((elo, g.game_date, true));
-    }
-    let first = games
-        .iter()
-        .filter(|g| g.home_team_id == team || g.away_team_id == team)
-        .min_by_key(|g| (g.game_date, g.seq))?;
-    let elo = if first.home_team_id == team {
-        first.home_elo_pre
-    } else {
-        first.away_elo_pre
-    };
-    Some((elo, first.game_date, false))
 }
 
 /// The penalties of a team's absences: today, and on average over the regular-season games
