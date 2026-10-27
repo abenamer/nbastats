@@ -443,6 +443,9 @@ fn solve_spd(a: &[f64], b: &[f64], m: usize) -> Option<(Vec<f64>, Vec<f64>)> {
 pub enum AbsenceStatus {
     Out,
     OutForSeason,
+    /// Not on the report, but a regular player who has not played his team's last games:
+    /// read from the box scores, priced as out.
+    Absent,
     Doubtful,
     Questionable,
     DayToDay,
@@ -478,10 +481,45 @@ impl AbsenceStatus {
         }
     }
 
+    /// The status of a report line: the status text, and the description when it says the
+    /// player is done for the season while the status does not.
+    pub fn parse_line(status: &str, description: Option<&str>) -> Self {
+        let parsed = Self::parse(status);
+        let done = description.is_some_and(|d| {
+            let d = d.to_ascii_lowercase();
+            // "For the season opener" and "avoided a season-ending injury" say the opposite.
+            let about_a_game = ["opener", "debut", "finale", "start of the season"]
+                .iter()
+                .any(|k| d.contains(k));
+            let denied = ["no season-ending", "not season-ending", "avoid"]
+                .iter()
+                .any(|k| d.contains(k));
+            let ends = [
+                "out for the season",
+                "out for season",
+                "done for the season",
+                "miss the rest of the season",
+                "miss the remainder of the season",
+                "out for the rest of the season",
+                "out for the remainder of the season",
+                "season-ending",
+                "season ending",
+            ]
+            .iter()
+            .any(|k| d.contains(k));
+            ends && !about_a_game && !denied
+        });
+        if done && parsed.weight() > 0.0 {
+            Self::OutForSeason
+        } else {
+            parsed
+        }
+    }
+
     /// The share of the player's worth the status removes.
     pub fn weight(self) -> f64 {
         match self {
-            Self::Out | Self::OutForSeason => 1.0,
+            Self::Out | Self::OutForSeason | Self::Absent => 1.0,
             Self::Doubtful => 0.75,
             Self::Questionable | Self::DayToDay => 0.5,
             Self::Probable => 0.25,
@@ -493,7 +531,7 @@ impl AbsenceStatus {
     pub fn default_days(self) -> i64 {
         match self {
             Self::OutForSeason => 366,
-            Self::Out => 14,
+            Self::Out | Self::Absent => 14,
             Self::Doubtful | Self::DayToDay => 3,
             Self::Questionable => 2,
             Self::Probable => 1,
@@ -535,27 +573,104 @@ pub struct ReportedAbsence {
     pub worth_elo: f64,
     /// The standard error of the worth, in Elo; zero when the estimate has none.
     pub se_elo: f64,
+    /// Team games the player has missed in a row up to the latest game with box scores
+    /// (zero when he played it); none when the team has no box scores to read.
+    pub missed_so_far: Option<u32>,
 }
 
-/// The penalties of a report dated `report_date`. A line lasts until the day before the
-/// return date when the source gives one, else for the status's default span; never past
-/// `season_end`. A worth at or below zero gives no penalty: the model does not reward an
-/// absence. A status that removes nothing (available, unknown) gives none either.
+/// A player in a run of this many missed games is in a spell whatever his status says.
+pub const SPELL_MIN_MISSED: u32 = 3;
+
+/// What set the end of a priced absence.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SpanSource {
+    /// The report's return date, which lies beyond the team's next game.
+    ReturnDate,
+    /// The expected remaining games of a run this long, from the survival curve.
+    Expected,
+    /// The status's default span.
+    Status,
+    /// Out for the season.
+    Season,
+}
+
+/// What the game logs add to the pricing of a report: the survival curve of the runs of
+/// missed games, and each team's unplayed games from the report date on, in order.
+pub struct SpanRule<'a> {
+    pub survival: &'a crate::domain::spell::Survival,
+    pub upcoming: &'a HashMap<TeamId, Vec<NaiveDate>>,
+}
+
+/// When a line's absence ends (inclusive), and what decided it; none when nothing is
+/// priced. Out for the season ends with the season. A return date beyond the team's next
+/// game is the source's estimate and stands. A return date that is the next game or
+/// earlier is the feed's placeholder: a player listed out, or in a run of
+/// [`SPELL_MIN_MISSED`] games, is then priced for the expected remaining games of a run
+/// as long as his, read off the survival curve and laid over the team's schedule, when
+/// the games he has missed so far are known. The other statuses, every line without a
+/// rule and a team without box scores take the status's default span.
+pub fn span_for(
+    r: &ReportedAbsence,
+    report_date: NaiveDate,
+    season_end: NaiveDate,
+    rule: Option<&SpanRule>,
+) -> Option<(NaiveDate, SpanSource)> {
+    if r.status.weight() <= 0.0 {
+        return None;
+    }
+    if r.status == AbsenceStatus::OutForSeason {
+        return Some((season_end, SpanSource::Season));
+    }
+    let upcoming = rule.and_then(|x| x.upcoming.get(&r.team_id));
+    let next_game = upcoming.and_then(|u| u.first().copied());
+    // In a spell: listed out or absent, or demonstrably out for a run of games. The
+    // expected rule needs the games missed so far to be known.
+    let in_spell = (matches!(r.status, AbsenceStatus::Out | AbsenceStatus::Absent)
+        || r.missed_so_far.is_some_and(|k| k >= SPELL_MIN_MISSED))
+        && r.missed_so_far.is_some();
+    if let Some(d) = r.return_date {
+        let placeholder = next_game.is_some_and(|g| d <= g);
+        // For a player in a spell with a rule, a date up to the next game, today's date
+        // included, is the feed's placeholder. Otherwise a date of today or before prices
+        // nothing, and a later one stands.
+        let expected_applies = in_spell && rule.is_some() && upcoming.is_some();
+        if d <= report_date && !(placeholder && expected_applies) {
+            return None;
+        }
+        if !placeholder {
+            return Some((
+                (d - Duration::days(1)).min(season_end),
+                SpanSource::ReturnDate,
+            ));
+        }
+    }
+    if let (Some(rule), Some(upcoming), true, Some(missed)) =
+        (rule, upcoming, in_spell, r.missed_so_far)
+    {
+        let games = rule.survival.expected_remaining(missed).round().max(1.0) as usize;
+        let to = upcoming.get(games - 1).copied().unwrap_or(season_end);
+        return Some((to.min(season_end), SpanSource::Expected));
+    }
+    let to = report_date + Duration::days(r.status.default_days() - 1);
+    Some((to.min(season_end), SpanSource::Status))
+}
+
+/// The penalties of a report dated `report_date`, each line's span from [`span_for`],
+/// never past `season_end`. A worth at or below zero gives no penalty: the model does not
+/// reward an absence. A status that removes nothing (available, unknown) gives none
+/// either.
 pub fn absences_from_report(
     reported: &[ReportedAbsence],
     report_date: NaiveDate,
     season_end: NaiveDate,
+    rule: Option<&SpanRule>,
 ) -> Vec<Absence> {
     reported
         .iter()
         .filter(|r| r.worth_elo > 0.0)
         .filter_map(|r| {
-            let to = match r.return_date {
-                Some(d) if d > report_date => d - Duration::days(1),
-                Some(_) => return None,
-                None => report_date + Duration::days(r.status.default_days() - 1),
-            };
-            let to = to.min(season_end);
+            let (to, _) = span_for(r, report_date, season_end, rule)?;
             if to < report_date {
                 return None;
             }
@@ -931,23 +1046,212 @@ mod tests {
             return_date: None,
             worth_elo: 100.0,
             se_elo: 0.0,
+            missed_so_far: Some(0),
         };
         // The error follows the status weight, then the cap, as the penalty does.
         let mut noisy = line(AbsenceStatus::Questionable);
         noisy.se_elo = 100.0;
-        let a = absences_from_report(&[noisy], d(1), d(99));
+        let a = absences_from_report(&[noisy], d(1), d(99), None);
         assert_eq!((a[0].elo, a[0].se_elo), (50.0, 50.0));
         let mut capped = line(AbsenceStatus::Out);
         capped.se_elo = 1000.0;
         assert_eq!(
-            absences_from_report(&[capped], d(1), d(99))[0].se_elo,
+            absences_from_report(&[capped], d(1), d(99), None)[0].se_elo,
             MAX_ABSENCE_ELO
         );
-        assert!(absences_from_report(&[line(AbsenceStatus::Available)], d(1), d(99)).is_empty());
-        assert!(absences_from_report(&[line(AbsenceStatus::Unknown)], d(1), d(99)).is_empty());
+        assert!(
+            absences_from_report(&[line(AbsenceStatus::Available)], d(1), d(99), None).is_empty()
+        );
+        assert!(
+            absences_from_report(&[line(AbsenceStatus::Unknown)], d(1), d(99), None).is_empty()
+        );
         assert_eq!(
-            absences_from_report(&[line(AbsenceStatus::Out)], d(1), d(99)).len(),
+            absences_from_report(&[line(AbsenceStatus::Out)], d(1), d(99), None).len(),
             1
+        );
+    }
+
+    fn reported(status: AbsenceStatus, return_day: Option<u32>, missed: u32) -> ReportedAbsence {
+        reported_with(status, return_day, Some(missed))
+    }
+
+    fn reported_with(
+        status: AbsenceStatus,
+        return_day: Option<u32>,
+        missed: Option<u32>,
+    ) -> ReportedAbsence {
+        ReportedAbsence {
+            player_id: PlayerId::new(1),
+            team_id: TeamId::new(1),
+            status,
+            return_date: return_day.map(d),
+            worth_elo: 100.0,
+            se_elo: 0.0,
+            missed_so_far: missed,
+        }
+    }
+
+    #[test]
+    fn the_span_follows_the_return_date_the_curve_or_the_status() {
+        use crate::domain::spell::{Run, Survival};
+        // Runs of 1, 1, 2, 3 and 5 games: a run two games old has two games to go, a new
+        // one has 2.4, rounded to two.
+        let runs: Vec<Run> = [1u32, 1, 2, 3, 5]
+            .iter()
+            .cycle()
+            .take(60)
+            .map(|m| Run {
+                missed: *m,
+                censored: false,
+            })
+            .collect();
+        let survival = Survival::fit(&runs).unwrap();
+        let mut upcoming = HashMap::new();
+        // The team plays every second day from day 11.
+        upcoming.insert(
+            TeamId::new(1),
+            (0..10).map(|i| d(11 + 2 * i)).collect::<Vec<_>>(),
+        );
+        let rule = SpanRule {
+            survival: &survival,
+            upcoming: &upcoming,
+        };
+        let report = d(10);
+        let span = |r: &ReportedAbsence, rule: Option<&SpanRule>| span_for(r, report, d(40), rule);
+        // A return date that is the next game is the feed's placeholder: two games to go.
+        assert_eq!(
+            span(&reported(AbsenceStatus::Out, Some(11), 2), Some(&rule)),
+            Some((d(13), SpanSource::Expected))
+        );
+        // Without a date, the same.
+        assert_eq!(
+            span(&reported(AbsenceStatus::Out, None, 2), Some(&rule)),
+            Some((d(13), SpanSource::Expected))
+        );
+        // A date beyond the next game is an estimate and stands.
+        assert_eq!(
+            span(&reported(AbsenceStatus::Out, Some(20), 2), Some(&rule)),
+            Some((d(19), SpanSource::ReturnDate))
+        );
+        // Without the game logs, a return date stands as it did, and no date means the
+        // status default: fourteen days.
+        assert_eq!(
+            span(&reported(AbsenceStatus::Out, Some(11), 2), None),
+            Some((d(10), SpanSource::ReturnDate))
+        );
+        assert_eq!(
+            span(&reported(AbsenceStatus::Out, None, 2), None),
+            Some((d(23), SpanSource::Status))
+        );
+        // Questionable for tonight stays a two-day matter; in a run of three it is a spell.
+        assert_eq!(
+            span(
+                &reported(AbsenceStatus::Questionable, Some(11), 0),
+                Some(&rule)
+            ),
+            Some((d(11), SpanSource::Status))
+        );
+        assert_eq!(
+            span(&reported(AbsenceStatus::DayToDay, Some(11), 5), Some(&rule)),
+            Some((d(11), SpanSource::Expected)),
+            "past the longest run, one game"
+        );
+        // Absent from the lines: priced as out.
+        assert_eq!(
+            span(&reported(AbsenceStatus::Absent, None, 3), Some(&rule)),
+            Some((d(13), SpanSource::Expected))
+        );
+        // Out for the season, a date in the past, nothing to price.
+        assert_eq!(
+            span(
+                &reported(AbsenceStatus::OutForSeason, Some(11), 0),
+                Some(&rule)
+            ),
+            Some((d(40), SpanSource::Season))
+        );
+        // A date of today is the placeholder too for a player in a spell; for a line about
+        // tonight it prices nothing, as before, and so does any date of today without the
+        // game logs.
+        assert_eq!(
+            span(&reported(AbsenceStatus::Out, Some(10), 2), Some(&rule)),
+            Some((d(13), SpanSource::Expected))
+        );
+        assert_eq!(
+            span(
+                &reported(AbsenceStatus::Questionable, Some(10), 0),
+                Some(&rule)
+            ),
+            None
+        );
+        assert_eq!(span(&reported(AbsenceStatus::Out, Some(10), 2), None), None);
+        assert_eq!(
+            span(&reported(AbsenceStatus::Available, None, 9), Some(&rule)),
+            None
+        );
+        // A team without box scores: the games missed are unknown, the status default
+        // stands and a placeholder date of today prices nothing.
+        assert_eq!(
+            span(
+                &reported_with(AbsenceStatus::Out, Some(11), None),
+                Some(&rule)
+            ),
+            Some((d(23), SpanSource::Status))
+        );
+        assert_eq!(
+            span(
+                &reported_with(AbsenceStatus::Out, Some(10), None),
+                Some(&rule)
+            ),
+            None
+        );
+        // More games to go than the schedule holds: the season's end.
+        let mut short = HashMap::new();
+        short.insert(TeamId::new(1), vec![d(11)]);
+        let rule = SpanRule {
+            survival: &survival,
+            upcoming: &short,
+        };
+        assert_eq!(
+            span(&reported(AbsenceStatus::Out, None, 0), Some(&rule)),
+            Some((d(40), SpanSource::Expected))
+        );
+    }
+
+    #[test]
+    fn a_description_that_ends_the_season_outranks_the_status() {
+        assert_eq!(
+            AbsenceStatus::parse_line("Out", Some("Suffered a season-ending ACL tear")),
+            AbsenceStatus::OutForSeason
+        );
+        assert_eq!(
+            AbsenceStatus::parse_line("Day-To-Day", Some("Will miss the rest of the season")),
+            AbsenceStatus::OutForSeason
+        );
+        assert_eq!(
+            AbsenceStatus::parse_line("Available", Some("Back for the season opener")),
+            AbsenceStatus::Available
+        );
+        assert_eq!(
+            AbsenceStatus::parse_line("Out", Some("Knee; out")),
+            AbsenceStatus::Out
+        );
+        assert_eq!(AbsenceStatus::parse_line("Out", None), AbsenceStatus::Out);
+        // A game of the season, or an injury avoided, is not the season.
+        assert_eq!(
+            AbsenceStatus::parse_line("Questionable", Some("Questionable for the season opener")),
+            AbsenceStatus::Questionable
+        );
+        assert_eq!(
+            AbsenceStatus::parse_line("Out", Some("Out for the season debut with a sore knee")),
+            AbsenceStatus::Out
+        );
+        assert_eq!(
+            AbsenceStatus::parse_line("Out", Some("Avoided a season-ending injury, per the team")),
+            AbsenceStatus::Out
+        );
+        assert_eq!(
+            AbsenceStatus::parse_line("Out", Some("Ruled out for the season (Achilles)")),
+            AbsenceStatus::OutForSeason
         );
     }
 
@@ -963,6 +1267,7 @@ mod tests {
                 return_date: Some(d(15)),
                 worth_elo: 120.0,
                 se_elo: 0.0,
+                missed_so_far: Some(0),
             },
             ReportedAbsence {
                 player_id: PlayerId::new(2),
@@ -971,6 +1276,7 @@ mod tests {
                 return_date: None,
                 worth_elo: 60.0,
                 se_elo: 0.0,
+                missed_so_far: Some(0),
             },
             ReportedAbsence {
                 player_id: PlayerId::new(3),
@@ -979,6 +1285,7 @@ mod tests {
                 return_date: None,
                 worth_elo: 900.0,
                 se_elo: 0.0,
+                missed_so_far: Some(0),
             },
             // Back already, worthless, or a return date in the past: no penalty.
             ReportedAbsence {
@@ -988,6 +1295,7 @@ mod tests {
                 return_date: Some(d(10)),
                 worth_elo: 50.0,
                 se_elo: 0.0,
+                missed_so_far: Some(0),
             },
             ReportedAbsence {
                 player_id: PlayerId::new(5),
@@ -996,9 +1304,10 @@ mod tests {
                 return_date: None,
                 worth_elo: -20.0,
                 se_elo: 0.0,
+                missed_so_far: Some(0),
             },
         ];
-        let out = absences_from_report(&reported, report, d(40));
+        let out = absences_from_report(&reported, report, d(40), None);
         assert_eq!(out.len(), 3);
         assert_eq!((out[0].from, out[0].to, out[0].elo), (d(10), d(14), 120.0));
         assert_eq!((out[1].from, out[1].to, out[1].elo), (d(10), d(11), 30.0));

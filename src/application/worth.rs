@@ -10,17 +10,23 @@ use serde::Serialize;
 
 use crate::domain::bpm::BoxTable;
 use crate::domain::ids::{PlayerId, SeasonYear, TeamId};
+use crate::domain::spell::{self, SeasonRuns, Survival};
 use crate::domain::worth::{
-    self, Absence, AbsenceStatus, PlayerWorth, ReportedAbsence, WorthParams, WorthTable,
+    self, Absence, AbsenceStatus, PlayerWorth, ReportedAbsence, SpanRule, SpanSource, WorthParams,
+    WorthTable,
 };
 
 use super::boxscore;
 use super::ports::{GameLog, Player, PlayerStore, StoreError};
 use super::state::{App, SeasonLoadError};
+use crate::domain::models::GameType;
 
 /// A report is priced with the estimate of the smallest error among the season's own table
 /// and those of this many earlier seasons.
 pub const WORTH_LOOKBACK: usize = 2;
+/// The survival curve of the runs of missed games is fitted on this many seasons before
+/// the season priced.
+pub const SPELL_SEASONS: usize = 5;
 
 /// A player's worth with his name, for the page.
 #[derive(Debug, Clone, Serialize)]
@@ -52,6 +58,29 @@ pub struct CurrentAbsence {
     /// The penalty the forecast applies, when any: the worth weighted by the status.
     pub penalty_elo: Option<f64>,
     pub until: Option<NaiveDate>,
+    /// What set `until`.
+    pub span: Option<SpanSource>,
+    /// Team games missed in a row up to the latest game with box scores, plus the games
+    /// the team played since without box scores; none when the team has none.
+    pub missed_so_far: Option<u32>,
+    /// The team's latest game with box scores; none when it has none.
+    pub lines_through: Option<NaiveDate>,
+    /// On the injury report; false for a player read from the box scores alone.
+    pub listed: bool,
+}
+
+/// The survival curve the spans lean on, for the reader.
+#[derive(Debug, Clone, Serialize)]
+pub struct SurvivalSummary {
+    pub model: &'static str,
+    /// The seasons the runs come from.
+    pub seasons: Vec<SeasonYear>,
+    pub runs: u32,
+    pub censored: u32,
+    pub longest: u32,
+    pub mean_run_games: f64,
+    /// The expected remaining games for a run already zero to twenty games long.
+    pub expected_remaining: Vec<f64>,
 }
 
 /// The availability of a season's rosters: the latest injury report priced in Elo.
@@ -62,8 +91,68 @@ pub struct Availability {
     pub season_end: NaiveDate,
     pub lines: Vec<CurrentAbsence>,
     pub absences: Vec<Absence>,
+    /// None when too few runs are stored: the status defaults price the spans.
+    pub survival: Option<SurvivalSummary>,
+    /// Lines added from the box scores: regular players in a run not on the report.
+    pub unlisted: u32,
     /// Why nothing is priced, when nothing is.
     pub note: Option<String>,
+}
+
+/// The runs of missed games of a season, cached until the next import or sync. A season
+/// without games is `NoGames`.
+pub async fn spell_runs(app: &App, season: SeasonYear) -> Result<Arc<SeasonRuns>, SeasonLoadError> {
+    if let Some(r) = app
+        .spell_runs
+        .read()
+        .unwrap_or_else(|e| e.into_inner())
+        .get(&season)
+        .cloned()
+    {
+        return Ok(r);
+    }
+    let generation = app.cache_generation.load(Ordering::SeqCst);
+    let data = app.season_data(season).await?;
+    let lines = app.store.season_box_lines(season).await?;
+    let runs = tokio::task::spawn_blocking(move || {
+        Arc::new(spell::season_runs(season, &data.games, &lines))
+    })
+    .await
+    .map_err(|e| SeasonLoadError::Store(StoreError::Query(e.to_string())))?;
+    let mut cache = app.spell_runs.write().unwrap_or_else(|e| e.into_inner());
+    if app.cache_generation.load(Ordering::SeqCst) == generation {
+        cache.insert(season, runs.clone());
+    }
+    Ok(runs)
+}
+
+/// The survival curve from the runs of the [`SPELL_SEASONS`] seasons before `season` that
+/// have games; none below the minimum of runs.
+async fn survival_before(
+    app: &App,
+    season: SeasonYear,
+) -> Result<Option<(Survival, Vec<SeasonYear>)>, StoreError> {
+    let mut runs = Vec::new();
+    let mut seasons = Vec::new();
+    let mut year = season;
+    for _ in 0..SPELL_SEASONS {
+        let Some(previous) = year.previous() else {
+            break;
+        };
+        year = previous;
+        match spell_runs(app, year).await {
+            Ok(r) => {
+                if !r.runs.is_empty() {
+                    seasons.push(year);
+                    runs.extend(r.runs.iter().copied());
+                }
+            }
+            Err(SeasonLoadError::NoGames(_)) => continue,
+            Err(SeasonLoadError::Store(e)) => return Err(e),
+        }
+    }
+    seasons.reverse();
+    Ok(Survival::fit(&runs).map(|s| (s, seasons)))
 }
 
 /// The worth table of a season, cached until the next import or sync.
@@ -303,6 +392,8 @@ pub async fn availability(app: &App, season: SeasonYear) -> Result<Availability,
         season_end,
         lines: vec![],
         absences: vec![],
+        survival: None,
+        unlisted: 0,
         note,
     };
     let Some(report_date) = app.store.latest_injury_report_date().await? else {
@@ -322,50 +413,194 @@ pub async fn availability(app: &App, season: SeasonYear) -> Result<Availability,
     let box_tables = box_lookback_tables(app, season).await?;
     let report = app.store.injury_report(report_date).await?;
     let teams = app.store.team_code_map().await?;
+    // What the game logs add: the runs in progress, and the curve of the runs before.
+    let current = spell_runs(app, season).await?;
+    let in_progress: HashMap<(TeamId, PlayerId), &spell::CurrentRun> = current
+        .current
+        .iter()
+        .map(|c| ((c.team_id, c.player_id), c))
+        .collect();
+    let lines_through: HashMap<TeamId, NaiveDate> = current
+        .lines_through
+        .iter()
+        .map(|t| (t.team_id, t.game_date))
+        .collect();
+    // Games a team played after its latest game with lines: nobody has a line for them,
+    // so a run in progress ran through them.
+    let since_lines = |team: TeamId| -> u32 {
+        lines_through.get(&team).map_or(0, |through| {
+            data.games
+                .iter()
+                .filter(|g| {
+                    g.game_type == GameType::Regular
+                        && g.is_played()
+                        && g.involves(team)
+                        && g.game_date > *through
+                })
+                .count() as u32
+        })
+    };
+    let fitted = survival_before(app, season).await?;
+    let mut upcoming: HashMap<TeamId, Vec<NaiveDate>> = HashMap::new();
+    let mut unplayed: Vec<_> = data
+        .games
+        .iter()
+        .filter(|g| {
+            g.game_type == GameType::Regular && !g.is_played() && g.game_date >= report_date
+        })
+        .collect();
+    unplayed.sort_by_key(|g| (g.game_date, g.seq, g.id));
+    for g in unplayed {
+        for t in [g.home_team_id, g.away_team_id] {
+            upcoming.entry(t).or_default().push(g.game_date);
+        }
+    }
+    let rule = fitted.as_ref().map(|(s, _)| SpanRule {
+        survival: s,
+        upcoming: &upcoming,
+    });
     let mut lines = Vec::with_capacity(report.len());
     let mut reported = Vec::new();
-    for l in report {
-        let Some(team) = teams.get(&l.team_code) else {
-            continue;
-        };
-        let status = AbsenceStatus::parse(&l.status);
+    let mut listed: std::collections::HashSet<PlayerId> = std::collections::HashSet::new();
+    let mut price = |player_id: PlayerId,
+                     name: String,
+                     team_id: TeamId,
+                     team_code: String,
+                     status: AbsenceStatus,
+                     status_text: String,
+                     return_date: Option<NaiveDate>,
+                     is_listed: bool| {
+        let missed_so_far = lines_through.get(&team_id).map(|_| {
+            in_progress
+                .get(&(team_id, player_id))
+                .map_or(0, |c| c.missed + since_lines(team_id))
+        });
         let found = choose_estimate(
-            pick_estimate(&tables, l.player_id),
-            pick_box_estimate(&box_tables, l.player_id),
+            pick_estimate(&tables, player_id),
+            pick_box_estimate(&box_tables, player_id),
         );
         let entry = found.map(|e| ReportedAbsence {
-            player_id: l.player_id,
-            team_id: team.id,
+            player_id,
+            team_id,
             status,
-            return_date: l.return_date,
+            return_date,
             worth_elo: e.elo,
             se_elo: e.se_elo,
+            missed_so_far,
         });
+        let span = entry
+            .as_ref()
+            .and_then(|r| worth::span_for(r, report_date, season_end, rule.as_ref()));
         let applied = entry
             .as_ref()
-            .map(|r| worth::absences_from_report(std::slice::from_ref(r), report_date, season_end))
+            .map(|r| {
+                worth::absences_from_report(
+                    std::slice::from_ref(r),
+                    report_date,
+                    season_end,
+                    rule.as_ref(),
+                )
+            })
             .unwrap_or_default();
         let one = applied.first();
         lines.push(CurrentAbsence {
-            player_id: l.player_id,
-            name: l.player_name.clone(),
-            team_id: team.id,
-            team_code: l.team_code.clone(),
+            player_id,
+            name,
+            team_id,
+            team_code,
             status,
-            status_text: l.status.clone(),
-            return_date: l.return_date,
+            status_text,
+            return_date,
             worth_elo: found.map(|e| e.elo),
             se_elo: found.map(|e| e.se_elo),
             worth_season: found.map(|e| e.season),
             worth_source: found.map(|e| e.source),
             penalty_elo: one.map(|a| a.elo),
             until: one.map(|a| a.to),
+            span: one.and(span.map(|(_, source)| source)),
+            missed_so_far,
+            lines_through: lines_through.get(&team_id).copied(),
+            listed: is_listed,
         });
         if let Some(r) = entry {
             reported.push(r);
         }
+    };
+    for l in &report {
+        listed.insert(l.player_id);
+        let Some(team) = teams.get(&l.team_code) else {
+            continue;
+        };
+        let status = AbsenceStatus::parse_line(&l.status, l.description.as_deref());
+        price(
+            l.player_id,
+            l.player_name.clone(),
+            team.id,
+            l.team_code.clone(),
+            status,
+            l.status.clone(),
+            l.return_date,
+            true,
+        );
     }
-    let absences = worth::absences_from_report(&reported, report_date, season_end);
+    // Regular players in a run not on the report: out, whatever the reason.
+    let mut absent: Vec<&spell::CurrentRun> = current
+        .current
+        .iter()
+        .filter(|c| {
+            c.regular && c.missed >= worth::SPELL_MIN_MISSED && !listed.contains(&c.player_id)
+        })
+        .collect();
+    absent.sort_by_key(|c| (c.team_id, c.player_id));
+    let mut unlisted = 0u32;
+    if !absent.is_empty() {
+        let ids: Vec<PlayerId> = absent.iter().map(|c| c.player_id).collect();
+        let players: HashMap<PlayerId, Player> = app
+            .store
+            .players_by_id(&ids)
+            .await?
+            .into_iter()
+            .map(|p| (p.id, p))
+            .collect();
+        // A player who left the team is no absence: not on a roster after a refresh, or
+        // listed with another team. Without any roster refresh the store cannot tell.
+        let rosters_known = app.store.player_coverage().await?.active_players > 0;
+        let codes: HashMap<TeamId, String> =
+            teams.iter().map(|(code, t)| (t.id, code.clone())).collect();
+        for c in absent {
+            let player = players.get(&c.player_id);
+            let left = player.is_some_and(|p| {
+                (rosters_known && !p.active)
+                    || p.team_code
+                        .as_deref()
+                        .is_some_and(|code| codes.get(&c.team_id).is_some_and(|own| own != code))
+            });
+            if left {
+                continue;
+            }
+            unlisted += 1;
+            price(
+                c.player_id,
+                player
+                    .map(|p| {
+                        format!("{} {}", p.first_name, p.last_name)
+                            .trim()
+                            .to_string()
+                    })
+                    .unwrap_or_else(|| c.player_id.to_string()),
+                c.team_id,
+                codes.get(&c.team_id).cloned().unwrap_or_default(),
+                AbsenceStatus::Absent,
+                format!(
+                    "Absent from the box scores for {} games, not on the report",
+                    c.missed
+                ),
+                None,
+                false,
+            );
+        }
+    }
+    let absences = worth::absences_from_report(&reported, report_date, season_end, rule.as_ref());
     lines.sort_by(|a, b| {
         b.penalty_elo
             .unwrap_or(0.0)
@@ -373,12 +608,23 @@ pub async fn availability(app: &App, season: SeasonYear) -> Result<Availability,
             .then_with(|| a.team_code.cmp(&b.team_code))
             .then_with(|| a.name.cmp(&b.name))
     });
+    let survival = fitted.map(|(s, seasons)| SurvivalSummary {
+        model: s.model,
+        seasons,
+        runs: s.runs,
+        censored: s.censored,
+        longest: s.longest,
+        mean_run_games: s.mean_run(),
+        expected_remaining: s.curve(),
+    });
     Ok(Availability {
         season,
         report_date: Some(report_date),
         season_end,
         lines,
         absences,
+        survival,
+        unlisted,
         note: None,
     })
 }

@@ -1964,9 +1964,10 @@ mod players {
             status: worth::AbsenceStatus::Out,
             return_date: Some(date("2016-01-10")),
             worth_elo,
+            missed_so_far: Some(0),
         }];
         let absences =
-            worth::absences_from_report(&reported, date("2016-01-05"), date("2016-06-20"));
+            worth::absences_from_report(&reported, date("2016-01-05"), date("2016-06-20"), None);
         if worth_elo > 0.0 {
             assert_eq!(absences.len(), 1);
             assert_eq!(

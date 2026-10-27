@@ -349,9 +349,16 @@ impl PlayerLookups for App {
                     "worth_elo": l.worth_elo.map(|v| round(v, 0)), "se_elo": l.se_elo.map(|v| round(v, 0)),
                     "worth_season": l.worth_season, "worth_source": l.worth_source,
                     "penalty_elo": l.penalty_elo.map(|v| round(v, 0)), "until": l.until,
+                    "until_set_by": l.span, "games_missed_so_far": l.missed_so_far,
+                    "box_scores_through": l.lines_through, "on_report": l.listed,
                 })
             })
             .collect();
+        let unlisted = a
+            .lines
+            .iter()
+            .filter(|l| l.team_id == team_id && !l.listed)
+            .count();
         let (today_penalty, mean_penalty, remaining) =
             penalty_summary(&a.absences, &data.games, team_id, today);
         let on_schedule = data
@@ -381,7 +388,9 @@ impl PlayerLookups for App {
             "regular_season_games_played": data.games.iter().filter(|g| g.game_type == GameType::Regular && g.is_played() && g.involves(team_id)).count(),
             "schedule_note": cup::schedule_note(season, on_schedule),
             "lines": lines,
-            "note": a.note.unwrap_or_else(|| "A penalty is what the team plays without on a game date; the rating itself does not change. Lines without a penalty have returned, have no worth estimate, or have a worth at or below zero.".to_string()),
+            "absent_without_a_report_line": unlisted,
+            "mean_run_of_missed_games": a.survival.as_ref().map(|s| round(s.mean_run_games, 1)),
+            "note": a.note.unwrap_or_else(|| "A penalty is what the team plays without on a game date; the rating itself does not change. Lines without a penalty have returned, have no worth estimate, or have a worth at or below zero. A line with on_report false is a regular player absent from his team's last games who is not on the report. until_set_by says what ended the span: the report's return date when it lies beyond the next game, else the expected remaining games of a run this long (expected), the status default, or the season.".to_string()),
         }))
     }
 
