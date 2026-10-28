@@ -630,6 +630,23 @@ impl PlayerStore for PostgresStore {
         Ok(rows.into_iter().map(player_from_row).collect())
     }
 
+    async fn first_appearance_seasons(
+        &self,
+        ids: &[PlayerId],
+    ) -> StoreResult<HashMap<PlayerId, SeasonYear>> {
+        if ids.is_empty() {
+            return Ok(HashMap::new());
+        }
+        let rows: Vec<(PlayerId, SeasonYear)> = sqlx::query_as(
+            "SELECT a.player_id, min(g.season) FROM appearances a JOIN games g ON g.id = a.game_id
+             WHERE a.player_id = ANY($1) GROUP BY a.player_id",
+        )
+        .bind(ids)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows.into_iter().collect())
+    }
+
     async fn backfill_progress(&self) -> StoreResult<Vec<SeasonBackfill>> {
         let rows: Vec<(SeasonYear, i64, i64)> = sqlx::query_as(
             "SELECT d.season, count(*), count(f.game_date)

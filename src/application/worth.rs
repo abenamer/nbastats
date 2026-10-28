@@ -10,21 +10,26 @@ use serde::Serialize;
 
 use crate::domain::bpm::BoxTable;
 use crate::domain::ids::{PlayerId, SeasonYear, TeamId};
+use crate::domain::rookie::{self, DraftBracket};
 use crate::domain::spell::{self, SeasonRuns, Survival};
 use crate::domain::status::{self, StatusSample, StatusTable};
 use crate::domain::worth::{
-    self, Absence, AbsenceEffect, AbsenceStatus, NightGame, PlayerWorth, ReportedAbsence, SpanRule,
-    SpanSource, WeightSource, WorthParams, WorthTable,
+    self, Absence, AbsenceEffect, AbsenceStatus, BoxCalibration, NightGame, PlayerWorth,
+    ReportedAbsence, SpanRule, SpanSource, WeightSource, WorthParams, WorthTable,
 };
 
 use super::boxscore;
 use super::ports::{GameLog, Player, PlayerStore, StoreError};
+use super::rookie::{self as app_rookie, DraftSummary};
 use super::state::{App, SeasonLoadError};
 use crate::domain::models::{Game, GameType};
 
 /// A report is priced with the estimate of the smallest error among the season's own table
 /// and those of this many earlier seasons.
 pub const WORTH_LOOKBACK: usize = 2;
+/// A rookie's draft is at most this many years before the season priced; an older draft
+/// marks a veteran whatever the stored box scores show.
+pub const ROOKIE_DRAFT_YEARS: i32 = 5;
 /// The survival curve of the runs of missed games is fitted on this many seasons before
 /// the season priced. The status curves are fitted on the season's own reports and those
 /// of the same seasons before.
@@ -73,6 +78,9 @@ pub struct CurrentAbsence {
     pub lines_through: Option<NaiveDate>,
     /// On the injury report; false for a player read from the box scores alone.
     pub listed: bool,
+    /// The bracket of the draft prior, when one priced the line (`worth_source` draft):
+    /// the rookie's own bracket, or the wider one standing in for it.
+    pub draft_bracket: Option<DraftBracket>,
 }
 
 /// The survival curve the spans lean on, for the reader.
@@ -134,6 +142,13 @@ pub struct Availability {
     /// None when no stored report line could be followed through the game logs. A status
     /// without a curve keeps its default weight and span.
     pub statuses: Option<StatusSummary>,
+    /// The draft priors the rookies' lines lean on; a rookie in a bracket without one (or a
+    /// stand-in) keeps his box worth or stays without an estimate.
+    pub draft: Option<DraftSummary>,
+    /// How much of a box worth shows up as a team drop, measured over the players with
+    /// both estimates in the seasons priced from; none below 30 such players, when the
+    /// box worth stands unscaled and the older one-error rule chooses.
+    pub box_calibration: Option<BoxCalibration>,
     /// Lines added from the box scores: regular players in a run not on the report.
     pub unlisted: u32,
     /// Why nothing is priced, when nothing is.
@@ -432,39 +447,97 @@ pub struct Estimate {
 pub enum WorthSource {
     /// The regression on the games the team played without the player.
     Worth,
-    /// Box Plus/Minus over replacement, per game played; it has no standard error.
+    /// Box Plus/Minus over replacement, per game played, scaled by the measured share of
+    /// a box worth that shows up as a team drop, with that measurement's error; unscaled
+    /// and without an error when no calibration exists.
     Box,
+    /// The scaled box worth and the worth from the missed games, weighted by precision.
+    Blend,
+    /// A rookie's draft prior: what his draft slot's rookies have been worth, pulled
+    /// toward his own box worth by his minutes; the error is the bracket's spread, shrunk
+    /// the same way.
+    Draft,
 }
 
-/// The box-score estimate for a player among the tables given (latest season first): the
-/// box worth of his stint with the most minutes in the latest season that has one.
+/// The box-score estimate for a player among the tables given (latest season first): his
+/// box worth over his stints, weighted by minutes, in the latest season that has one.
 pub fn pick_box_estimate(
     tables: &[(SeasonYear, Arc<BoxTable>)],
     player: PlayerId,
 ) -> Option<Estimate> {
     tables.iter().find_map(|(season, t)| {
-        t.players
-            .iter()
-            .filter(|p| p.player_id == player)
-            .max_by(|a, b| a.minutes.total_cmp(&b.minutes))
-            .map(|p| Estimate {
-                elo: p.worth_elo,
-                se_elo: 0.0,
-                season: *season,
-                source: WorthSource::Box,
-            })
+        super::rookie::season_box(t, player).map(|(elo, _)| Estimate {
+            elo,
+            se_elo: 0.0,
+            season: *season,
+            source: WorthSource::Box,
+        })
     })
 }
 
-/// The estimate to price a player with: the player worth when it stands at least one
-/// standard error from zero, else the box-score worth when there is one, else whichever
-/// exists.
-pub fn choose_estimate(worth: Option<Estimate>, boxed: Option<Estimate>) -> Option<Estimate> {
-    match (worth, boxed) {
-        (Some(w), Some(b)) if w.elo.abs() < w.se_elo => Some(b),
-        (Some(w), _) => Some(w),
+/// The estimate to price a player with. With a calibration, the box worth is scaled by
+/// the measured share that shows up as a team drop and carries the calibration's error;
+/// the player's own worth from the missed games, when he has one, is combined with it by
+/// precision (`Blend`), so a noisy with/without season pulls a clear box score only as far
+/// as its precision allows. Without a calibration the older rule stands: the worth when
+/// it is at least one standard error from zero, else the box worth, else whichever exists.
+pub fn choose_estimate(
+    worth: Option<Estimate>,
+    boxed: Option<Estimate>,
+    calibration: Option<&BoxCalibration>,
+) -> Option<Estimate> {
+    let Some(c) = calibration else {
+        return match (worth, boxed) {
+            (Some(w), Some(b)) if w.elo.abs() < w.se_elo => Some(b),
+            (Some(w), _) => Some(w),
+            (None, b) => b,
+        };
+    };
+    let scaled = boxed.map(|b| {
+        let (elo, se_elo) = c.prior(b.elo);
+        Estimate {
+            elo,
+            se_elo,
+            season: b.season,
+            source: WorthSource::Box,
+        }
+    });
+    match (worth, scaled) {
+        (Some(w), Some(b)) => {
+            let (elo, se_elo) = worth::combine((b.elo, b.se_elo), (w.elo, w.se_elo));
+            Some(Estimate {
+                elo,
+                se_elo,
+                season: w.season.max(b.season),
+                source: WorthSource::Blend,
+            })
+        }
+        (Some(w), None) => Some(w),
         (None, b) => b,
     }
+}
+
+/// The calibration of the box worth from the players with both estimates in the same
+/// season, over the tables given.
+pub fn calibration_from(
+    tables: &[(SeasonYear, Arc<WorthTable>)],
+    box_tables: &[(SeasonYear, Arc<BoxTable>)],
+) -> Option<BoxCalibration> {
+    let mut pairs = Vec::new();
+    for (season, t) in tables {
+        let Some((_, b)) = box_tables.iter().find(|(s, _)| s == season) else {
+            continue;
+        };
+        for w in &t.players {
+            if w.se_elo <= 0.0 {
+                continue;
+            }
+            if let Some((box_elo, _)) = super::rookie::season_box(b, w.player_id) {
+                pairs.push((w.worth_elo, w.se_elo, box_elo));
+            }
+        }
+    }
+    worth::calibrate_box(&pairs)
 }
 
 /// The absences a forecast takes when the injury report is used beside absences given by
@@ -516,6 +589,8 @@ pub async fn availability(app: &App, season: SeasonYear) -> Result<Availability,
         absences: vec![],
         survival: None,
         statuses: None,
+        draft: None,
+        box_calibration: None,
         unlisted: 0,
         note,
     };
@@ -579,6 +654,92 @@ pub async fn availability(app: &App, season: SeasonYear) -> Result<Availability,
         }
     }
     let measured = status_table(app, season).await?;
+    let draft = app_rookie::draft_table(app, season).await?;
+    // The listed players, for the draft of each: a rookie is priced by his draft slot
+    // until his minutes say otherwise.
+    let listed_ids: Vec<PlayerId> = report.iter().map(|l| l.player_id).collect();
+    let listed_players: HashMap<PlayerId, Player> = if listed_ids.is_empty() {
+        HashMap::new()
+    } else {
+        app.store
+            .players_by_id(&listed_ids)
+            .await?
+            .into_iter()
+            .map(|p| (p.id, p))
+            .collect()
+    };
+    // The first season each listed player has a line in: seen before this one, he is no
+    // rookie whatever the draft fields say.
+    let first_seasons = app.store.first_appearance_seasons(&listed_ids).await?;
+    // A player's box worth and minutes this season, over his stints.
+    let this_season = |player: PlayerId| -> Option<(f64, f64)> {
+        box_tables
+            .iter()
+            .find(|(s, _)| *s == season)
+            .and_then(|(_, t)| app_rookie::season_box(t, player))
+    };
+    // The estimate a line is priced with, and the bracket of the prior when one priced it.
+    // How much of a box worth shows up as a team drop, over these seasons' players.
+    let calibration = calibration_from(&tables, &box_tables);
+    let estimate = |player_id: PlayerId, player: Option<&Player>| {
+        let found = choose_estimate(
+            pick_estimate(&tables, player_id),
+            pick_box_estimate(&box_tables, player_id),
+            calibration.as_ref(),
+        );
+        let Some(p) = player else {
+            return (found, None);
+        };
+        // A rookie is a player with no line in any stored season before this one,
+        // whatever his draft year: a first-year player, one who lost his first season,
+        // or an arrival from abroad. His bracket is his draft's.
+        // A draft older than five years before the season is no rookie's: a gap in the
+        // stored box scores must not turn a veteran into one.
+        let rookie = !first_seasons.get(&player_id).is_some_and(|s| *s < season)
+            && p.draft_year
+                .is_none_or(|y| y >= i32::from(season) - ROOKIE_DRAFT_YEARS);
+        if !rookie {
+            return (found, None);
+        }
+        let Some(prior) = draft.prior_for(DraftBracket::of(p.draft_round, p.draft_number)) else {
+            return (found, None);
+        };
+        match found {
+            Some(e) if matches!(e.source, WorthSource::Worth | WorthSource::Blend) => {
+                (Some(e), None)
+            }
+            other => {
+                // The prior and his own box worth on the veterans' scale: through the
+                // calibration when there is one.
+                let scale = calibration.as_ref().map_or(1.0, |c| c.slope);
+                let scaled = rookie::DraftPrior {
+                    bracket: prior.bracket,
+                    players: prior.players,
+                    mean_elo: prior.mean_elo * scale,
+                    se_elo: prior.se_elo * scale,
+                    sd_elo: prior.sd_elo * scale,
+                };
+                let own = other
+                    .and_then(|_| this_season(player_id))
+                    .map(|(worth, minutes)| (worth * scale, minutes));
+                let (elo, se_elo) = rookie::shrink(&scaled, own);
+                // Within one error of zero, the prior says nothing: the box worth stands,
+                // or nothing does, as for a worth from the missed games.
+                if elo.abs() < se_elo {
+                    return (other, None);
+                }
+                (
+                    Some(Estimate {
+                        elo,
+                        se_elo,
+                        season,
+                        source: WorthSource::Draft,
+                    }),
+                    Some(prior.bracket),
+                )
+            }
+        }
+    };
     let rule = Some(SpanRule {
         survival: fitted.as_ref().map(|(s, _)| s),
         statuses: measured.as_ref().map(|(t, _)| t),
@@ -594,16 +755,14 @@ pub async fn availability(app: &App, season: SeasonYear) -> Result<Availability,
                      status: AbsenceStatus,
                      status_text: String,
                      return_date: Option<NaiveDate>,
-                     is_listed: bool| {
+                     is_listed: bool,
+                     player: Option<&Player>| {
         let missed_so_far = lines_through.get(&team_id).map(|_| {
             in_progress
                 .get(&(team_id, player_id))
                 .map_or(0, |c| c.missed + since_lines(team_id))
         });
-        let found = choose_estimate(
-            pick_estimate(&tables, player_id),
-            pick_box_estimate(&box_tables, player_id),
-        );
+        let (found, draft_bracket) = estimate(player_id, player);
         let entry = found.map(|e| ReportedAbsence {
             player_id,
             team_id,
@@ -648,6 +807,7 @@ pub async fn availability(app: &App, season: SeasonYear) -> Result<Availability,
             missed_so_far,
             lines_through: lines_through.get(&team_id).copied(),
             listed: is_listed,
+            draft_bracket,
         });
         if let Some(r) = entry {
             reported.push(r);
@@ -668,6 +828,7 @@ pub async fn availability(app: &App, season: SeasonYear) -> Result<Availability,
             l.status.clone(),
             l.return_date,
             true,
+            listed_players.get(&l.player_id),
         );
     }
     // Regular players in a run not on the report: out, whatever the reason.
@@ -724,6 +885,7 @@ pub async fn availability(app: &App, season: SeasonYear) -> Result<Availability,
                 ),
                 None,
                 false,
+                player,
             );
         }
     }
@@ -772,6 +934,8 @@ pub async fn availability(app: &App, season: SeasonYear) -> Result<Availability,
         absences,
         survival,
         statuses,
+        draft: Some((*draft).clone()),
+        box_calibration: calibration,
         unlisted,
         note: None,
     })
@@ -1253,7 +1417,7 @@ mod tests {
     }
 
     #[test]
-    fn the_box_estimate_takes_the_longest_stint_of_the_latest_season() {
+    fn the_box_estimate_weighs_the_stints_of_the_latest_season_by_minutes() {
         use crate::domain::bpm::{BoxTable, Coverage, LeagueBox, PlayerBox};
         let row = |team: i32, minutes: f64, elo: f64| PlayerBox {
             player_id: PlayerId::new(1),
@@ -1299,17 +1463,19 @@ mod tests {
             table(2026, vec![row(1, 300.0, 15.0), row(2, 900.0, 45.0)]),
             table(2025, vec![row(1, 2000.0, 80.0)]),
         ];
+        // The latest season, over both stints weighted by minutes: 300 at 15 and 900 at
+        // 45 give 37.5.
         let e = pick_box_estimate(&tables, PlayerId::new(1)).unwrap();
         assert_eq!(
             (e.elo, e.se_elo, e.season),
-            (45.0, 0.0, SeasonYear::of(2026))
+            (37.5, 0.0, SeasonYear::of(2026))
         );
         assert_eq!(e.source, WorthSource::Box);
         assert_eq!(pick_box_estimate(&tables, PlayerId::new(9)), None);
     }
 
     #[test]
-    fn the_box_estimate_steps_in_when_the_worth_is_within_one_error_of_zero() {
+    fn the_estimates_follow_the_old_rule_without_a_calibration_and_combine_with_one() {
         let est = |elo: f64, se: f64, source| Estimate {
             elo,
             se_elo: se,
@@ -1319,10 +1485,40 @@ mod tests {
         let noisy = est(-16.0, 70.0, WorthSource::Worth);
         let clear = est(60.0, 20.0, WorthSource::Worth);
         let boxed = est(40.0, 0.0, WorthSource::Box);
-        assert_eq!(choose_estimate(Some(noisy), Some(boxed)), Some(boxed));
-        assert_eq!(choose_estimate(Some(clear), Some(boxed)), Some(clear));
-        assert_eq!(choose_estimate(Some(noisy), None), Some(noisy));
-        assert_eq!(choose_estimate(None, Some(boxed)), Some(boxed));
-        assert_eq!(choose_estimate(None, None), None);
+        // Without a calibration, the older rule.
+        assert_eq!(choose_estimate(Some(noisy), Some(boxed), None), Some(boxed));
+        assert_eq!(choose_estimate(Some(clear), Some(boxed), None), Some(clear));
+        assert_eq!(choose_estimate(Some(noisy), None, None), Some(noisy));
+        assert_eq!(choose_estimate(None, Some(boxed), None), Some(boxed));
+        assert_eq!(choose_estimate(None, None, None), None);
+        // With one, the box worth is scaled and carries the error, and the two combine.
+        let c = BoxCalibration {
+            model: "test",
+            pairs: 40,
+            slope: 0.5,
+            slope_se: 0.0,
+            error_elo: 15.0,
+        };
+        let alone = choose_estimate(None, Some(boxed), Some(&c)).unwrap();
+        assert_eq!(
+            (alone.elo, alone.se_elo, alone.source),
+            (20.0, 15.0, WorthSource::Box)
+        );
+        let both = choose_estimate(Some(noisy), Some(boxed), Some(&c)).unwrap();
+        assert_eq!(both.source, WorthSource::Blend);
+        assert!(
+            both.elo > 15.0 && both.elo < 20.0,
+            "pulled a little toward the noisy -16"
+        );
+        assert!(both.se_elo < 15.0);
+        // A clear worth (60 ± 20) against a more precise scaled box worth (20 ± 15): the
+        // box side weighs more, and the result sits between the two.
+        let clear_both = choose_estimate(Some(clear), Some(boxed), Some(&c)).unwrap();
+        assert!(
+            clear_both.elo > 30.0 && clear_both.elo < 40.0,
+            "{}",
+            clear_both.elo
+        );
+        assert_eq!(choose_estimate(Some(noisy), None, Some(&c)), Some(noisy));
     }
 }

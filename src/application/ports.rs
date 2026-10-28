@@ -932,6 +932,12 @@ pub trait PlayerStore: Send + Sync {
     ) -> StoreResult<Vec<crate::domain::bpm::BoxLine>>;
     /// The players with these identifiers, in no particular order.
     async fn players_by_id(&self, ids: &[PlayerId]) -> StoreResult<Vec<Player>>;
+    /// The first season each of these players has a stored line in; a player with none
+    /// is absent.
+    async fn first_appearance_seasons(
+        &self,
+        ids: &[PlayerId],
+    ) -> StoreResult<HashMap<PlayerId, SeasonYear>>;
     async fn player_coverage(&self) -> StoreResult<PlayerCoverage>;
 }
 

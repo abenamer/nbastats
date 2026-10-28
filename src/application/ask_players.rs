@@ -354,6 +354,7 @@ impl PlayerLookups for App {
                     "penalty_elo": l.penalty_elo.map(|v| round(v, 0)), "until": l.until,
                     "weight": l.weight.map(|v| round(v, 2)), "weight_set_by": l.weight_source,
                     "until_set_by": l.span, "games_missed_so_far": l.missed_so_far,
+                    "draft_bracket": l.draft_bracket,
                     "box_scores_through": l.lines_through, "on_report": l.listed,
                 })
             })
@@ -399,7 +400,7 @@ impl PlayerLookups for App {
                 "share_missing_the_next_game": round(c.weight, 2), "games_missed_of_the_next_30": round(c.expected_missed, 1),
                 "span_games": round(c.span_games, 1),
             })).collect::<Vec<_>>()),
-            "note": a.note.unwrap_or_else(|| "A penalty is what the team plays without on a game date; the rating itself does not change. Lines without a penalty have returned, have no worth estimate, or have a worth at or below zero. A line with on_report false is a regular player absent from his team's last games who is not on the report. weight is the share of the worth taken off: measured when the stored reports show how often a line of this status, for a player not yet out or already in a run, missed the next game; else the status default (out 1, doubtful 0.75, questionable or day-to-day 0.5, probable 0.25). until_set_by says what ended the span: the report's return date when it lies beyond the next game, else the expected remaining games of a run this long (expected), the games a line of this status has gone on to miss (measured), the status default, or the season.".to_string()),
+            "note": a.note.unwrap_or_else(|| "A penalty is what the team plays without on a game date; the rating itself does not change. Lines without a penalty have returned, have no worth estimate, or have a worth at or below zero. worth_source: worth is the with/without regression, box the box-score worth scaled by the measured share of it that shows up as a team drop, blend the two combined by precision, draft a rookie's draft prior (what his draft slot's rookies have been worth in their first season, pulled toward his own box worth by his minutes). A line with on_report false is a regular player absent from his team's last games who is not on the report. weight is the share of the worth taken off: measured when the stored reports show how often a line of this status, for a player not yet out or already in a run, missed the next game; else the status default (out 1, doubtful 0.75, questionable or day-to-day 0.5, probable 0.25). until_set_by says what ended the span: the report's return date when it lies beyond the next game, else the expected remaining games of a run this long (expected), the games a line of this status has gone on to miss (measured), the status default, or the season.".to_string()),
         }))
     }
 

@@ -34,7 +34,7 @@ sources:
 | REAS-DATA-002 transactions | Batch upserts, the season replacement and the full recompute each in one transaction; conditional job updates | Implemented |
 | REAS-DATA-003 durable data | Named volumes; backup, restore and persistence scripts | Tested 2026-10-21 |
 | REAS-DATA-004 reproducible builds | Run-time checked queries; no database needed to compile | Implemented |
-| REAS-TEST-001 tests | 220 unit tests, 18 PostgreSQL integration tests (two with a fake results source, four with a fake player source), seeded simulations, invalid-input tests | Pass locally |
+| REAS-TEST-001 tests | 223 unit tests, 18 PostgreSQL integration tests (two with a fake results source, four with a fake player source), seeded simulations, invalid-input tests | Pass locally |
 | REAS-TEST-002 async and CPU work | Engines run on `spawn_blocking` with Rayon; no lock held across `.await` | Implemented |
 | REAS-TEST-003 security | Security review done 2026-10-21: request guard (CSRF, DNS rebinding), security headers, decompression and download caps, work budget, container hardening; see [Security model](/concepts/security.md) | Reviewed; \`cargo audit\` result recorded in the log |
 | REAS-TEST-004 evidence | This table lists only executed checks | Maintained |
