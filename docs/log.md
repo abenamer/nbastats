@@ -1,5 +1,8 @@
 # Bundle update log
 
+## 2026-10-28
+* **Update**: [Player worth](/concepts/player-worth.md): the placeholder rule covers every status, the box worth is scaled by a measured calibration and combined with the missed-games worth by precision, and a rookie is defined by his first stored season. The API reference and the term Box calibration follow.
+
 ## 2026-10-27
 * **Update**: [Player worth](/concepts/player-worth.md) gains the section Rookies: the draft prior, and a limit. The API reference and the term Draft prior follow.
 * **Update**: [Season forecast engine](/concepts/season-engine.md) and [Playoff engine](/concepts/playoff-engine.md) describe the bracket drawn through every round, with the projected occupants of the later rounds.

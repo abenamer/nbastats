@@ -541,6 +541,110 @@ impl AbsenceStatus {
     }
 }
 
+/// Named in the availability answer.
+pub const BOX_CALIBRATION_VERSION: &str = "box-calibration-1.0";
+/// Fewer players with both estimates than this give no calibration.
+pub const MIN_CALIBRATION_PAIRS: usize = 30;
+/// The calibrated error never reads below this, in Elo: a floor against a lucky fit.
+pub const MIN_CALIBRATION_ERROR: f64 = 5.0;
+
+/// How much of a box worth shows up as a team drop, measured over the players who have
+/// both a worth from the missed games and a box worth: the slope of the first on the
+/// second through the origin, each player weighted by the precision of his worth, and the
+/// error of the scaled box worth as a predictor of the drop (the spread of the residuals
+/// with the worths' own errors taken out).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct BoxCalibration {
+    pub model: &'static str,
+    pub pairs: u32,
+    pub slope: f64,
+    /// The error of the slope.
+    pub slope_se: f64,
+    /// The error of the scaled box worth as a predictor of the drop, beyond the slope's.
+    pub error_elo: f64,
+}
+
+impl BoxCalibration {
+    /// The prior a box worth gives: the scaled worth, with the residual error and the
+    /// slope's error at that size.
+    pub fn prior(&self, box_elo: f64) -> (f64, f64) {
+        (
+            self.slope * box_elo,
+            (self.error_elo.powi(2) + (self.slope_se * box_elo).powi(2)).sqrt(),
+        )
+    }
+}
+
+/// Fit the calibration on `(worth_elo, se_elo, box_elo)` triples. None below
+/// [`MIN_CALIBRATION_PAIRS`] pairs with a positive error, without spread in the box
+/// worths, or when the slope is not at least two errors above zero: a box worth that has
+/// not shown up as a team drop calibrates nothing.
+pub fn calibrate_box(pairs: &[(f64, f64, f64)]) -> Option<BoxCalibration> {
+    let usable: Vec<&(f64, f64, f64)> = pairs
+        .iter()
+        .filter(|(w, se, b)| se.is_finite() && *se > 0.0 && w.is_finite() && b.is_finite())
+        .collect();
+    if usable.len() < MIN_CALIBRATION_PAIRS {
+        return None;
+    }
+    let weight = |se: f64| 1.0 / (se * se);
+    if usable
+        .iter()
+        .map(|(_, se, b)| weight(*se) * b * b)
+        .sum::<f64>()
+        <= 0.0
+    {
+        return None;
+    }
+    // A first pass weighted by the measurement errors alone gives the residual spread
+    // beyond them; the second weighs each player by both, so the slope and its error
+    // describe the same estimator.
+    let fit = |weight: &dyn Fn(f64) -> f64| -> (f64, f64, f64) {
+        let sxx: f64 = usable.iter().map(|(_, se, b)| weight(*se) * b * b).sum();
+        let sxy: f64 = usable.iter().map(|(w, se, b)| weight(*se) * b * w).sum();
+        let slope = sxy / sxx;
+        let total: f64 = usable.iter().map(|(_, se, _)| weight(*se)).sum();
+        let excess: f64 = usable
+            .iter()
+            .map(|(w, se, b)| weight(*se) * ((w - slope * b).powi(2) - se * se))
+            .sum::<f64>()
+            / total;
+        (
+            slope,
+            excess.max(0.0).sqrt().max(MIN_CALIBRATION_ERROR),
+            sxx,
+        )
+    };
+    let (_, tau, _) = fit(&weight);
+    let both = move |se: f64| 1.0 / (se * se + tau * tau);
+    let (slope, error_elo, sxx) = fit(&both);
+    let slope_se = sxx.recip().sqrt();
+    // Not two errors above zero: the box worth has not shown up as a team drop.
+    if slope <= 2.0 * slope_se {
+        return None;
+    }
+    Some(BoxCalibration {
+        model: BOX_CALIBRATION_VERSION,
+        pairs: usable.len() as u32,
+        slope,
+        slope_se,
+        error_elo,
+    })
+}
+
+/// Two estimates of the same worth weighted by their precision: `(elo, se)` each. An
+/// estimate without a positive error is taken as exact.
+pub fn combine(a: (f64, f64), b: (f64, f64)) -> (f64, f64) {
+    match (a.1 > 0.0, b.1 > 0.0) {
+        (false, _) => a,
+        (true, false) => b,
+        (true, true) => {
+            let (pa, pb) = (1.0 / (a.1 * a.1), 1.0 / (b.1 * b.1));
+            ((a.0 * pa + b.0 * pb) / (pa + pb), (1.0 / (pa + pb)).sqrt())
+        }
+    }
+}
+
 /// A rating penalty for a team over a span of dates: a player out, weighted by his status.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Absence {
@@ -636,17 +740,18 @@ pub struct SpanRule<'a> {
 /// one game or more), when the stored reports back a curve for the status; else the
 /// status's default. Out for the season keeps its full weight, and so does a line whose
 /// return date stands, the source's own estimate. A status measured as never missing the
-/// next game prices nothing. A rule without either curve is no rule.
+/// next game prices nothing.
 ///
 /// The span: out for the season ends with the season. A return date beyond the team's
-/// next game is the source's estimate and stands. A return date that is the next game or
-/// earlier is the feed's placeholder. A player listed out, or in a run of
-/// [`SPELL_MIN_MISSED`] games, is then priced for the expected remaining games of a run as
-/// long as his, read off the survival curve, when the games he has missed so far are
-/// known. Any other line with a status curve is priced for the games a line of its status
-/// has gone on to miss. Both are laid over the team's schedule. The rest, every line
-/// without a rule and a team without box scores take the status's default span. Without a
-/// curve to lean on, a return date of the report day or before prices nothing.
+/// next game is the source's estimate and stands. A return date that is the next game is
+/// the feed's placeholder, whatever the status, and so is any date up to it for a player
+/// in a spell or a status with a curve; a date before the next game that is not a
+/// placeholder says he is back before it and prices nothing. A player listed out, or in a run of [`SPELL_MIN_MISSED`]
+/// games, is then priced for the expected remaining games of a run as long as his, read
+/// off the survival curve, when the games he has missed so far are known. Any other line
+/// with a status curve is priced for the games a line of its status has gone on to miss.
+/// Both are laid over the team's schedule. The rest, every line without a rule and a team
+/// without box scores take the status's default span.
 pub fn span_for(
     r: &ReportedAbsence,
     report_date: NaiveDate,
@@ -656,8 +761,6 @@ pub fn span_for(
     if r.status.weight() <= 0.0 {
         return None;
     }
-    // A rule without a curve adds nothing: the line is priced as without one.
-    let rule = rule.filter(|x| x.survival.is_some() || x.statuses.is_some());
     let upcoming = rule.and_then(|x| x.upcoming.get(&r.team_id));
     // The status curve in the player's state, when the stored reports back one and the
     // state is known.
@@ -692,14 +795,14 @@ pub fn span_for(
         || r.missed_so_far.is_some_and(|k| k >= SPELL_MIN_MISSED))
         && r.missed_so_far.is_some();
     let survival = rule.and_then(|x| x.survival);
-    let expected_applies = in_spell && survival.is_some() && upcoming.is_some();
-    let measured_applies = curve.is_some() && upcoming.is_some();
     if let Some(d) = r.return_date {
-        let placeholder = next_game.is_some_and(|g| d <= g);
-        // With a curve to lean on, a date up to the next game, today's date included, is
-        // the feed's placeholder. Otherwise a date of today or before prices nothing, and
-        // a later one stands.
-        if d <= report_date && !(placeholder && (expected_applies || measured_applies)) {
+        // The feed's placeholder is the team's next game, whatever the status; for a player
+        // in a spell, or a status with a curve (measured over such lines, dated or not),
+        // any date up to it. A date before the next game that is not a placeholder says
+        // he is back before it: nothing to price. A later date stands.
+        let placeholder =
+            next_game.is_some_and(|g| d == g || (d < g && (in_spell || curve.is_some())));
+        if !placeholder && (d <= report_date || next_game.is_some_and(|g| d < g)) {
             return None;
         }
         if !placeholder {
@@ -1603,29 +1706,41 @@ mod tests {
         )
         .unwrap();
         assert_eq!((out.to, out.source), (d(23), SpanSource::Status));
-        // A rule with neither curve is no rule: the placeholder date stands as it did.
+        // The schedule alone tells the placeholder: with neither curve, a date that is the
+        // next game (or, for a player in a spell, any date up to it) takes the status
+        // default, and a questionable line about tonight prices tonight at its default.
         let bare = SpanRule {
             survival: None,
             statuses: None,
             upcoming: &upcoming,
         };
-        let out = span_for(
-            &reported(AbsenceStatus::Out, Some(11), 2),
-            report,
-            d(40),
-            Some(&bare),
-        )
-        .unwrap();
-        assert_eq!((out.to, out.source), (d(10), SpanSource::ReturnDate));
-        assert_eq!(
-            span_for(
-                &reported(AbsenceStatus::Out, Some(10), 2),
-                report,
-                d(40),
-                Some(&bare)
-            ),
-            None
-        );
+        let bare_span = |r: &ReportedAbsence| span_for(r, report, d(40), Some(&bare)).unwrap();
+        let out = bare_span(&reported(AbsenceStatus::Out, Some(11), 2));
+        assert_eq!((out.to, out.source), (d(23), SpanSource::Status));
+        let out = bare_span(&reported(AbsenceStatus::Out, Some(10), 2));
+        assert_eq!((out.to, out.source), (d(23), SpanSource::Status));
+        let q = bare_span(&reported(AbsenceStatus::Questionable, Some(11), 0));
+        assert_eq!((q.to, q.source, q.weight), (d(11), SpanSource::Status, 0.5));
+        // Back before the next game, today or tomorrow with the game the day after: nothing.
+        for day in [10, 11] {
+            let mut tight = HashMap::new();
+            tight.insert(TeamId::new(1), vec![d(12), d(14)]);
+            let later = SpanRule {
+                survival: None,
+                statuses: None,
+                upcoming: &tight,
+            };
+            assert_eq!(
+                span_for(
+                    &reported(AbsenceStatus::Questionable, Some(day), 0),
+                    report,
+                    d(40),
+                    Some(&later)
+                ),
+                None,
+                "day {day}"
+            );
+        }
     }
 
     #[test]
@@ -1779,6 +1894,51 @@ mod tests {
         let later = tonight(&games, d(11), &ratings, &absences, 60.0).unwrap();
         assert_eq!((later.date, later.played, later.games.len()), (d(14), 0, 1));
         assert!(tonight(&games, d(15), &ratings, &absences, 60.0).is_none());
+    }
+
+    #[test]
+    fn the_box_calibration_measures_the_slope_and_the_error_and_combines_by_precision() {
+        // Thirty players whose worth is 0.6 of the box worth plus a residual of ±20
+        // around it, each measured with an error of 10: the slope is 0.6 and the error
+        // the residual spread, with the measurement error taken out.
+        let mut pairs = Vec::new();
+        for i in 0..30 {
+            let b = 20.0 + f64::from(i) * 5.0;
+            let residual = if i % 2 == 0 { 20.0 } else { -20.0 };
+            pairs.push((0.6 * b + residual, 10.0, b));
+        }
+        let c = calibrate_box(&pairs).unwrap();
+        assert_eq!(c.pairs, 30);
+        assert!((c.slope - 0.6).abs() < 0.02, "{}", c.slope);
+        assert!(
+            (c.error_elo - (400.0f64 - 100.0).sqrt()).abs() < 1.5,
+            "{}",
+            c.error_elo
+        );
+        assert!(c.slope_se > 0.0 && c.slope_se < 0.1, "{}", c.slope_se);
+        // The prior of a box worth: scaled, with the residual and the slope's error.
+        let (elo, se) = c.prior(100.0);
+        assert!((elo - 100.0 * c.slope).abs() < 1e-12);
+        assert!(se > c.error_elo && se < c.error_elo + 10.0);
+        // Too few pairs, none with an error, or a box worth that tells nothing about the
+        // drop (a slope within its error of zero) give no calibration.
+        assert!(calibrate_box(&pairs[..29]).is_none());
+        let exact: Vec<(f64, f64, f64)> = pairs.iter().map(|(w, _, b)| (*w, 0.0, *b)).collect();
+        assert!(calibrate_box(&exact).is_none());
+        let unrelated: Vec<(f64, f64, f64)> = pairs
+            .iter()
+            .enumerate()
+            .map(|(i, (_, se, b))| (if i % 2 == 0 { 30.0 } else { -30.0 }, *se, *b))
+            .collect();
+        assert!(calibrate_box(&unrelated).is_none());
+        // A noisy own estimate barely moves a precise prior, an exact one wins outright.
+        let (elo, se) = combine((60.0, 20.0), (-68.0, 64.0));
+        assert!(elo > 45.0 && elo < 60.0, "{elo}");
+        assert!(se < 20.0 && se > 15.0, "{se}");
+        assert_eq!(combine((60.0, 0.0), (-68.0, 64.0)), (60.0, 0.0));
+        assert_eq!(combine((60.0, 20.0), (-68.0, 0.0)), (-68.0, 0.0));
+        let (elo, se) = combine((50.0, 10.0), (50.0, 10.0));
+        assert!((elo - 50.0).abs() < 1e-12 && (se - 10.0 / 2f64.sqrt()).abs() < 1e-12);
     }
 
     #[test]
