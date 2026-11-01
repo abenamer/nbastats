@@ -645,6 +645,49 @@ pub fn combine(a: (f64, f64), b: (f64, f64)) -> (f64, f64) {
     }
 }
 
+/// One season's worth of a player from the games his team played without him, in Elo:
+/// the season's estimate and its error, already pulled toward zero by the season's prior
+/// spread `prior_sd_elo`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SeasonWorth {
+    pub elo: f64,
+    pub se_elo: f64,
+    pub prior_sd_elo: f64,
+}
+
+/// A player's worth over several seasons from the games without him. Each season's
+/// estimate is turned back into what its own games say (its precision less its prior's,
+/// the prior's mean being zero), the seasons' games are added up, and one prior is applied
+/// to the sum: `prior_sd_elo`, the latest season's. A season no tighter than its prior adds
+/// nothing. Returns `(elo, se)`; with nothing from the games, zero and the prior spread.
+/// So a few games this season no longer stand for a player measured over three.
+pub fn pool_seasons(seasons: &[SeasonWorth], prior_sd_elo: f64) -> (f64, f64) {
+    let precision = |sd: f64| if sd > 0.0 { 1.0 / (sd * sd) } else { 0.0 };
+    let (mut games, mut weighted) = (0.0, 0.0);
+    for s in seasons {
+        let posterior = precision(s.se_elo);
+        let from_games = posterior - precision(s.prior_sd_elo);
+        if from_games > 0.0 {
+            games += from_games;
+            // A posterior mean is the games' mean times their share of the precision.
+            weighted += s.elo * posterior;
+        }
+    }
+    let total = games + precision(prior_sd_elo);
+    if total <= 0.0 {
+        return (0.0, prior_sd_elo);
+    }
+    (weighted / total, (1.0 / total).sqrt())
+}
+
+/// A player's box worth over several seasons, each `(elo, minutes)`, weighted by the
+/// minutes: a handful of games this season count for their minutes against seasons of
+/// them. None without minutes.
+pub fn pool_box(seasons: &[(f64, f64)]) -> Option<f64> {
+    let minutes: f64 = seasons.iter().map(|(_, m)| m.max(0.0)).sum();
+    (minutes > 0.0).then(|| seasons.iter().map(|(elo, m)| elo * m.max(0.0)).sum::<f64>() / minutes)
+}
+
 /// A rating penalty for a team over a span of dates: a player out, weighted by his status.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Absence {
@@ -1095,6 +1138,44 @@ fn normal_cdf(x: f64) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn seasons_pool_their_games_under_one_prior() {
+        let season = |elo: f64, se: f64| SeasonWorth {
+            elo,
+            se_elo: se,
+            prior_sd_elo: 60.0,
+        };
+        // One season gives itself back.
+        let (e, se) = pool_seasons(&[season(40.0, 20.0)], 60.0);
+        assert!((e - 40.0).abs() < 1e-9 && (se - 20.0).abs() < 1e-9);
+        // Two like seasons are tighter and pulled less toward zero than either.
+        let (e, se) = pool_seasons(&[season(40.0, 20.0), season(40.0, 20.0)], 60.0);
+        assert!(e > 40.0 && e < 45.0 && se < 20.0 && se > 14.0, "{e} {se}");
+        // A season of a few games, barely tighter than its prior, moves a measured
+        // player little: three seasons at 120 and five games at 10.
+        let few = season(10.0, 58.0);
+        let (e, _) = pool_seasons(
+            &[
+                few,
+                season(120.0, 25.0),
+                season(120.0, 25.0),
+                season(120.0, 25.0),
+            ],
+            60.0,
+        );
+        assert!(e > 105.0, "{e}");
+        // A season no tighter than its prior adds nothing; nothing at all is the prior.
+        assert_eq!(pool_seasons(&[season(5.0, 60.0)], 60.0), (0.0, 60.0));
+        assert_eq!(pool_seasons(&[], 60.0), (0.0, 60.0));
+    }
+
+    #[test]
+    fn box_seasons_pool_by_minutes() {
+        assert_eq!(pool_box(&[(10.0, 150.0), (100.0, 2850.0)]), Some(95.5));
+        assert_eq!(pool_box(&[]), None);
+        assert_eq!(pool_box(&[(10.0, 0.0)]), None);
+    }
     use crate::domain::models::{EloSource, GameType, ResultSource};
 
     fn d(day: u32) -> NaiveDate {

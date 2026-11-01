@@ -115,7 +115,7 @@
       const priced = c.lines.filter(l => l.penalty_elo != null).length;
       document.getElementById('cardNote').textContent = c.note
         ? c.note
-        : `${c.team_code} · ${c.team_name}, ${labelOf(c.season)}. Rating ${num(c.rating_elo, 0)} (${c.rating_is_preseason ? 'preseason, before any game' : `after the game of ${c.rating_date}`}); today ${c.today} the team plays at ${num(c.rating_today, 0)}, ${num(c.penalty_today, 0)} below it. Report of ${c.report_date}: ${c.lines.length} line${c.lines.length === 1 ? '' : 's'}, ${priced} priced. ${c.listed.games} regular-season games remain, ${c.listed.games_covered} with a penalty as listed. ${bonusText(c.home_advantage, c.home_advantage_fitted)}.`;
+        : `${c.team_code} · ${c.team_name}, ${labelOf(c.season)}. Full-strength rating ${num(c.rating_elo, 0)} (${c.rating_is_preseason ? 'preseason, before any game' : `after the game of ${c.rating_date}`}; stored Elo ${num(c.rating_stored, 0)}${c.games_short ? `, with ${c.games_short} game${c.games_short === 1 ? '' : 's'} played short taken out` : ''}); today ${c.today} the team plays at ${num(c.rating_today, 0)}, ${num(c.penalty_today, 0)} below it. Report of ${c.report_date}: ${c.lines.length} line${c.lines.length === 1 ? '' : 's'}, ${priced} priced. ${c.listed.games} regular-season games remain, ${c.listed.games_covered} with a penalty as listed. ${bonusText(c.home_advantage, c.home_advantage_fitted)}.`;
       const totals = [
         { label: 'As listed', e: c.listed, note: 'each absence ends when the report, the curve or the status default says' },
         { label: 'Held to the last game', e: c.held, note: `today's absences (${num(c.penalty_today, 0)} Elo) kept through the last regular-season game, ${c.last_regular_game}` }];
@@ -131,7 +131,7 @@
         { label: 'Status', value: 'status_text', left: true },
         { label: 'Return', value: l => l.return_date || '', left: true, title: 'The report\'s return date' },
         { label: 'Missed', value: l => l.missed_so_far == null ? '' : l.missed_so_far, title: 'Team games missed in a row up to the latest game with box scores' },
-        { label: 'Worth (Elo)', value: l => l.worth_elo == null ? 'no estimate' : `${num(l.worth_elo, 0)}${l.se_elo ? ` ± ${num(l.se_elo, 0)}` : ''} (${labelOf(l.worth_season)}, ${{ box: 'box score', blend: 'missed games and box score', draft: 'draft prior', worth: 'missed games' }[l.worth_source] || l.worth_source})`, left: true, title: 'What the team loses per game without him: the with/without worth, the box-score worth scaled by its measured share, the two combined by precision, or a rookie\'s draft prior' },
+        { label: 'Worth (Elo)', value: l => l.worth_elo == null ? 'no estimate' : `${num(l.worth_elo, 0)}${l.se_elo ? ` ± ${num(l.se_elo, 0)}` : ''} (${l.worth_first_season && l.worth_first_season !== l.worth_season ? `${labelOf(l.worth_first_season)} to ${labelOf(l.worth_season)}` : labelOf(l.worth_season)}, ${{ box: 'box score', blend: 'missed games and box score', draft: 'draft prior', worth: 'missed games' }[l.worth_source] || l.worth_source})`, left: true, title: 'What the team loses per game without him, over the seasons shown: the with/without worth with the seasons pooled, the box-score worth with the seasons pooled by minutes and scaled by its measured share, the two combined by precision, or a rookie\'s draft prior' },
         { label: 'Weight', value: l => l.weight == null ? '' : `${num(100 * l.weight, 0)}% (${l.weight_source === 'measured' ? 'measured' : 'default'})`, left: true, title: 'The share of the worth taken off: the measured chance a line of this status misses the next game, or the status default' },
         { label: 'Penalty / game', value: l => l.penalty_elo == null ? '' : `${num(l.penalty_elo, 0)}${l.expected_penalty_elo != null && Math.abs(l.expected_penalty_elo - l.penalty_elo) >= 0.5 ? ` (${num(l.expected_penalty_elo, 0)} priced)` : ''}`, cls: l => l.penalty_elo ? 'bad' : '', title: 'Worth × weight, capped at 400. With an error on the worth, the games are priced at the mean of the draw held between 0 and 400, shown in brackets when it differs' },
         { label: 'Until', value: l => l.until ? `${l.until} (${spanLabel[l.span] || l.span})` : '', left: true, title: 'The last date the penalty applies, and what set it' },
@@ -167,7 +167,7 @@
       // The night may not be today: an off day, a break, or every game of today played.
       const when = t.night === t.as_of ? 'tonight' : `on ${t.night}`;
       note.textContent = t.note ? t.note : t.night
-        ? `${labelOf(t.season)}: ${t.games.length} game${t.games.length === 1 ? '' : 's'} ${t.games_played ? `still to play of ${t.games.length + t.games_played} ` : ''}on ${t.night}${t.night === t.as_of ? ' (today)' : ', the next night with a game'}, read as of ${t.as_of} with the report of ${t.report_date}. ${bonusText(t.home_advantage, t.home_advantage_fitted)}.`
+        ? `${labelOf(t.season)}: ${t.games.length} game${t.games.length === 1 ? '' : 's'} ${t.games_played ? `still to play of ${t.games.length + t.games_played} ` : ''}on ${t.night}${t.night === t.as_of ? ' (today)' : ', the next night with a game'}, read as of ${t.as_of} with the report of ${t.report_date}. ${bonusText(t.home_advantage, t.home_advantage_fitted)}. Ratings are at full strength: ${t.games_played_short ? `${t.games_played_short} team game${t.games_played_short === 1 ? '' : 's'} played short this season are taken out of them` : 'no game played short is on record, so they equal the stored Elo'} (${t.rating_model}).`
         : `${labelOf(t.season)}: no regular-season game remains on or after ${t.as_of}.`;
       // Laid out as a sportsbook lists a game: the visitor on top, the home team under it with
       // an @, each with its own spread and moneyline beside the sportsbook's; then each side's
@@ -238,7 +238,9 @@
       }
       document.getElementById('tonightTeams').innerHTML = t.teams.length ? table([
         { label: 'Team', value: x => teamLink(x.code, t.season), raw: true, left: true },
-        { label: 'Elo', value: x => num(x.rating, 0), title: 'The rating as of the date' },
+        { label: 'Elo', value: x => num(x.stored_rating, 0), title: 'The stored Elo as of the date: the absences of the games played are in it, since a loss played short lowered it like any other' },
+        { label: 'Full strength', value: x => num(x.rating, 0), cls: x => Math.abs(x.rating - x.stored_rating) >= 0.5 ? (x.rating > x.stored_rating ? 'good' : 'bad') : '', title: 'The season\'s games replayed with the Elo each side was missing in each game (listed on that day\'s report and absent from the box score) taken out of the expectation: the rating of the full team, which tonight\'s absences come off' },
+        { label: 'Games short', value: x => x.games_short || '', title: 'Games the team played with players missing, whose absences the full-strength rating takes out' },
         { label: `Out ${when} (Elo)`, value: x => x.penalty ? `−${num(x.penalty, 0)}` : '', cls: x => x.penalty ? 'bad' : '', title: 'The penalties of the absences that cover the night, each the mean of its draw when the worth has an error' },
         { label: `Elo ${when}`, value: x => num(x.rating_tonight, 0), cls: x => x.penalty ? 'bad' : '', title: `The rating the team plays at ${when}` },
         { label: 'Plays', value: x => x.opponent ? `${x.home ? 'vs' : 'at'} ${x.opponent}` : '', left: true, title: 'Blank for a team not playing, or whose game is already played' },

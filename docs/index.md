@@ -61,6 +61,7 @@ This project follows the [REAS engineering standard](https://github.com/abenamer
 * [ADR 0004 — Compute first](decisions/0004-compute-first.md) - Why the application computes every rating itself and keeps the archive's ratings as reference values.
 * [ADR 0005 — Question box through OpenRouter](decisions/0005-question-box-via-openrouter.md) - Why the question box uses a hosted model through an OpenAI-compatible API with read-only tools.
 * [ADR 0006 — Market lines from ESPN's scoreboard](decisions/0006-market-lines-from-espn-scoreboard.md) - Why the Tonight panel reads the night's sportsbook lines from ESPN's free feed, not stored, instead of a paid odds service.
+* [ADR 0007 — Full-strength rating from a replayed season](decisions/0007-full-strength-rating.md) - Why tonight's absences are priced off a rating whose played games are replayed with each side's absences, instead of off the stored Elo.
 
 # History
 

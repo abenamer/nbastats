@@ -51,6 +51,7 @@ These are project-specific technical terms. They are not a reproduction of the A
 | Fair moneyline | A win chance written as American odds with no bookmaker margin. The favourite's line is the stake that wins 100 (−150). The underdog's line is what 100 wins (+150). At a sportsbook, the favourite must risk more to win 100, and 100 on the underdog wins less. Compare its lines after its margin is taken out. |
 | Fetch window | The dates a results sync asks the source for: the whole season on the first sync, then the days from the last played game to today. |
 | Franchise | The organisation, followed through relocations and renamings. Identified by `FranchiseId` and a key such as `GSW`. |
+| Full-strength rating | A team's Elo with the absences of the games it played taken out: the season's games replayed with the Elo each side was missing in each game (listed on that day's report and absent from the box score) in the expectation. Tonight's absences come off it once. Computed in `domain::full_strength`. |
 | Franchise of interest | On the Alpha Simulator, the franchise whose own probability of K or more titles is reported; `target_index` in the parameters. |
 | Game log | The stored list of games with the application's Elo before and after each game, and the archive's reference ratings for archive games. |
 | Game report | The wire-service recap of a played game (the Associated Press recap that ESPN hosts), linked from the game's score when the lookup finds one; stored by date and team codes. |

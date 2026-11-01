@@ -66,6 +66,12 @@ pub struct SeasonParams {
     /// bound the dated forecast sits above. See [`SeasonForecast::held`].
     #[serde(default)]
     pub hold_absences: bool,
+    /// Each listed team's current rating moved by `elo` before the simulation: the
+    /// full-strength rating less the stored one, so a forecast that prices the injury
+    /// report takes the absences off the full team rather than twice. See
+    /// `domain::full_strength`.
+    #[serde(default)]
+    pub rating_shifts: Vec<crate::domain::full_strength::RatingShift>,
 }
 
 fn default_home_adv() -> f64 {
@@ -93,6 +99,26 @@ pub fn check_regular_home_advantage(h: f64) -> Result<(), ValidationError> {
 
 impl SeasonParams {
     pub fn validate(&self, max_iterations: u64) -> Result<(), ValidationError> {
+        {
+            use crate::domain::full_strength::{MAX_SHIFTS, MAX_SHIFT_ELO};
+            let mut teams: Vec<TeamId> = self.rating_shifts.iter().map(|r| r.team_id).collect();
+            teams.sort_unstable();
+            teams.dedup();
+            if self.rating_shifts.len() > MAX_SHIFTS
+                || teams.len() != self.rating_shifts.len()
+                || self
+                    .rating_shifts
+                    .iter()
+                    .any(|r| !r.elo.is_finite() || r.elo.abs() > MAX_SHIFT_ELO)
+            {
+                return invalid(
+                    "rating_shifts",
+                    format!(
+                        "at most {MAX_SHIFTS} rating shifts, one per team, each a finite number of at most {MAX_SHIFT_ELO} Elo either way"
+                    ),
+                );
+            }
+        }
         if self.iterations == 0 || self.iterations > max_iterations {
             return invalid(
                 "iterations",
@@ -984,6 +1010,12 @@ impl Setup {
         for (e, first) in elo.iter_mut().zip(&first_pre) {
             if e.is_nan() {
                 *e = if first.is_nan() { 1500.0 } else { *first };
+            }
+        }
+        // The full-strength ratings, when the forecast was given them.
+        for shift in &params.rating_shifts {
+            if let Some(&i) = idx.get(&shift.team_id) {
+                elo[i] += shift.elo;
             }
         }
         let mut format = PlayoffFormat::for_season(params.season);
@@ -2225,6 +2257,7 @@ mod tests {
     fn cup_params(season: i32, as_of: &str) -> SeasonParams {
         SeasonParams {
             hold_absences: false,
+            rating_shifts: Vec::new(),
             season: SeasonYear::of(season),
             as_of: Some(NaiveDate::parse_from_str(as_of, "%Y-%m-%d").unwrap()),
             iterations: 200,
@@ -2289,6 +2322,64 @@ mod tests {
         params.absences[0].to = params.absences[0].from;
         params.absences[0].se_elo = 1000.0;
         assert!(params.validate(10_000).is_err());
+    }
+
+    #[test]
+    fn a_rating_shift_moves_the_team_and_an_equal_absence_cancels_it() {
+        use crate::domain::full_strength::RatingShift;
+        use crate::domain::simulation::progress::Silent;
+        let (teams, games) = cup_season(2024, false, false);
+        let mut params = cup_params(2024, "2023-11-01");
+        params.iterations = 2000;
+        let base = run(&params, &games, &teams, &Silent).unwrap();
+        let team = base.teams[0].team_id;
+        let base_wins = base.teams[0].expected_wins;
+        // Up 100 Elo at full strength: more wins.
+        params.rating_shifts = vec![RatingShift {
+            team_id: team,
+            elo: 100.0,
+        }];
+        let up = run(&params, &games, &teams, &Silent).unwrap();
+        let row = up.teams.iter().find(|t| t.team_id == team).unwrap();
+        assert!(
+            row.expected_wins > base_wins,
+            "{} vs {}",
+            row.expected_wins,
+            base_wins
+        );
+        // The same 100 Elo off as an absence for the rest of the season gives the stored
+        // rating's forecast back, with the same seed.
+        params.absences = vec![worth::Absence {
+            team_id: team,
+            from: NaiveDate::from_ymd_opt(2023, 11, 1).unwrap(),
+            to: NaiveDate::from_ymd_opt(2024, 6, 30).unwrap(),
+            elo: 100.0,
+            player_id: None,
+            se_elo: 0.0,
+        }];
+        let even = run(&params, &games, &teams, &Silent).unwrap();
+        let row = even.teams.iter().find(|t| t.team_id == team).unwrap();
+        assert!(
+            (row.expected_wins - base_wins).abs() < 1.0,
+            "{} vs {}",
+            row.expected_wins,
+            base_wins
+        );
+        // Validation: a shift that is not finite or beyond the cap.
+        params.rating_shifts[0].elo = f64::NAN;
+        assert!(params.validate(10_000).is_err());
+        params.rating_shifts[0].elo = 401.0;
+        assert!(params.validate(10_000).is_err());
+        params.rating_shifts[0].elo = -400.0;
+        assert!(params.validate(10_000).is_ok());
+        // One shift per team: a second for the same team stacks nothing.
+        params.rating_shifts.push(params.rating_shifts[0]);
+        assert!(params.validate(10_000).is_err());
+        // Parameters stored before the shifts existed still read, with none.
+        let mut old = serde_json::to_value(&params).unwrap();
+        old.as_object_mut().unwrap().remove("rating_shifts");
+        let read: SeasonParams = serde_json::from_value(old).unwrap();
+        assert!(read.rating_shifts.is_empty());
     }
 
     #[test]

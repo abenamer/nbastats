@@ -21,7 +21,6 @@ use super::ports::{InjuryLine, PlayerStore, StoreError};
 use super::scheduler::current_season;
 use super::state::{App, SeasonLoadError};
 use super::worth as app_worth;
-use super::worth::rating_now;
 
 /// Players a name search returns to the model.
 const MAX_PLAYERS: i64 = 8;
@@ -352,7 +351,7 @@ impl PlayerLookups for App {
                     "player_id": l.player_id.as_i32(), "name": l.name, "status": l.status_text,
                     "return_date": l.return_date,
                     "worth_elo": l.worth_elo.map(|v| round(v, 0)), "se_elo": l.se_elo.map(|v| round(v, 0)),
-                    "worth_season": l.worth_season, "worth_source": l.worth_source,
+                    "worth_season": l.worth_season, "worth_first_season": l.worth_first_season, "worth_source": l.worth_source,
                     "penalty_elo": l.penalty_elo.map(|v| round(v, 0)), "until": l.until,
                     "weight": l.weight.map(|v| round(v, 2)), "weight_set_by": l.weight_source,
                     "until_set_by": l.span, "games_missed_so_far": l.missed_so_far,
@@ -373,20 +372,31 @@ impl PlayerLookups for App {
             .iter()
             .filter(|g| g.game_type == GameType::Regular && g.involves(team_id))
             .count();
-        let Some(rating) = rating_now(&data.games, team_id) else {
+        // Both ratings read at today, so they cover the same games.
+        let Some(rating) = app_worth::rating_as_of(&data.games, team_id, today) else {
             return Ok(error(format!(
                 "{code} is not in the {} season",
                 season.label()
             )));
         };
         let rating = Some(rating);
+        // The full-strength rating: the absences of the games played are out of it, so
+        // today's absences come off the full team once.
+        let full = match or_error(app_worth::full_strength(self, season, today).await)? {
+            Ok(f) => f.get(&team_id).copied(),
+            Err(e) => return Ok(e),
+        };
+        let full_rating = full.map_or_else(|| rating.map_or(0.0, |(e, _, _)| e), |f| f.rating);
         Ok(json!({
             "team": code, "season": season, "report_date": a.report_date, "today": today,
-            "rating_elo": rating.map(|(e, _, _)| round(e, 0)),
+            "rating_elo": round(full_rating, 0),
+            "rating_stored_elo": rating.map(|(e, _, _)| round(e, 0)),
+            "rating_note": "rating_elo is the full-strength rating: the season's games replayed with the Elo each side was missing in the expectation, so a loss played short does not lower it; rating_stored_elo is the plain Elo, which the absences of the games played are in.",
+            "games_played_short": full.map_or(0, |f| f.games_short),
             "rating_date": rating.map(|(_, d, _)| d),
             "rating_is_preseason": rating.map(|(_, _, played)| !played),
             "penalty_today_elo": round(today_penalty, 0),
-            "rating_with_absences_today": rating.map(|(e, _, _)| round(e - today_penalty, 0)),
+            "rating_with_absences_today": round(full_rating - today_penalty, 0),
             "everyone_healthy_gain_elo": round(today_penalty, 0),
             "mean_penalty_remaining_games_elo": round(mean_penalty, 0),
             "remaining_games_counted": "regular-season games on the stored schedule with no result, dated today or later: the games a forecast from today simulates",
@@ -428,6 +438,7 @@ impl PlayerLookups for App {
         let teams = self.teams().await?;
         let mut params = SeasonParams {
             hold_absences: false,
+            rating_shifts: Vec::new(),
             season,
             as_of: Some(today),
             iterations: EFFECT_ITERATIONS,
@@ -440,6 +451,12 @@ impl PlayerLookups for App {
             absences: a.absences.clone(),
         };
         app_worth::fix_penalties(&mut params.absences);
+        // From the full-strength ratings, so the report's absences are not counted twice.
+        params.rating_shifts = match or_error(app_worth::rating_shifts(self, season, today).await)?
+        {
+            Ok(s) => s,
+            Err(e) => return Ok(e),
+        };
         // "Everyone healthy" means this team's players back; the other teams keep their
         // absences as reported. "Held" means this team's absences of today kept to the
         // season's end, the other teams' as dated. With nothing priced for this team the
@@ -565,7 +582,7 @@ fn status(s: &str) -> String {
         .to_string()
 }
 
-const LEAGUE_TONIGHT_NOTE: &str = "Teams come most hurt tonight first. out_tonight_elo is the sum of the penalties of the absences that cover the night and rating_tonight is the rating less it; mean_out_remaining_games_elo is the mean penalty over the team's regular-season games left from as_of, the measure for the rest of the season. Each entry of out reads: name (id player_id when known; status, the Elo he costs tonight, the last date his absence covers); player_worth takes the player_id. In games, home_margin_points_tonight is the expected home margin at 28 Elo per point with the home bonus (none on a neutral floor; a sportsbook writes the home spread as its negative), and the moneylines are fair American odds from p_home_tonight with no bookmaker margin, so at a sportsbook the favourite must risk more to win 100, and 100 on the underdog wins less.";
+const LEAGUE_TONIGHT_NOTE: &str = "Teams come most hurt tonight first. rating_elo is the full-strength rating: the season's games replayed with the Elo each side was missing in each game taken out of the expectation, so tonight's absences come off the full team once (stored_elo is the plain Elo, which the absences of the games played are in). out_tonight_elo is the sum of the penalties of the absences that cover the night and rating_tonight is the rating less it; mean_out_remaining_games_elo is the mean penalty over the team's regular-season games left from as_of, the measure for the rest of the season. Each entry of out reads: name (id player_id when known; status, the Elo he costs tonight, the last date his absence covers); player_worth takes the player_id. In games, home_margin_points_tonight is the expected home margin at 28 Elo per point with the home bonus (none on a neutral floor; a sportsbook writes the home spread as its negative), and the moneylines are fair American odds from p_home_tonight with no bookmaker margin, so at a sportsbook the favourite must risk more to win 100, and 100 on the underdog wins less.";
 
 /// The `league_tonight` result: the teams most hurt tonight first, each with its mean
 /// penalty over its remaining games (`remaining`, by team), and the night's games. When
@@ -582,7 +599,7 @@ fn league_tonight_value(t: &app_worth::Tonight, remaining: &HashMap<TeamId, f64>
         .iter()
         .map(|x| {
             let mut row = json!({
-                "team": x.code, "rating_elo": round(x.rating, 0),
+                "team": x.code, "rating_elo": round(x.rating, 0), "stored_elo": round(x.stored_rating, 0),
                 "out_tonight_elo": round(x.penalty, 0), "rating_tonight": round(x.rating_tonight, 0),
                 "mean_out_remaining_games_elo": remaining.get(&x.team_id).map(|m| round(*m, 0)),
             });
@@ -711,6 +728,7 @@ fn report_value(date: NaiveDate, lines: &[InjuryLine], team: Option<&str>) -> Va
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::application::worth::rating_now;
     use crate::domain::models::{EloSource, ResultSource};
 
     fn game(id: i64, day: u32, home: i32, away: i32, played: bool) -> Game {
@@ -873,6 +891,8 @@ mod tests {
             code: format!("T{id:02}"),
             name: format!("Team {id}"),
             rating: 1500.0,
+            stored_rating: 1500.0,
+            games_short: 0,
             penalty,
             rating_tonight: 1500.0 - penalty,
             out: (0..out)
@@ -902,6 +922,8 @@ mod tests {
             night,
             games_played: 0,
             report_date: Some(d10()),
+            games_played_short: 0,
+            rating_model: "test",
             home_advantage: 62.0,
             home_advantage_fitted: 62.0,
             games: Vec::new(),
