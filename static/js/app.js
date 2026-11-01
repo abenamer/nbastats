@@ -38,7 +38,9 @@ window.NBA = (() => {
     const body = rows.map(r => '<tr>' + columns.map(c => {
       const v = typeof c.value === 'function' ? c.value(r) : r[c.value];
       const cls = (c.left ? 'l ' : '') + (typeof c.cls === 'function' ? c.cls(r) : '');
-      return `<td class="${cls}">${c.raw ? v : esc(v)}</td>`;
+      // A column may give a number to sort by when its text is not one (a spread, a pair of lines).
+      const key = c.sort ? ` data-sort="${esc(String(c.sort(r)))}"` : '';
+      return `<td class="${cls}"${key}>${c.raw ? v : esc(v)}</td>`;
     }).join('') + '</tr>').join('');
     return `<table class="sortable"><thead><tr>${th}</tr></thead><tbody>${body}</tbody></table>`;
   }
@@ -48,7 +50,7 @@ window.NBA = (() => {
     const tbl = th.closest('table'), col = Number(th.dataset.col), tbody = tbl.tBodies[0]; if (!tbody) return;
     const dir = th.classList.contains('asc') ? 'desc' : th.classList.contains('desc') ? 'asc' : (col === 0 ? 'asc' : 'desc');
     tbl.querySelectorAll('th').forEach(h => h.classList.remove('asc', 'desc')); th.classList.add(dir);
-    const rows = Array.from(tbody.rows), cell = r => (r.cells[col] ? r.cells[col].textContent : '');
+    const rows = Array.from(tbody.rows), cell = r => { const c = r.cells[col]; return c ? (c.dataset.sort !== undefined ? c.dataset.sort : c.textContent) : ''; };
     const numeric = rows.length && rows.every(r => sortKey(cell(r)) !== null || cell(r).trim() === '');
     const sign = dir === 'asc' ? 1 : -1;
     rows.sort((a, b) => {

@@ -135,6 +135,9 @@
   document.getElementById('cardTeam').addEventListener('change', loadCard);
   document.getElementById('season').addEventListener('change', fillCardTeams);
   // Tonight: the next night's games at the ratings the teams play at, and every team's rating tonight.
+  // A spread as a sportsbook writes it, and an American line with its sign.
+  const spread = g => { const m = g.home_margin_tonight; if (Math.abs(m) < 0.25) return 'pick'; return `${m > 0 ? g.home_code : g.away_code} −${num(Math.abs(m), 1)}`; };
+  const line = o => (o > 0 ? '+' : '−') + Math.round(Math.abs(o));
   const teamLink = (code, season) => `<a href="#injuryCard" class="card-link" data-team="${esc(code)}" data-season="${esc(String(season))}" title="Open the team's injury card">${esc(code)}</a>`;
   const statusNames = { out: 'out', out_for_season: 'out for season', absent: 'absent', doubtful: 'doubtful', questionable: 'questionable', day_to_day: 'day-to-day', probable: 'probable', available: 'available', unknown: 'listed' };
   let tonightRequest = 0;
@@ -154,8 +157,10 @@
       document.getElementById('tonightGames').innerHTML = t.games.length ? table([
         { label: 'Away', value: g => `${teamLink(g.away_code, t.season)} ${num(g.away_rating, 0)}${g.away_rated ? '' : '*'}${g.away_penalty ? ` → <span class="bad">${num(g.away_tonight, 0)}</span>` : ''}`, raw: true, left: true, title: `The away team, its rating and, when it is missing players, the rating it plays at ${when}; * marks a team without a rating, read at the league mean` },
         { label: 'Home', value: g => `${teamLink(g.home_code, t.season)} ${num(g.home_rating, 0)}${g.home_rated ? '' : '*'}${g.home_penalty ? ` → <span class="bad">${num(g.home_tonight, 0)}</span>` : ''}${g.neutral ? ' (neutral)' : ''}`, raw: true, left: true, title: `The home team, its rating and, when it is missing players, the rating it plays at ${when}; * marks a team without a rating, read at the league mean` },
-        { label: 'P(home) full', value: g => pct(g.p_home_full, 0), title: 'Home win probability at full strength' },
-        { label: `P(home) ${when}`, value: g => pct(g.p_home_tonight, 0), cls: g => sideCls(g.p_home_full, g.p_home_tonight), title: `Home win probability at the ratings the teams play at ${when}; red when the home side is the one short-handed, green when the visitor is` }], t.games) : '';
+        { label: 'Home wins, full strength', value: g => pct(g.p_home_full, 0), title: 'The chance the home team wins with both teams at full strength' },
+        { label: `Home wins ${when}`, value: g => pct(g.p_home_tonight, 0), cls: g => sideCls(g.p_home_full, g.p_home_tonight), title: `The chance the home team wins at the ratings the teams play at ${when}; red when the home side is the one short-handed, green when the visitor is` },
+        { label: `Spread ${when}`, value: g => spread(g), sort: g => g.home_margin_tonight, title: 'The expected margin as a sportsbook writes it: the favourite and the points it gives, from the rating gap with the home bonus at 28 Elo a point' },
+        { label: `Fair moneyline ${when}`, value: g => `${g.away_code} ${line(g.away_moneyline_tonight)} · ${g.home_code} ${line(g.home_moneyline_tonight)}`, sort: g => g.p_home_tonight, left: true, title: 'American odds from the win chance with no bookmaker margin: the favourite risks the amount shown to win 100, 100 on the underdog wins the amount shown. At a sportsbook the favourite must risk more to win 100, and 100 on the underdog wins less' }], t.games) : '';
       document.getElementById('tonightTeams').innerHTML = t.teams.length ? table([
         { label: 'Team', value: x => teamLink(x.code, t.season), raw: true, left: true },
         { label: 'Elo', value: x => num(x.rating, 0), title: 'The rating as of the date' },

@@ -4,8 +4,8 @@
 //! module reads the same record into a rating: the gap above the league mean that a team of
 //! constant strength would need, playing the actual playoff fields of the window's seasons,
 //! for its title chance per season to equal the record's. The gap is reported as Elo points,
-//! as points per game (FiveThirtyEight's 100 Elo for 3.5 points) and as the record such a
-//! team would post over 82 games against an average opponent.
+//! as points per game (FiveThirtyEight's 28 Elo a point, the player worth's constant) and as
+//! the record such a team would post over 82 games against an average opponent.
 //!
 //! Each season's field is the pre-playoff rating of every other team. The team of interest is
 //! placed at the mean plus the gap, the top sixteen by rating make a modern 16-team bracket
@@ -23,8 +23,9 @@ use crate::domain::playoffs::bracket::{
 };
 use crate::domain::simulation::exact::Strength;
 
-/// Elo points per point of margin: 100 Elo for 3.5 points.
-pub const ELO_PER_POINT: f64 = 100.0 / 3.5;
+/// Elo points per point of margin: one constant across the application, so a gap reads
+/// as the same number of points here, in the player worth and in tonight's spreads.
+pub use crate::domain::worth::ELO_PER_POINT;
 /// The widest gap searched; a team this far above the league wins the title all but surely.
 const MAX_GAP: f64 = 1500.0;
 const MIN_GAP: f64 = -800.0;
@@ -345,7 +346,7 @@ mod tests {
         assert_abs_diff_eq!(r.expected_wins_82, 41.0, epsilon = 1e-9);
         assert_abs_diff_eq!(r.game_win_probability, 0.5, epsilon = 1e-12);
         let r = reading(100.0, 1505.0, &flat, 100.0);
-        assert_abs_diff_eq!(r.points_per_game, 3.5, epsilon = 1e-9);
+        assert_abs_diff_eq!(r.points_per_game, 100.0 / 28.0, epsilon = 1e-9);
         assert!(r.expected_wins_82 > 50.0 && r.rating == 1605.0);
         // Four titles in eight seasons against a real spread: a gap in the hundreds, with the
         // low end of the range below it and the even-odds gap below the implied one.

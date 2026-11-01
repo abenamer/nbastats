@@ -144,7 +144,7 @@
       const imp = e.implied;
       cards($b('backElo'), [
         { label: 'Elo above the league mean', value: gapText(imp), sub: imp ? `a rating near ${num(imp.rating, 0)}; 95% range ${gapText(e.low)} to ${gapText(e.high)}${reached(imp, a.probability)}` : 'a title every season has no finite rating' },
-        { label: 'Points per game', value: imp ? signed(imp.points_per_game, 1) : '–', sub: 'better than an average team (100 Elo is 3.5 points)' },
+        { label: 'Points per game', value: imp ? signed(imp.points_per_game, 1) : '–', sub: 'better than an average team (28 Elo is a point, so 100 Elo is about 3.6 points)' },
         { label: 'Wins per 82', value: imp ? num(imp.expected_wins_82, 0) : '–', sub: imp ? `against average opponents; beats one ${pct(imp.game_win_probability, 0)} of the time on a neutral floor` : '' },
         { label: 'Elo for even odds', value: gapText(e.even_odds), sub: e.even_odds ? `${signed(e.even_odds.points_per_game, 1)} points per game, ${num(e.even_odds.expected_wins_82, 0)} wins per 82${reached(e.even_odds, a.even_odds_probability)}` : '' },
         ...(act.franchise ? [{ label: `${act.franchise} actually rated`, value: act.mean_gap == null ? '–' : `${signed(act.mean_gap)} Elo`, sub: act.mean_gap == null ? 'no pre-playoff rating in the window' : `before the playoffs, mean over ${act.seasons_with_rating} season${act.seasons_with_rating === 1 ? '' : 's'}, missed postseasons included` }] : []),

@@ -948,6 +948,14 @@ pub struct NightGame {
     /// The home team's win probability at full strength and at the penalized ratings.
     pub p_home_full: f64,
     pub p_home_tonight: f64,
+    /// The home team's expected margin in points, at full strength and tonight: the
+    /// rating gap with the home bonus, at [`ELO_PER_POINT`]. Positive favours the home
+    /// team; a sportsbook writes the home spread as its negative.
+    pub home_margin_full: f64,
+    pub home_margin_tonight: f64,
+    /// The fair American moneylines tonight (no bookmaker's margin), home and away.
+    pub home_moneyline_tonight: f64,
+    pub away_moneyline_tonight: f64,
 }
 
 /// The next night with regular-season games still to play.
@@ -996,6 +1004,9 @@ pub fn tonight(
             let away_penalty = penalty(absences, g.away_team_id, night);
             let p =
                 |h: f64, a: f64| elo::game_probability(h, a, true, g.neutral, home_advantage, 1.0);
+            let bonus = if g.neutral { 0.0 } else { home_advantage };
+            let margin = |h: f64, a: f64| (h + bonus - a) / ELO_PER_POINT;
+            let p_tonight = p(home_rating - home_penalty, away_rating - away_penalty);
             NightGame {
                 game_id: g.id,
                 home_team_id: g.home_team_id,
@@ -1010,7 +1021,11 @@ pub fn tonight(
                 home_tonight: home_rating - home_penalty,
                 away_tonight: away_rating - away_penalty,
                 p_home_full: p(home_rating, away_rating),
-                p_home_tonight: p(home_rating - home_penalty, away_rating - away_penalty),
+                p_home_tonight: p_tonight,
+                home_margin_full: margin(home_rating, away_rating),
+                home_margin_tonight: margin(home_rating - home_penalty, away_rating - away_penalty),
+                home_moneyline_tonight: elo::american_odds(p_tonight),
+                away_moneyline_tonight: elo::american_odds(1.0 - p_tonight),
             }
         })
         .collect();
@@ -1854,7 +1869,11 @@ mod tests {
             game(3, 9, 1, 3, GameType::Playoff),
             game(4, 10, 2, 3, GameType::Regular),
             game(5, 10, 4, 1, GameType::Regular),
-            game(6, 14, 1, 3, GameType::Regular),
+            {
+                let mut g = game(6, 14, 1, 3, GameType::Regular);
+                g.neutral = true;
+                g
+            },
         ];
         let mut ratings = HashMap::new();
         ratings.insert(TeamId::new(1), 1600.0);
@@ -1884,6 +1903,11 @@ mod tests {
         );
         assert!((g.p_home_full - p(1550.0, 1600.0)).abs() < 1e-12);
         assert!((g.p_home_tonight - p(1550.0, 1450.0)).abs() < 1e-12);
+        // The margins at 28 Elo a point with the home bonus of 60; the fair lines.
+        assert!((g.home_margin_full - (1550.0 + 60.0 - 1600.0) / 28.0).abs() < 1e-12);
+        assert!((g.home_margin_tonight - (1550.0 + 60.0 - 1450.0) / 28.0).abs() < 1e-12);
+        assert!(g.home_moneyline_tonight < -100.0 && g.away_moneyline_tonight > 100.0);
+        assert!((elo::american_odds(g.p_home_tonight) - g.home_moneyline_tonight).abs() < 1e-9);
         // Team 3 has no rating: the league mean stands in, and the game says so.
         let g = night.games.iter().find(|g| g.game_id == 4).unwrap();
         assert_eq!(
@@ -1893,6 +1917,13 @@ mod tests {
         // A later date finds the later night; past the last game there is none.
         let later = tonight(&games, d(11), &ratings, &absences, 60.0).unwrap();
         assert_eq!((later.date, later.played, later.games.len()), (d(14), 0, 1));
+        // On a neutral floor there is no home bonus, in the chance or the margin.
+        let g = &later.games[0];
+        assert!(g.neutral);
+        let neutral = elo::game_probability(1600.0, elo::SEASON_MEAN, true, true, 60.0, 1.0);
+        assert!((g.p_home_full - neutral).abs() < 1e-12);
+        assert!((g.home_margin_full - (1600.0 - elo::SEASON_MEAN) / 28.0).abs() < 1e-12);
+        assert_eq!(g.home_margin_full, g.home_margin_tonight);
         assert!(tonight(&games, d(15), &ratings, &absences, 60.0).is_none());
     }
 

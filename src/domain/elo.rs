@@ -129,6 +129,19 @@ pub fn win_probability(elo_a: f64, elo_b: f64) -> f64 {
     1.0 / (1.0 + 10f64.powf((elo_b - elo_a) / 400.0))
 }
 
+/// The fair American moneyline of a win probability: the favourite's line is the stake
+/// that wins 100 (negative), the underdog's the amount 100 wins (positive), and an even
+/// chance is +100. Fair means without a bookmaker's margin. The probability is held inside
+/// (0.001, 0.999) so the line stays finite.
+pub fn american_odds(p: f64) -> f64 {
+    let p = p.clamp(0.001, 0.999);
+    if p > 0.5 {
+        -100.0 * p / (1.0 - p)
+    } else {
+        100.0 * (1.0 - p) / p
+    }
+}
+
 /// Win probability for the home team including a home-court bonus (in Elo points).
 pub fn home_win_probability(home_elo: f64, away_elo: f64, home_advantage: f64) -> f64 {
     win_probability(home_elo + home_advantage, away_elo)
@@ -234,6 +247,16 @@ pub fn series_game_probs(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_probability_becomes_a_fair_american_line() {
+        assert!((american_odds(0.5) - 100.0).abs() < 1e-9);
+        assert!((american_odds(0.48) - 108.333_333_333).abs() < 1e-6);
+        assert!((american_odds(0.52) + 108.333_333_333).abs() < 1e-6);
+        assert!((american_odds(0.75) + 300.0).abs() < 1e-9);
+        assert!((american_odds(0.2) - 400.0).abs() < 1e-9);
+        assert!(american_odds(1.0).is_finite() && american_odds(0.0).is_finite());
+    }
     use approx::assert_abs_diff_eq;
 
     #[test]
