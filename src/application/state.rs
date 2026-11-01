@@ -12,7 +12,7 @@ use uuid::Uuid;
 
 use crate::adapters::balldontlie::BalldontlieSource;
 use crate::adapters::dataset::HttpDatasetSource;
-use crate::adapters::espn::EspnReportSource;
+use crate::adapters::espn::EspnScoreboard;
 use crate::adapters::openrouter::OpenRouterModel;
 use crate::adapters::postgres::PostgresStore;
 use crate::application::players::PlayerPhase;
@@ -65,7 +65,7 @@ pub struct App {
     /// Questions answered at the same time; the rest get status 429.
     pub ask_slots: tokio::sync::Semaphore,
     /// Game report source; `None` when the lookups are turned off.
-    pub reports: Option<EspnReportSource>,
+    pub reports: Option<EspnScoreboard>,
     /// One report lookup at a time; a request that finds it taken answers from the store.
     pub report_slot: tokio::sync::Semaphore,
     /// One backward reading of a title record at a time (seconds of exact brackets); the
@@ -109,6 +109,8 @@ pub struct App {
     /// The draft priors for pricing each season, likewise.
     pub(crate) draft_tables:
         RwLock<HashMap<SeasonYear, Arc<crate::application::rookie::DraftSummary>>>,
+    /// The sportsbook lines read per date, kept a while, one read at a time.
+    pub(crate) market_lines: super::market::LinesCache,
     /// Counts the cache invalidations, so a load that began before one is not cached after it.
     pub(crate) cache_generation: AtomicU64,
     teams: RwLock<Option<Arc<HashMap<TeamId, Team>>>>,
@@ -122,7 +124,7 @@ impl App {
         results: Option<BalldontlieSource>,
         sync_schedule: Option<SyncSchedule>,
         model: Option<OpenRouterModel>,
-        reports: Option<EspnReportSource>,
+        reports: Option<EspnScoreboard>,
     ) -> Self {
         Self {
             config,
@@ -154,6 +156,7 @@ impl App {
             spell_runs: RwLock::new(HashMap::new()),
             status_samples: RwLock::new(HashMap::new()),
             draft_tables: RwLock::new(HashMap::new()),
+            market_lines: super::market::LinesCache::default(),
             cache_generation: AtomicU64::new(0),
             teams: RwLock::new(None),
         }

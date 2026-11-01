@@ -1241,6 +1241,19 @@ pub async fn season_tonight(
     Ok(Json(json!(t)))
 }
 
+/// The night's sportsbook lines beside the Tonight panel's games, with the chances their
+/// moneylines imply once the bookmaker's margin is out. A source that is off or fails
+/// answers with a note, not an error, so the panel still shows the model's numbers.
+pub async fn season_tonight_market(
+    State(app): State<AppState>,
+    Path(season): Path<SeasonYear>,
+) -> ApiResult<Value> {
+    let m = crate::application::market::tonight_market(&app, season)
+        .await
+        .map_err(season_load_error)?;
+    Ok(Json(json!(m)))
+}
+
 /// A team's injury card: every report line priced for it and the sum as listed and held.
 pub async fn injury_card(
     State(app): State<AppState>,

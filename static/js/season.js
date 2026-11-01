@@ -156,6 +156,7 @@
   const teamLink = (code, season) => `<a href="#injuryCard" class="card-link" data-team="${esc(code)}" data-season="${esc(String(season))}" title="Open the team's injury card">${esc(code)}</a>`;
   const statusNames = { out: 'out', out_for_season: 'out for season', absent: 'absent', doubtful: 'doubtful', questionable: 'questionable', day_to_day: 'day-to-day', probable: 'probable', available: 'available', unknown: 'listed' };
   let tonightRequest = 0;
+  let marketSeen = { key: null, at: 0, market: null };
   async function loadTonight() {
     const season = parseInt(document.getElementById('season').value);
     const note = document.getElementById('tonightNote');
@@ -169,30 +170,72 @@
         ? `${labelOf(t.season)}: ${t.games.length} game${t.games.length === 1 ? '' : 's'} ${t.games_played ? `still to play of ${t.games.length + t.games_played} ` : ''}on ${t.night}${t.night === t.as_of ? ' (today)' : ', the next night with a game'}, read as of ${t.as_of} with the report of ${t.report_date}. ${bonusText(t.home_advantage, t.home_advantage_fitted)}.`
         : `${labelOf(t.season)}: no regular-season game remains on or after ${t.as_of}.`;
       // Laid out as a sportsbook lists a game: the visitor on top, the home team under it with
-      // an @, each with its own spread and moneyline; then each side's win chance at full
-      // strength and on the night.
-      const sideRow = (g, home) => {
-        const code = home ? g.home_code : g.away_code, rating = home ? g.home_rating : g.away_rating;
-        const rated = home ? g.home_rated : g.away_rated, penalty = home ? g.home_penalty : g.away_penalty;
-        const playsAt = home ? g.home_tonight : g.away_tonight;
-        const margin = home ? g.home_margin_tonight : -g.home_margin_tonight;
-        // The home chance is rounded and the visitor's is the rest of 100, so a game's two add up.
-        const share = p => { if (p == null || !Number.isFinite(p)) return NaN; const h = Math.round(100 * p); return home ? h : 100 - h; };
-        const shown = x => Number.isFinite(x) ? `${x}%` : '–';
-        const moved = (a, b) => !Number.isFinite(a) || !Number.isFinite(b) || a === b ? '' : b < a ? 'bad' : 'good';
-        const full = share(g.p_home_full), night = share(g.p_home_tonight);
-        const team = `${home ? '@ ' : ''}${teamLink(code, t.season)} ${num(rating, 0)}${rated ? '' : '*'}${penalty ? ` → <span class="bad">${num(playsAt, 0)}</span>` : ''}${home && g.neutral ? ' (neutral)' : ''}`;
-        return `<tr><td class="l">${team}</td><td>${esc(teamSpread(margin))}</td><td>${esc(line(home ? g.home_moneyline_tonight : g.away_moneyline_tonight))}</td><td>${shown(full)}</td><td class="${moved(full, night)}">${shown(night)}</td></tr>`;
+      // an @, each with its own spread and moneyline beside the sportsbook's; then each side's
+      // win chance at full strength, on the night and in the market. `market` is undefined
+      // while the lines load, and a game without a line shows dashes.
+      const renderGames = market => {
+        const byGame = new Map(((market && market.games) || []).map(m => [m.game_id, m]));
+        // The sportsbook's name when every line is from the same one.
+        // Only the lines of the night's games count, should the market hold others.
+        const nightIds = new Set(t.games.map(g => g.game_id));
+        const lines = ((market && market.games) || []).filter(m => nightIds.has(m.game_id));
+        const providers = [...new Set(lines.map(m => m.provider))];
+        const book = providers.length === 1 ? providers[0] : 'Sportsbook';
+        const sideRow = (g, home) => {
+          const code = home ? g.home_code : g.away_code, rating = home ? g.home_rating : g.away_rating;
+          const rated = home ? g.home_rated : g.away_rated, penalty = home ? g.home_penalty : g.away_penalty;
+          const playsAt = home ? g.home_tonight : g.away_tonight;
+          const margin = home ? g.home_margin_tonight : -g.home_margin_tonight;
+          // The home chance is rounded and the visitor's is the rest of 100, so a game's two add up.
+          const share = p => { if (p == null || !Number.isFinite(p)) return NaN; const h = Math.round(100 * p); return home ? h : 100 - h; };
+          const shown = x => Number.isFinite(x) ? `${x}%` : '–';
+          const moved = (a, b) => !Number.isFinite(a) || !Number.isFinite(b) || a === b ? '' : b < a ? 'bad' : 'good';
+          const full = share(g.p_home_full), night = share(g.p_home_tonight);
+          const m = byGame.get(g.game_id);
+          const wait = market === undefined ? '…' : '–';
+          // The sportsbook's spread is the home team's, negative when it gives points.
+          const spreadOf = (sp, odds) => sp == null ? wait : `${sp === 0 ? 'pick' : `${sp > 0 ? '+' : '−'}${num(Math.abs(sp), 1)}`}${odds == null ? '' : ` (${line(odds)})`}`;
+          const bookSpread = m ? spreadOf(m.home_spread == null ? null : (home ? m.home_spread : -m.home_spread), home ? m.home_spread_odds : m.away_spread_odds) : wait;
+          const bookLine = m && (home ? m.home_moneyline : m.away_moneyline) != null ? line(home ? m.home_moneyline : m.away_moneyline) : wait;
+          const marketWins = m && m.p_home != null ? share(m.p_home) : NaN;
+          const gap = Number.isFinite(night) && Number.isFinite(marketWins) ? night - marketWins : NaN;
+          const team = `${home ? '@ ' : ''}${teamLink(code, t.season)} ${num(rating, 0)}${rated ? '' : '*'}${penalty ? ` → <span class="bad">${num(playsAt, 0)}</span>` : ''}${home && g.neutral ? ' (neutral)' : ''}`;
+          return `<tr><td class="l">${team}</td><td>${esc(teamSpread(margin))}</td><td class="book">${esc(bookSpread)}</td><td>${esc(line(home ? g.home_moneyline_tonight : g.away_moneyline_tonight))}</td><td class="book">${esc(bookLine)}</td><td>${shown(full)}</td><td class="${moved(full, night)}">${shown(night)}</td><td class="book">${Number.isFinite(marketWins) ? `${marketWins}%` : esc(wait)}</td><td>${Number.isFinite(gap) ? `${gap > 0 ? '+' : gap < 0 ? '−' : ''}${Math.abs(gap)}` : esc(wait)}</td></tr>`;
+        };
+        const heads = [
+          ['Team', `The visitor, then the home team after @: its rating and, when it is missing players, the rating it plays at ${when}; * marks a team without a rating, read at the league mean`],
+          [`Spread ${when}`, 'The model: the points the team gives (−) or gets (+), from the rating gap with the home bonus at 28 Elo a point, as a sportsbook writes it'],
+          [`${book} spread`, 'The sportsbook\'s spread for the team, with the price of the bet in brackets'],
+          [`Moneyline ${when}`, 'The model: fair American odds from the win chance, with no bookmaker margin: the favourite risks the amount shown to win 100, 100 on the underdog wins the amount shown'],
+          [`${book} moneyline`, 'The sportsbook\'s moneyline for the team, its margin included: the favourite must risk more to win 100, and 100 on the underdog wins less, than at a fair line'],
+          ['Wins, full strength', 'The model: the chance the team wins with both teams at full strength'],
+          [`Wins ${when}`, `The model: the chance the team wins at the ratings the teams play at ${when}; red when it fell from full strength, green when it rose`],
+          ['Market wins', 'The chance the sportsbook\'s two moneylines imply for the team once its margin is taken out: each implied chance divided by their sum'],
+          ['Model − market', `The model's chance ${when} less the market's, in percentage points: positive when the model rates the team higher than the sportsbook does`]];
+        document.getElementById('tonightGames').innerHTML = t.games.length
+          ? `<table class="games"><thead><tr>${heads.map(([h, title], i) => `<th class="${i ? '' : 'l'}" title="${esc(title)}">${esc(h)}</th>`).join('')}</tr></thead>${t.games.map(g => `<tbody>${sideRow(g, false)}${sideRow(g, true)}</tbody>`).join('')}</table>`
+          : '';
+        const marketNote = document.getElementById('tonightMarketNote');
+        if (market === undefined) marketNote.textContent = t.games.length ? 'Reading the sportsbook lines…' : '';
+        else if (market.note) marketNote.textContent = `Market: ${market.note}.`;
+        else {
+          const margins = lines.map(m => m.book_margin).filter(x => x != null);
+          const mean = margins.length ? margins.reduce((a, b) => a + b, 0) / margins.length : null;
+          marketNote.textContent = `Market: ${providers.join(', ')} lines from ESPN's scoreboard, read ${new Date(market.read_at).toLocaleTimeString()}, ${lines.length} of ${t.games.length} game${t.games.length === 1 ? '' : 's'}${mean == null ? '' : `; the bookmaker's margin averages ${num(100 * mean, 1)}% and is taken out of Market wins`}. Lines move until tip-off and leave the feed once a game starts.`;
+        }
       };
-      const heads = [
-        ['Team', `The visitor, then the home team after @: its rating and, when it is missing players, the rating it plays at ${when}; * marks a team without a rating, read at the league mean`],
-        [`Spread ${when}`, 'The points the team gives (−) or gets (+), from the rating gap with the home bonus at 28 Elo a point, as a sportsbook writes it'],
-        [`Moneyline ${when}`, 'Fair American odds from the win chance, with no bookmaker margin: the favourite risks the amount shown to win 100, 100 on the underdog wins the amount shown. At a sportsbook the favourite must risk more to win 100, and 100 on the underdog wins less'],
-        ['Wins, full strength', 'The chance the team wins with both teams at full strength'],
-        [`Wins ${when}`, `The chance the team wins at the ratings the teams play at ${when}; red when it fell from full strength, green when it rose`]];
-      document.getElementById('tonightGames').innerHTML = t.games.length
-        ? `<table class="games"><thead><tr>${heads.map(([h, title], i) => `<th class="${i ? '' : 'l'}" title="${esc(title)}">${esc(h)}</th>`).join('')}</tr></thead>${t.games.map(g => `<tbody>${sideRow(g, false)}${sideRow(g, true)}</tbody>`).join('')}</table>`
-        : '';
+      // The lines do not depend on the home bonus: a market read for this season and night in
+      // the last minute is reused rather than asked for again (the server keeps them longer).
+      const key = `${season}|${t.night}`;
+      if (marketSeen.key === key && Date.now() - marketSeen.at < 60 * 1000) renderGames(marketSeen.market);
+      else {
+        renderGames(undefined);
+        if (t.games.length) {
+          getJSON(`/api/seasons/${season}/tonight/market`)
+            .then(m => { if (!m.note) marketSeen = { key, at: Date.now(), market: m }; if (mine === tonightRequest) renderGames(m); })
+            .catch(e => { if (mine === tonightRequest) renderGames({ games: [], note: `the lines could not be read (${e.message})` }); });
+        }
+      }
       document.getElementById('tonightTeams').innerHTML = t.teams.length ? table([
         { label: 'Team', value: x => teamLink(x.code, t.season), raw: true, left: true },
         { label: 'Elo', value: x => num(x.rating, 0), title: 'The rating as of the date' },
@@ -200,7 +243,7 @@
         { label: `Elo ${when}`, value: x => num(x.rating_tonight, 0), cls: x => x.penalty ? 'bad' : '', title: `The rating the team plays at ${when}` },
         { label: 'Plays', value: x => x.opponent ? `${x.home ? 'vs' : 'at'} ${x.opponent}` : '', left: true, title: 'Blank for a team not playing, or whose game is already played' },
         { label: 'Who is out', value: x => x.out.map(o => `${o.name} (${num(o.penalty_elo, 0)}, ${statusNames[o.status] || o.status_text.toLowerCase()} to ${o.until})`).join('; '), left: true, title: 'Each absence covering the night: the penalty it carries, the status and the last date it applies' }], t.teams) : '';
-    } catch (e) { note.textContent = `Tonight unavailable: ${e.message}`; document.getElementById('tonightGames').innerHTML = ''; document.getElementById('tonightTeams').innerHTML = ''; }
+    } catch (e) { note.textContent = `Tonight unavailable: ${e.message}`; document.getElementById('tonightGames').innerHTML = ''; document.getElementById('tonightTeams').innerHTML = ''; document.getElementById('tonightMarketNote').textContent = ''; }
   }
   document.getElementById('season').addEventListener('change', loadTonight);
   // A home bonus typed in the field prices the night and an open injury card again.

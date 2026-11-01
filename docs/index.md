@@ -60,6 +60,7 @@ This project follows the [REAS engineering standard](https://github.com/abenamer
 * [ADR 0003 — Bundle the dataset](decisions/0003-bundled-dataset.md) - Why the game log ships in the image.
 * [ADR 0004 — Compute first](decisions/0004-compute-first.md) - Why the application computes every rating itself and keeps the archive's ratings as reference values.
 * [ADR 0005 — Question box through OpenRouter](decisions/0005-question-box-via-openrouter.md) - Why the question box uses a hosted model through an OpenAI-compatible API with read-only tools.
+* [ADR 0006 — Market lines from ESPN's scoreboard](decisions/0006-market-lines-from-espn-scoreboard.md) - Why the Tonight panel reads the night's sportsbook lines from ESPN's free feed, not stored, instead of a paid odds service.
 
 # History
 

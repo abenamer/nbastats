@@ -8,6 +8,7 @@ pub mod cup;
 pub mod elo;
 pub mod eras;
 pub mod ids;
+pub mod market;
 pub mod models;
 pub mod parity;
 pub mod players;

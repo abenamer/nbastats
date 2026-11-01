@@ -655,11 +655,38 @@ pub struct ReportListing {
     pub reports: Vec<ReportCandidate>,
 }
 
-/// Where game reports come from. The concrete adapter is `adapters::espn::EspnReportSource`.
+/// Where game reports come from. The concrete adapter is `adapters::espn::EspnScoreboard`.
 #[allow(async_fn_in_trait)]
 pub trait ReportSource: Send + Sync {
     fn name(&self) -> &'static str;
     async fn reports_on(&self, date: NaiveDate) -> Result<ReportListing, SourceError>;
+}
+
+/// One game's sportsbook lines as a market source lists them for a date, with the teams
+/// as the source names them. American odds; a spread is the home team's, negative when it
+/// gives points.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MarketLine {
+    pub home_abbr: String,
+    pub away_abbr: String,
+    pub home_name: String,
+    pub away_name: String,
+    /// The sportsbook the lines are from, as the source names it.
+    pub provider: String,
+    pub home_spread: Option<f64>,
+    pub home_spread_odds: Option<f64>,
+    pub away_spread_odds: Option<f64>,
+    pub home_moneyline: Option<f64>,
+    pub away_moneyline: Option<f64>,
+    pub total: Option<f64>,
+}
+
+/// Where sportsbook lines come from: the night's games as the market prices them. The
+/// concrete adapter is `adapters::espn::EspnScoreboard`, which reads them from the same
+/// scoreboard as the reports.
+#[allow(async_fn_in_trait)]
+pub trait MarketSource: Send + Sync {
+    async fn lines_on(&self, date: NaiveDate) -> Result<Vec<MarketLine>, SourceError>;
 }
 
 // ---------------------------------------------------------------------------------------

@@ -70,7 +70,7 @@ pub struct PlayedGame {
 /// abbreviation mapped where the source differs, and the abbreviation itself. The store
 /// may hold a game under the franchise's current code while the source names the team of
 /// the day (the Charlotte Bobcats under CHO), so every candidate counts.
-fn codes_of(abbr: &str, name: &str, by_name: &HashMap<String, String>) -> Vec<String> {
+pub(crate) fn codes_of(abbr: &str, name: &str, by_name: &HashMap<String, String>) -> Vec<String> {
     let mut codes = Vec::new();
     if let Some(code) = by_name.get(&name.trim().to_ascii_lowercase()) {
         codes.push(code.clone());

@@ -10,7 +10,7 @@ use tracing_subscriber::EnvFilter;
 
 use nba_elo_simulator::adapters::balldontlie::{BalldontlieConfig, BalldontlieSource};
 use nba_elo_simulator::adapters::dataset::HttpDatasetSource;
-use nba_elo_simulator::adapters::espn::EspnReportSource;
+use nba_elo_simulator::adapters::espn::EspnScoreboard;
 use nba_elo_simulator::adapters::http;
 use nba_elo_simulator::adapters::openrouter::{OpenRouterConfig, OpenRouterModel};
 use nba_elo_simulator::adapters::postgres::PostgresStore;
@@ -279,7 +279,7 @@ async fn serve(
 ) -> anyhow::Result<()> {
     std::fs::create_dir_all(&config.data_dir)?;
     let reports = if config.game_reports_enabled {
-        Some(EspnReportSource::new(config.espn_base_url.clone())?)
+        Some(EspnScoreboard::new(config.espn_base_url.clone())?)
     } else {
         None
     };

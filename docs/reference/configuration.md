@@ -36,8 +36,8 @@ sources:
 | `OPENROUTER_API_KEY` | none | API key for the [question box](/concepts/question-box.md). When unset, the box is off. |
 | `OPENROUTER_MODEL` | `openai/gpt-4o-mini` | The model the box asks through OpenRouter; it must support tool calling. |
 | `OPENROUTER_BASE_URL` | `https://openrouter.ai/api/v1` | Base URL of the OpenAI-compatible chat API. |
-| `GAME_REPORTS_ENABLED` | `true` | Look up game report links (the AP recaps ESPN hosts) for the games the Records page shows; see [Historical data](/concepts/historical-data.md). |
-| `ESPN_BASE_URL` | `https://site.api.espn.com` | Base URL of ESPN's scoreboard feed. |
+| `GAME_REPORTS_ENABLED` | `true` | Look up game report links (the AP recaps ESPN hosts) for the games the Records page shows, see [Historical data](/concepts/historical-data.md), and read the night's sportsbook lines for the Tonight panel, see [ADR 0006](/decisions/0006-market-lines-from-espn-scoreboard.md). |
+| `ESPN_BASE_URL` | `https://site.api.espn.com` | Base URL of ESPN's scoreboard feed, for the reports and the lines. |
 | `DB_MAX_CONNECTIONS` | `8` | Connection pool size. |
 | `DB_CONNECT_TIMEOUT_SECS` | `120` | How long the start waits for PostgreSQL. |
 | `SIM_THREADS` | number of CPUs | Rayon thread count. |
