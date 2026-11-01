@@ -27,8 +27,14 @@ pub const LINES_TTL: Duration = Duration::from_secs(5 * 60);
 /// How long a failed read is remembered before the source is asked again.
 pub const FAILURE_TTL: Duration = Duration::from_secs(60);
 
+/// A read of the lines failed; the detail is in the log, and the failure is remembered
+/// `FAILURE_TTL`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("the market lines could not be read")]
+pub struct LinesUnavailable;
+
 /// What a read of a date gave: the lines with when they were read, or that it failed.
-type Read = Result<(DateTime<Utc>, Arc<Vec<MarketLine>>), ()>;
+type Read = Result<(DateTime<Utc>, Arc<Vec<MarketLine>>), LinesUnavailable>;
 
 /// The lines read per date, kept for a while, with one read from the source at a time: a
 /// request that finds no fresh entry waits its turn, then looks again before asking. The
@@ -83,7 +89,7 @@ impl LinesCache {
             Ok(lines) => Ok((Utc::now(), Arc::new(lines))),
             Err(e) => {
                 warn!(%date, error = %e, "market lines could not be read");
-                Err(())
+                Err(LinesUnavailable)
             }
         };
         let mut entries = self.entries.lock().unwrap_or_else(PoisonError::into_inner);
