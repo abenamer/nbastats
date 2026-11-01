@@ -59,6 +59,12 @@ table.sortable th:hover { color:#111827; }
 table.sortable th.asc::after { content:" \25B4"; color:#2563eb; }
 table.sortable th.desc::after { content:" \25BE"; color:#2563eb; }
 tr:hover td { background:#f8fafc; }
+/* Tonight's games: two rows a game, as a sportsbook lists them, with a line between games. */
+table.games tbody + tbody tr:first-child td { border-top:2px solid var(--line); }
+table.games tbody tr:first-child td { border-bottom:none; }
+table.games tbody:hover td { background:#f8fafc; }
+/* The sportsbook's columns, set apart from the model's beside them. */
+table.games td.book { color:#4b5563; background:#f9fafb; }
 td.good { color:var(--good); font-weight:600; } td.warn { color:var(--warn); } td.bad { color:var(--bad); }
 .bar { display:inline-block; height:.6rem; background:#93c5fd; border-radius:3px; vertical-align:middle; margin-right:.3rem; }
 .kv { display:grid; grid-template-columns:max-content 1fr; gap:.3rem 1rem; font-size:.9rem; }

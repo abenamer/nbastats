@@ -504,7 +504,7 @@ impl PlayerLookups for App {
 
     async fn league_tonight(&self, season: Option<SeasonYear>) -> Result<Value, StoreError> {
         let season = season.unwrap_or_else(|| current_season(self.today()));
-        let t = match or_error(app_worth::tonight(self, season).await)? {
+        let t = match or_error(app_worth::tonight(self, season, None).await)? {
             Ok(t) => t,
             Err(e) => return Ok(e),
         };
@@ -903,6 +903,7 @@ mod tests {
             games_played: 0,
             report_date: Some(d10()),
             home_advantage: 62.0,
+            home_advantage_fitted: 62.0,
             games: Vec::new(),
             teams,
             note: None,

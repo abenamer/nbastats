@@ -1018,8 +1018,11 @@ pub struct InjuryCard {
     pub rating_elo: Option<f64>,
     pub rating_date: Option<NaiveDate>,
     pub rating_is_preseason: Option<bool>,
-    /// The regular-season home bonus the win probabilities use.
+    /// The regular-season home bonus the win probabilities use: the one asked for, else
+    /// the season's fitted one.
     pub home_advantage: f64,
+    /// The season's fitted bonus, so a reader can tell whether `home_advantage` is it.
+    pub home_advantage_fitted: f64,
     /// The penalty on today's date, and the rating the team plays at today.
     pub penalty_today: f64,
     pub rating_today: Option<f64>,
@@ -1040,6 +1043,7 @@ pub async fn injury_card(
     app: &App,
     season: SeasonYear,
     code: &str,
+    home_advantage: Option<f64>,
 ) -> Result<Option<InjuryCard>, SeasonLoadError> {
     let data = app.season_data(season).await?;
     let teams = app.store.team_code_map().await?;
@@ -1055,7 +1059,8 @@ pub async fn injury_card(
         Some(report) if app.today() > a.season_end => report,
         _ => app.today(),
     };
-    let home_advantage = app.home_advantage(season).await?.regular;
+    let home_advantage_fitted = app.home_advantage(season).await?.regular;
+    let home_advantage = home_advantage.unwrap_or(home_advantage_fitted);
     let mut ratings: HashMap<TeamId, f64> = HashMap::new();
     for g in &data.games {
         for t in [g.home_team_id, g.away_team_id] {
@@ -1121,6 +1126,7 @@ pub async fn injury_card(
         rating_date: rating.map(|(_, d, _)| d),
         rating_is_preseason: rating.map(|(_, _, played)| !played),
         home_advantage,
+        home_advantage_fitted,
         penalty_today,
         rating_today: rating.map(|(e, _, _)| e - penalty_today),
         lines,
@@ -1186,7 +1192,10 @@ pub struct Tonight {
     /// The night's regular-season games already played, when it is partly over.
     pub games_played: u32,
     pub report_date: Option<NaiveDate>,
+    /// The regular-season home bonus the night is priced with: the one asked for, else
+    /// the season's fitted one, which `home_advantage_fitted` gives either way.
     pub home_advantage: f64,
+    pub home_advantage_fitted: f64,
     pub games: Vec<GameTonight>,
     /// Every team of the season, by rating tonight, highest first; empty when no night
     /// remains.
@@ -1199,7 +1208,11 @@ pub struct Tonight {
 }
 
 /// Tonight's slate and every team's rating tonight for `season`.
-pub async fn tonight(app: &App, season: SeasonYear) -> Result<Tonight, SeasonLoadError> {
+pub async fn tonight(
+    app: &App,
+    season: SeasonYear,
+    home_advantage: Option<f64>,
+) -> Result<Tonight, SeasonLoadError> {
     let data = app.season_data(season).await?;
     let teams = app.store.team_code_map().await?;
     let a = availability(app, season).await?;
@@ -1207,7 +1220,8 @@ pub async fn tonight(app: &App, season: SeasonYear) -> Result<Tonight, SeasonLoa
         Some(report) if app.today() > a.season_end => report,
         _ => app.today(),
     };
-    let home_advantage = app.home_advantage(season).await?.regular;
+    let home_advantage_fitted = app.home_advantage(season).await?.regular;
+    let home_advantage = home_advantage.unwrap_or(home_advantage_fitted);
     let mut ratings: HashMap<TeamId, f64> = HashMap::new();
     for g in &data.games {
         for t in [g.home_team_id, g.away_team_id] {
@@ -1333,6 +1347,7 @@ pub async fn tonight(app: &App, season: SeasonYear) -> Result<Tonight, SeasonLoa
         games_played,
         report_date: a.report_date,
         home_advantage,
+        home_advantage_fitted,
         games,
         teams: rows,
         note: a.note,

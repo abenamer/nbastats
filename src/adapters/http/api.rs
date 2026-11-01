@@ -34,7 +34,7 @@ use crate::domain::eras::{
 use crate::domain::ids::{PlayerId, SeasonYear, TeamId};
 use crate::domain::models::{JobKind, SimulationJob};
 use crate::domain::playoffs::bracket::ModelSpec;
-use crate::domain::playoffs::season::SeasonParams;
+use crate::domain::playoffs::season::{check_regular_home_advantage, SeasonParams};
 use crate::domain::records::{league_sizes, League, TeamSeasonStat};
 use crate::domain::reference;
 use crate::domain::simulation::alpha::AlphaParams;
@@ -1205,23 +1205,62 @@ pub async fn season_availability(
     Ok(Json(json!(a)))
 }
 
+/// A regular-season home bonus to price with in place of the fitted one. Text, so a bad
+/// value answers with a JSON message.
+#[derive(Debug, Deserialize)]
+pub struct HomeQuery {
+    pub home_advantage: Option<String>,
+}
+
+/// The bonus asked for: none when absent or empty, else a number in the forecast's range.
+fn chosen_home_advantage(q: &HomeQuery) -> Result<Option<f64>, ApiError> {
+    let Some(text) = q
+        .home_advantage
+        .as_deref()
+        .map(str::trim)
+        .filter(|t| !t.is_empty())
+    else {
+        return Ok(None);
+    };
+    let h: f64 = text
+        .parse()
+        .map_err(|_| ApiError::bad_request("home_advantage must be a number of Elo points"))?;
+    check_regular_home_advantage(h)?;
+    Ok(Some(h))
+}
+
 /// Tonight's games priced at the ratings the teams play at, and every team's rating tonight.
 pub async fn season_tonight(
     State(app): State<AppState>,
     Path(season): Path<SeasonYear>,
+    Query(q): Query<HomeQuery>,
 ) -> ApiResult<Value> {
-    let t = worth::tonight(&app, season)
+    let t = worth::tonight(&app, season, chosen_home_advantage(&q)?)
         .await
         .map_err(season_load_error)?;
     Ok(Json(json!(t)))
+}
+
+/// The night's sportsbook lines beside the Tonight panel's games, with the chances their
+/// moneylines imply once the bookmaker's margin is out. A source that is off or fails
+/// answers with a note, not an error, so the panel still shows the model's numbers.
+pub async fn season_tonight_market(
+    State(app): State<AppState>,
+    Path(season): Path<SeasonYear>,
+) -> ApiResult<Value> {
+    let m = crate::application::market::tonight_market(&app, season)
+        .await
+        .map_err(season_load_error)?;
+    Ok(Json(json!(m)))
 }
 
 /// A team's injury card: every report line priced for it and the sum as listed and held.
 pub async fn injury_card(
     State(app): State<AppState>,
     Path((season, code)): Path<(SeasonYear, String)>,
+    Query(q): Query<HomeQuery>,
 ) -> ApiResult<Value> {
-    let card = worth::injury_card(&app, season, &code)
+    let card = worth::injury_card(&app, season, &code, chosen_home_advantage(&q)?)
         .await
         .map_err(season_load_error)?
         .ok_or_else(|| ApiError::not_found(format!("{code} is not in the {season} season")))?;
@@ -1820,6 +1859,24 @@ fn ask_error(e: AskError) -> ApiError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_chosen_home_bonus_is_read_and_checked_against_the_forecast_range() {
+        let q = |v: Option<&str>| HomeQuery {
+            home_advantage: v.map(str::to_string),
+        };
+        assert_eq!(chosen_home_advantage(&q(None)).unwrap(), None);
+        assert_eq!(chosen_home_advantage(&q(Some("  "))).unwrap(), None);
+        assert_eq!(chosen_home_advantage(&q(Some("20"))).unwrap(), Some(20.0));
+        assert_eq!(
+            chosen_home_advantage(&q(Some("-100"))).unwrap(),
+            Some(-100.0)
+        );
+        assert_eq!(chosen_home_advantage(&q(Some("400"))).unwrap(), Some(400.0));
+        for bad in ["x", "401", "-101", "NaN", "inf"] {
+            assert!(chosen_home_advantage(&q(Some(bad))).is_err(), "{bad}");
+        }
+    }
 
     fn pairs(list: &[(&str, &str)]) -> Vec<(String, String)> {
         list.iter()
