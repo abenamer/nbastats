@@ -78,6 +78,19 @@ fn default_scale() -> f64 {
     1.0
 }
 
+/// A regular-season home bonus a person chose: between -100 and 400 Elo points, the same
+/// range wherever one is given (a forecast, the Tonight panel, an injury card).
+pub fn check_regular_home_advantage(h: f64) -> Result<(), ValidationError> {
+    if (-100.0..=400.0).contains(&h) {
+        Ok(())
+    } else {
+        invalid(
+            "regular_home_advantage",
+            "the regular-season home advantage must be between -100 and 400 Elo points",
+        )
+    }
+}
+
 impl SeasonParams {
     pub fn validate(&self, max_iterations: u64) -> Result<(), ValidationError> {
         if self.iterations == 0 || self.iterations > max_iterations {
@@ -92,14 +105,8 @@ impl SeasonParams {
                 "home advantage must be between 0 and 400 Elo points",
             );
         }
-        if self
-            .regular_home_advantage
-            .is_some_and(|h| !(-100.0..=400.0).contains(&h))
-        {
-            return invalid(
-                "regular_home_advantage",
-                "the regular-season home advantage must be between -100 and 400 Elo points",
-            );
+        if let Some(h) = self.regular_home_advantage {
+            check_regular_home_advantage(h)?;
         }
         for k in [self.regular_season_k, self.playoff_k]
             .into_iter()
@@ -1951,6 +1958,16 @@ fn run_once<P: Progress + ?Sized>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_chosen_regular_season_bonus_lies_between_minus_100_and_400() {
+        for ok in [-100.0, 0.0, 41.0, 400.0] {
+            assert!(check_regular_home_advantage(ok).is_ok(), "{ok}");
+        }
+        for bad in [-100.5, 400.5, f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            assert!(check_regular_home_advantage(bad).is_err(), "{bad}");
+        }
+    }
 
     #[test]
     fn play_in_tournament_state_machine() {

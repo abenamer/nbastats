@@ -1,6 +1,7 @@
 # Bundle update log
 
 ## 2026-11-01
+* **Update**: [Season forecast engine](/concepts/season-engine.md) describes the Tonight panel's sportsbook layout and the home bonus field that now prices it and the injury card; the API reference gives the `home_advantage` parameter and `home_advantage_fitted`.
 * **Update**: [Question box](/concepts/question-box.md) gains the `league_tonight` tool, results laid out below the cut and the larger, now hard, result budget; the [Security model](/concepts/security.md) gives its token cost. [Alpha engine](/concepts/alpha-engine.md) uses 28 Elo a point. [Season forecast engine](/concepts/season-engine.md) describes the Tonight panel's spread and fair moneylines; the API reference and the terms Fair moneyline and Point spread follow.
 * **Update**: [Player data](/concepts/player-data.md) and the import runbook describe the Data page's **Update Data** button and the Advanced section; the API reference and the term Update follow.
 

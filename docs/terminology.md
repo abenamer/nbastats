@@ -72,7 +72,7 @@ These are project-specific technical terms. They are not a reproduction of the A
 | PER | John Hollinger's Player Efficiency Rating: a per-minute sum of box-score events, pace-adjusted, with the league mean scaled to 15. Shown for recognition only. |
 | Play-in | The games that decide seeds 7 and 8 (2020-21 and later), or the 8 seed (2019-20). |
 | Player era | The seasons a listed player was active, from the curated table in `domain::players`; a season belongs to every listed player active in it. |
-| Point spread | The expected margin of a game in points, written as a sportsbook writes it: the favourite and the points it gives (NYK −9.9). On the Tonight panel it is the rating gap with the home bonus at 28 Elo a point. Not the Elo spread, which is a standard deviation of ratings. |
+| Point spread | The expected margin of a game in points, written as a sportsbook writes it for each team: − is the points the favourite gives, + the points the underdog gets (NYK −9.9, BOS +9.9). On the Tonight panel it is the rating gap with the home bonus at 28 Elo a point. Not the Elo spread, which is a standard deviation of ratings. |
 | Possession | One team's turn with the ball. Estimated per game from both teams' shots, free throws, offensive rebounds, misses and turnovers; the unit the box-score rates are per 100 of. |
 | Port | A trait in `application::ports` that the application requires from the outside world. |
 | Projection | A placeholder season: the previous season's matchups one year later, no scores, reverted ratings. |
