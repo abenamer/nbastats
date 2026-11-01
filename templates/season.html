@@ -30,9 +30,10 @@
 <p class="muted small" id="advNote"></p>
 <p class="muted small" id="note"></p>
 <section class="panel" id="tonightPanel"><h2>Tonight</h2>
-<p class="muted small">The next night with regular-season games, at the ratings the teams play at that night: each team's rating less the penalties of the absences that cover the date, from the latest injury report. The win probability is given at full strength and as listed, with the season's regular-season home bonus. The team table lists every team by its rating tonight; a code opens the team's injury card. Nothing here averages over the season.</p>
+<p class="muted small">The next night with regular-season games, at the ratings the teams play at that night: each team's rating less the penalties of the absences that cover the date, from the latest injury report. Each game shows the chance the home team wins, at full strength and at tonight's ratings, from the Elo curve with the season's regular-season home bonus: P(home) = 1 / (1 + 10^(−(home rating + bonus − away rating) / 400)), with no bonus on a neutral floor. The spread is the same gap in points, 28 Elo to a point, written as a sportsbook writes it (the favourite and the points it gives). The fair moneyline is tonight's chance as American odds with no bookmaker margin: −150 risks 150 to win 100, +150 wins 150 on 100; at a sportsbook the favourite must risk more to win 100 and 100 on the underdog wins less, so compare its spread directly and its moneylines after taking its margin out. The team table lists every team by its rating tonight; a code opens the team's injury card. Nothing here averages over the season.</p>
 <p class="muted small" id="tonightNote"></p>
-<div class="grid2"><div id="tonightGames" class="table-wrap"></div><div id="tonightTeams" class="table-wrap"></div></div>
+<div id="tonightGames" class="table-wrap"></div>
+<div id="tonightTeams" class="table-wrap" style="margin-top:.75rem"></div>
 </section>
 <section class="panel"><div id="results" class="table-wrap"></div></section>
 <section class="panel" id="injuryCard"><h2>Injury card</h2>

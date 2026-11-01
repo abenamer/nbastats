@@ -3,6 +3,8 @@
 //! for the model; a season without games or a team the store does not know comes back as
 //! an `error` object the model can correct.
 
+use std::collections::HashMap;
+
 use chrono::NaiveDate;
 use serde_json::{json, Value};
 
@@ -13,9 +15,9 @@ use crate::domain::playoffs::season::{self as engine, SeasonForecast, SeasonPara
 use crate::domain::simulation::progress::Silent;
 use crate::domain::worth;
 
-use super::ask::PlayerLookups;
+use super::ask::{PlayerLookups, MAX_TOOL_RESULT_CHARS};
 use super::boxscore;
-use super::ports::{PlayerStore, StoreError};
+use super::ports::{InjuryLine, PlayerStore, StoreError};
 use super::scheduler::current_season;
 use super::state::{App, SeasonLoadError};
 use super::worth as app_worth;
@@ -24,7 +26,7 @@ use super::worth::rating_now;
 /// Players a name search returns to the model.
 const MAX_PLAYERS: i64 = 8;
 /// Injury-report lines returned without a team filter.
-const MAX_REPORT_LINES: usize = 60;
+const MAX_REPORT_LINES: usize = 200;
 /// Simulated seasons of the forecast comparison: a fifth of the forecast page's default,
 /// enough for the expected-win figure; a title chance then carries about one point of
 /// simulation noise. One comparison per question, see `ask::MAX_FORECAST_EFFECTS`.
@@ -500,6 +502,27 @@ impl PlayerLookups for App {
         Ok(out)
     }
 
+    async fn league_tonight(&self, season: Option<SeasonYear>) -> Result<Value, StoreError> {
+        let season = season.unwrap_or_else(|| current_season(self.today()));
+        let t = match or_error(app_worth::tonight(self, season).await)? {
+            Ok(t) => t,
+            Err(e) => return Ok(e),
+        };
+        let data = match or_error(self.season_data(season).await)? {
+            Ok(d) => d,
+            Err(e) => return Ok(e),
+        };
+        let remaining: HashMap<TeamId, f64> = t
+            .teams
+            .iter()
+            .map(|x| {
+                let (_, mean, _) = penalty_summary(&t.absences, &data.games, x.team_id, t.as_of);
+                (x.team_id, mean)
+            })
+            .collect();
+        Ok(league_tonight_value(&t, &remaining))
+    }
+
     async fn injury_report(
         &self,
         date: Option<NaiveDate>,
@@ -513,29 +536,176 @@ impl PlayerLookups for App {
             },
         };
         let lines = self.store.injury_report(date).await?;
-        let team = team.map(|t| t.to_ascii_uppercase());
-        let rows: Vec<Value> = lines
-            .iter()
-            .filter(|l| {
-                team.as_ref()
-                    .is_none_or(|t| l.team_code.eq_ignore_ascii_case(t))
-            })
-            .take(MAX_REPORT_LINES)
-            .map(|l| {
-                json!({
-                    "player_id": l.player_id.as_i32(), "name": l.player_name, "team": l.team_code,
-                    "status": l.status, "return_date": l.return_date,
-                    "description": l.description.as_deref().map(|d| d.chars().take(MAX_DESCRIPTION_CHARS).collect::<String>()),
-                })
-            })
-            .collect();
-        Ok(json!({
-            "report_date": date,
-            "report_lines_total": lines.len(),
-            "lines_returned": rows.len(),
-            "lines": rows,
-        }))
+        Ok(report_value(date, &lines, team))
     }
+}
+
+/// What a tool lays its result out in: below the cut at `MAX_TOOL_RESULT_CHARS`, so the
+/// cut never removes part of a result and the counts that say what was left out.
+const FIT_CHARS: usize = MAX_TOOL_RESULT_CHARS - 1_000;
+/// The longest status text a result carries: the feed's text has no bound of its own. Long
+/// enough for the application's own text for an absence read from the box scores.
+const MAX_STATUS_CHARS: usize = 60;
+/// The description length of a report line read across the league; one team's lines keep
+/// `MAX_DESCRIPTION_CHARS`.
+const LEAGUE_DESCRIPTION_CHARS: usize = 60;
+
+fn chars(v: &Value) -> usize {
+    v.to_string().chars().count()
+}
+
+fn clip(s: &str, n: usize) -> String {
+    s.chars().take(n).collect()
+}
+
+/// A status in at most `MAX_STATUS_CHARS`, without a separator left dangling by the cut.
+fn status(s: &str) -> String {
+    clip(s, MAX_STATUS_CHARS)
+        .trim_end_matches([',', ';', ' '])
+        .to_string()
+}
+
+const LEAGUE_TONIGHT_NOTE: &str = "Teams come most hurt tonight first. out_tonight_elo is the sum of the penalties of the absences that cover the night and rating_tonight is the rating less it; mean_out_remaining_games_elo is the mean penalty over the team's regular-season games left from as_of, the measure for the rest of the season. Each entry of out reads: name (id player_id when known; status, the Elo he costs tonight, the last date his absence covers); player_worth takes the player_id. In games, home_margin_points_tonight is the expected home margin at 28 Elo per point with the home bonus (none on a neutral floor; a sportsbook writes the home spread as its negative), and the moneylines are fair American odds from p_home_tonight with no bookmaker margin, so at a sportsbook the favourite must risk more to win 100, and 100 on the underdog wins less.";
+
+/// The `league_tonight` result: the teams most hurt tonight first, each with its mean
+/// penalty over its remaining games (`remaining`, by team), and the night's games. When
+/// the result would pass `FIT_CHARS`, the lists of players out of the least-hurt teams
+/// give way to their counts, so every team keeps its row.
+fn league_tonight_value(t: &app_worth::Tonight, remaining: &HashMap<TeamId, f64>) -> Value {
+    let mut teams: Vec<&app_worth::TeamTonight> = t.teams.iter().collect();
+    teams.sort_by(|a, b| {
+        b.penalty
+            .total_cmp(&a.penalty)
+            .then_with(|| a.code.cmp(&b.code))
+    });
+    let mut rows: Vec<Value> = teams
+        .iter()
+        .map(|x| {
+            let mut row = json!({
+                "team": x.code, "rating_elo": round(x.rating, 0),
+                "out_tonight_elo": round(x.penalty, 0), "rating_tonight": round(x.rating_tonight, 0),
+                "mean_out_remaining_games_elo": remaining.get(&x.team_id).map(|m| round(*m, 0)),
+            });
+            if let Some(o) = &x.opponent {
+                let at = if x.home == Some(true) { "vs" } else { "at" };
+                row["plays"] = json!(format!("{at} {o}"));
+            }
+            if !x.out.is_empty() {
+                row["out"] = json!(x
+                    .out
+                    .iter()
+                    .map(|o| format!(
+                        "{} ({}{}, {} Elo, until {})",
+                        o.name,
+                        o.player_id.map_or_else(String::new, |id| format!("id {}; ", id.as_i32())),
+                        status(&o.status_text),
+                        round(o.penalty_elo, 0),
+                        o.until
+                    ))
+                    .collect::<Vec<_>>());
+            }
+            row
+        })
+        .collect();
+    let games: Vec<Value> = t
+        .games
+        .iter()
+        .map(|g| {
+            json!({
+                "away": g.away_code, "home": g.home_code,
+                "p_home_full": round(g.game.p_home_full, 3), "p_home_tonight": round(g.game.p_home_tonight, 3),
+                "home_margin_points_tonight": round(g.game.home_margin_tonight, 1),
+                "fair_moneyline_home": round(g.game.home_moneyline_tonight, 0),
+                "fair_moneyline_away": round(g.game.away_moneyline_tonight, 0),
+            })
+        })
+        .collect();
+    let mut v = json!({
+        "season": t.season, "night": t.night, "as_of": t.as_of, "report_date": t.report_date,
+        "games_already_played_on_the_night": t.games_played,
+        "home_advantage_elo": round(t.home_advantage, 0),
+        "teams": [], "games": games, "note": LEAGUE_TONIGHT_NOTE,
+    });
+    if let Some(n) = &t.note {
+        v["report_note"] = json!(n);
+    }
+    if t.night.is_none() {
+        v["night_note"] = json!("No regular-season game remains on or after as_of, so nothing is priced; the play-in and playoffs run at full ratings.");
+    }
+    // Without any list a team's row is about 150 characters, so thirty teams and fifteen
+    // games fit in about 9,000: the loop ends with the result below FIT_CHARS.
+    let mut shortened = 0;
+    loop {
+        v["teams"] = json!(rows);
+        if shortened > 0 {
+            v["out_lists_shortened"] = json!(format!(
+                "the {shortened} least-hurt teams with absences give the number out (out_count) for the list, to keep the result short; team_availability gives one team's list"
+            ));
+        }
+        if chars(&v) <= FIT_CHARS {
+            break;
+        }
+        let Some(row) = rows.iter_mut().rev().find(|r| r.get("out").is_some()) else {
+            break;
+        };
+        let n = row["out"].as_array().map_or(0, Vec::len);
+        if let Some(o) = row.as_object_mut() {
+            o.remove("out");
+        }
+        row["out_count"] = json!(n);
+        shortened += 1;
+    }
+    v
+}
+
+/// The `injury_report` result for `date`: the lines (of one team, when given) as rows of
+/// `columns`, as many as fit in `FIT_CHARS` up to `MAX_REPORT_LINES`, with how many were
+/// left out. Read across the league, descriptions are cut shorter so more lines fit.
+fn report_value(date: NaiveDate, lines: &[InjuryLine], team: Option<&str>) -> Value {
+    let matching: Vec<&InjuryLine> = lines
+        .iter()
+        .filter(|l| team.is_none_or(|t| l.team_code.eq_ignore_ascii_case(t)))
+        .collect();
+    let description_chars = if team.is_some() {
+        MAX_DESCRIPTION_CHARS
+    } else {
+        LEAGUE_DESCRIPTION_CHARS
+    };
+    // Room for the fields around the lines.
+    let mut used = 600;
+    let mut rows: Vec<Value> = Vec::new();
+    for l in matching.iter().take(MAX_REPORT_LINES) {
+        let row = json!([
+            l.team_code,
+            l.player_name,
+            l.player_id.as_i32(),
+            status(&l.status),
+            l.return_date,
+            l.description.as_deref().map(|d| clip(d, description_chars)),
+        ]);
+        used += chars(&row) + 1;
+        if used > FIT_CHARS {
+            break;
+        }
+        rows.push(row);
+    }
+    let left_out = matching.len() - rows.len();
+    let mut v = json!({
+        "report_date": date,
+        "report_lines_total": lines.len(),
+        "lines_matching": matching.len(),
+        "lines_returned": rows.len(),
+        "lines_left_out": left_out,
+        "truncated": left_out > 0,
+        "columns": ["team", "name", "player_id", "status", "return_date", "description"],
+        "lines": rows,
+    });
+    if left_out > 0 {
+        v["note"] = json!(format!(
+            "{left_out} lines are left out to keep the result short; ask with a team for its lines"
+        ));
+    }
+    v
 }
 
 #[cfg(test)]
@@ -686,5 +856,141 @@ mod tests {
         assert!((mean - 40.0).abs() < 1e-9);
         let (today, mean, _) = penalty_summary(&absences, &games, TeamId::new(2), d(24));
         assert_eq!((today, mean), (0.0, 0.0));
+    }
+
+    fn d10() -> NaiveDate {
+        NaiveDate::from_ymd_opt(2026, 11, 10).unwrap()
+    }
+
+    fn team_tonight(
+        id: i32,
+        penalty: f64,
+        out: usize,
+        opponent: Option<(&str, bool)>,
+    ) -> app_worth::TeamTonight {
+        app_worth::TeamTonight {
+            team_id: TeamId::new(id),
+            code: format!("T{id:02}"),
+            name: format!("Team {id}"),
+            rating: 1500.0,
+            penalty,
+            rating_tonight: 1500.0 - penalty,
+            out: (0..out)
+                .map(|i| app_worth::OutTonight {
+                    player_id: Some(PlayerId::new(id * 100 + i as i32)),
+                    name: format!("Player Number {id}-{i}"),
+                    status: Some(worth::AbsenceStatus::Out),
+                    status_text: if i == 0 {
+                        "x".repeat(500)
+                    } else {
+                        "Out".into()
+                    },
+                    penalty_elo: penalty / out as f64,
+                    fixed_penalty_elo: penalty / out as f64,
+                    until: d10(),
+                })
+                .collect(),
+            opponent: opponent.map(|(o, _)| o.to_string()),
+            home: opponent.map(|(_, h)| h),
+        }
+    }
+
+    fn night(teams: Vec<app_worth::TeamTonight>, night: Option<NaiveDate>) -> app_worth::Tonight {
+        app_worth::Tonight {
+            season: SeasonYear::of(2027),
+            as_of: d10(),
+            night,
+            games_played: 0,
+            report_date: Some(d10()),
+            home_advantage: 62.0,
+            games: Vec::new(),
+            teams,
+            note: None,
+            absences: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn league_tonight_ranks_by_tonights_cost_and_fits_its_result() {
+        let teams = vec![
+            team_tonight(1, 10.0, 1, Some(("T02", true))),
+            team_tonight(2, 80.0, 2, Some(("T01", false))),
+            team_tonight(3, 0.0, 0, None),
+        ];
+        let remaining: HashMap<TeamId, f64> = [(TeamId::new(2), 35.4)].into();
+        let v = league_tonight_value(&night(teams, Some(d10())), &remaining);
+        let rows = v["teams"].as_array().unwrap();
+        let codes: Vec<&str> = rows.iter().map(|r| r["team"].as_str().unwrap()).collect();
+        assert_eq!(codes, ["T02", "T01", "T03"]);
+        assert_eq!(rows[0]["plays"], "at T01");
+        assert_eq!(rows[1]["plays"], "vs T02");
+        assert_eq!(rows[0]["mean_out_remaining_games_elo"], 35.0);
+        assert!(rows[1]["mean_out_remaining_games_elo"].is_null());
+        // A team without absences or a game carries neither; the feed's status is bounded.
+        assert!(rows[2].get("out").is_none() && rows[2].get("plays").is_none());
+        let first = rows[0]["out"][0].as_str().unwrap();
+        assert!(first.starts_with("Player Number 2-0 (id 200; xxxx"));
+        assert!(first.ends_with(&format!("x, 40 Elo, until {})", d10())));
+        assert!(first.len() < 120);
+        assert_eq!(status(&format!("{}, more", "a".repeat(59))), "a".repeat(59));
+        assert!(v.get("out_lists_shortened").is_none() && v.get("night_note").is_none());
+        assert!(v["note"].as_str().unwrap().contains("neutral floor"));
+        // Thirty teams with 210 absences between them: every team keeps its row, the
+        // least hurt give counts for lists, and the result fits below the cut.
+        let many: Vec<_> = (1..=30)
+            .map(|i| team_tonight(i, f64::from(i), 7, Some(("T00", i % 2 == 0))))
+            .collect();
+        let v = league_tonight_value(&night(many, Some(d10())), &HashMap::new());
+        assert!(chars(&v) <= FIT_CHARS);
+        let rows = v["teams"].as_array().unwrap();
+        assert_eq!(rows.len(), 30);
+        assert_eq!(rows[0]["team"], "T30");
+        assert!(rows[0]["out"].is_array());
+        assert_eq!(rows[29]["out_count"], 7);
+        assert!(v["out_lists_shortened"].is_string());
+        // No night left: nothing priced, and the result says why.
+        let v = league_tonight_value(&night(Vec::new(), None), &HashMap::new());
+        assert!(v["night_note"]
+            .as_str()
+            .unwrap()
+            .contains("No regular-season game"));
+    }
+
+    #[test]
+    fn the_report_fits_its_lines_and_counts_what_it_left_out() {
+        let line = |i: usize, team: &str| InjuryLine {
+            report_date: d10(),
+            player_id: PlayerId::new(i as i32 + 1),
+            player_name: format!("Player With A Long Name {i}"),
+            team_code: team.to_string(),
+            status: "Day-To-Day".into(),
+            return_date: Some(d10()),
+            description: Some("d".repeat(500)),
+        };
+        let lines: Vec<InjuryLine> = (0..300)
+            .map(|i| line(i, if i % 30 == 0 { "OKC" } else { "BOS" }))
+            .collect();
+        let v = report_value(d10(), &lines, None);
+        assert!(chars(&v) <= FIT_CHARS);
+        let returned = v["lines_returned"].as_u64().unwrap();
+        assert!(returned > 60 && returned < 200, "{returned}");
+        assert_eq!(v["lines_left_out"].as_u64().unwrap(), 300 - returned);
+        assert_eq!(v["truncated"], true);
+        assert!(v["note"].is_string());
+        let row = &v["lines"][0];
+        assert_eq!(row[2], 1);
+        assert_eq!(row[5].as_str().unwrap().len(), LEAGUE_DESCRIPTION_CHARS);
+        // One team's lines keep the longer descriptions, and all of them fit.
+        let v = report_value(d10(), &lines, Some("okc"));
+        assert_eq!(
+            (v["lines_matching"].as_u64(), v["lines_left_out"].as_u64()),
+            (Some(10), Some(0))
+        );
+        assert_eq!(v["report_lines_total"], 300);
+        assert_eq!(
+            v["lines"][0][5].as_str().unwrap().len(),
+            MAX_DESCRIPTION_CHARS
+        );
+        assert!(v.get("note").is_none());
     }
 }

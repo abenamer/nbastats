@@ -1192,6 +1192,10 @@ pub struct Tonight {
     /// remains.
     pub teams: Vec<TeamTonight>,
     pub note: Option<String>,
+    /// The absences the night was priced from, so a reader that needs more from them (the
+    /// mean over the remaining games) reads the same report.
+    #[serde(skip)]
+    pub absences: Vec<worth::Absence>,
 }
 
 /// Tonight's slate and every team's rating tonight for `season`.
@@ -1332,6 +1336,7 @@ pub async fn tonight(app: &App, season: SeasonYear) -> Result<Tonight, SeasonLoa
         games,
         teams: rows,
         note: a.note,
+        absences: a.absences,
     })
 }
 

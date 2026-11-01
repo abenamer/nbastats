@@ -47,6 +47,7 @@ These are project-specific technical terms. They are not a reproduction of the A
 | Era | Consecutive seasons of one league with the same number of teams inside one rule period. |
 | Era builder | The Records page's facets and group panel: the facets replay every table over the seasons of the picked eras (`GET /api/records?facet=`), the group panel computes one row of records per combination of dimensions (`GET /api/records/groups`). |
 | Facet | One label along a dimension, written `dimension:label`, that keeps the seasons carrying it. Within one dimension facets add up, across dimensions they intersect. |
+| Fair moneyline | A win chance written as American odds with no bookmaker margin. The favourite's line is the stake that wins 100 (−150). The underdog's line is what 100 wins (+150). At a sportsbook, the favourite must risk more to win 100, and 100 on the underdog wins less. Compare its lines after its margin is taken out. |
 | Fetch window | The dates a results sync asks the source for: the whole season on the first sync, then the days from the last played game to today. |
 | Franchise | The organisation, followed through relocations and renamings. Identified by `FranchiseId` and a key such as `GSW`. |
 | Franchise of interest | On the Alpha Simulator, the franchise whose own probability of K or more titles is reported; `target_index` in the parameters. |
@@ -71,6 +72,7 @@ These are project-specific technical terms. They are not a reproduction of the A
 | PER | John Hollinger's Player Efficiency Rating: a per-minute sum of box-score events, pace-adjusted, with the league mean scaled to 15. Shown for recognition only. |
 | Play-in | The games that decide seeds 7 and 8 (2020-21 and later), or the 8 seed (2019-20). |
 | Player era | The seasons a listed player was active, from the curated table in `domain::players`; a season belongs to every listed player active in it. |
+| Point spread | The expected margin of a game in points, written as a sportsbook writes it: the favourite and the points it gives (NYK −9.9). On the Tonight panel it is the rating gap with the home bonus at 28 Elo a point. Not the Elo spread, which is a standard deviation of ratings. |
 | Possession | One team's turn with the ball. Estimated per game from both teams' shots, free throws, offensive rebounds, misses and turnovers; the unit the box-score rates are per 100 of. |
 | Port | A trait in `application::ports` that the application requires from the outside world. |
 | Projection | A placeholder season: the previous season's matchups one year later, no scores, reverted ratings. |
