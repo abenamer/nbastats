@@ -9,6 +9,7 @@ use chrono::NaiveDate;
 use serde::Serialize;
 
 use crate::domain::bpm::BoxTable;
+use crate::domain::full_strength;
 use crate::domain::ids::{PlayerId, SeasonYear, TeamId};
 use crate::domain::rookie::{self, DraftBracket};
 use crate::domain::spell::{self, SeasonRuns, Survival};
@@ -59,6 +60,8 @@ pub struct CurrentAbsence {
     pub worth_elo: Option<f64>,
     pub se_elo: Option<f64>,
     pub worth_season: Option<SeasonYear>,
+    /// The first season the estimate draws on; `worth_season` is the last.
+    pub worth_first_season: Option<SeasonYear>,
     /// Which estimate priced the line: the player worth from the missed games, or the
     /// box-score worth when the first is missing or within one error of zero.
     pub worth_source: Option<WorthSource>,
@@ -180,6 +183,133 @@ pub async fn spell_runs(app: &App, season: SeasonYear) -> Result<Arc<SeasonRuns>
         cache.insert(season, runs.clone());
     }
     Ok(runs)
+}
+
+/// The Elo each side was missing in each played game of `season`
+/// (`full_strength::game_absences`): the players the stored reports listed who then did
+/// not play, priced as tonight's lines are, with the seasons' estimates. Cached until the
+/// next import, results sync or player sync. Without stored reports, none.
+pub async fn played_absences(
+    app: &App,
+    season: SeasonYear,
+) -> Result<Arc<full_strength::MissingElo>, SeasonLoadError> {
+    if let Some(r) = app
+        .played_absences
+        .read()
+        .unwrap_or_else(|e| e.into_inner())
+        .get(&season)
+        .cloned()
+    {
+        return Ok(r);
+    }
+    let generation = app.cache_generation.load(Ordering::SeqCst);
+    let data = app.season_data(season).await?;
+    let dates = data
+        .games
+        .iter()
+        .filter(|g| g.is_played())
+        .map(|g| g.game_date);
+    let (Some(first), Some(last)) = (dates.clone().min(), dates.max()) else {
+        return Ok(Arc::new(HashMap::new()));
+    };
+    let reports = app
+        .store
+        .injury_reports_between(
+            first - chrono::Duration::days(full_strength::REPORT_MAX_AGE_DAYS),
+            last,
+        )
+        .await?;
+    let missing = if reports.is_empty() {
+        Arc::new(HashMap::new())
+    } else {
+        let mut ids: Vec<PlayerId> = reports.iter().map(|r| r.player_id).collect();
+        ids.sort_unstable();
+        ids.dedup();
+        let tables = lookback_tables(app, season).await?;
+        let box_tables = box_lookback_tables(app, season).await?;
+        let pricer = Pricer::load(app, season, tables, box_tables, &ids).await?;
+        let worth_of: HashMap<PlayerId, (f64, f64)> = ids
+            .iter()
+            .filter_map(|id| {
+                let (e, _) = pricer.estimate(*id, pricer.players.get(id));
+                e.map(|e| (*id, (e.elo, e.se_elo)))
+            })
+            .collect();
+        let lines = app.store.season_box_lines(season).await?;
+        tokio::task::spawn_blocking(move || {
+            Arc::new(full_strength::game_absences(
+                &data.games,
+                &lines,
+                &reports,
+                &worth_of,
+            ))
+        })
+        .await
+        .map_err(|e| SeasonLoadError::Store(StoreError::Query(e.to_string())))?
+    };
+    let mut cache = app
+        .played_absences
+        .write()
+        .unwrap_or_else(|e| e.into_inner());
+    if app.cache_generation.load(Ordering::SeqCst) == generation {
+        cache.insert(season, missing.clone());
+    }
+    Ok(missing)
+}
+
+/// Every team's full-strength rating of `season` as of `as_of`: the played games replayed
+/// with the Elo each side was missing in the expectation (`full_strength::replay`). The
+/// gap to the stored rating is held within `full_strength::MAX_SHIFT_ELO`, the most a
+/// forecast moves a rating, so the panel and a forecast read the same rating.
+pub async fn full_strength(
+    app: &App,
+    season: SeasonYear,
+    as_of: NaiveDate,
+) -> Result<HashMap<TeamId, full_strength::FullStrength>, SeasonLoadError> {
+    let data = app.season_data(season).await?;
+    let missing = played_absences(app, season).await?;
+    let mut rows = full_strength::replay(&data.games, &missing, as_of);
+    for f in rows.values_mut() {
+        let cap = full_strength::MAX_SHIFT_ELO;
+        f.rating = f.stored + (f.rating - f.stored).clamp(-cap, cap);
+    }
+    Ok(rows)
+}
+
+/// The shifts that move each team from its stored rating to its full-strength one as of
+/// `as_of`, for a forecast that prices the injury report; teams with none are left out.
+/// Read at the forecast's own cutoff: never on or after the first playoff game, as the
+/// engine moves a later date back to the day before the playoffs.
+pub async fn rating_shifts(
+    app: &App,
+    season: SeasonYear,
+    as_of: NaiveDate,
+) -> Result<Vec<full_strength::RatingShift>, SeasonLoadError> {
+    let data = app.season_data(season).await?;
+    let first_playoff = data
+        .games
+        .iter()
+        .filter(|g| g.is_playoff())
+        .map(|g| g.game_date)
+        .min();
+    let cutoff = match first_playoff {
+        Some(fp) if as_of >= fp => fp - chrono::Duration::days(1),
+        _ => as_of,
+    };
+    let mut shifts: Vec<full_strength::RatingShift> = full_strength(app, season, cutoff)
+        .await?
+        .values()
+        .filter(|f| (f.rating - f.stored).abs() > 1e-9)
+        .map(|f| full_strength::RatingShift {
+            team_id: f.team_id,
+            // Clamped again: rebuilding the gap from the clamped rating can land a hair
+            // past the cap, which the job's validation would refuse.
+            elo: (f.rating - f.stored)
+                .clamp(-full_strength::MAX_SHIFT_ELO, full_strength::MAX_SHIFT_ELO),
+        })
+        .collect();
+    shifts.sort_by_key(|s| s.team_id);
+    Ok(shifts)
 }
 
 /// The survival curve from the runs of the [`SPELL_SEASONS`] seasons before `season` that
@@ -368,6 +498,140 @@ fn full_name(p: &Player) -> String {
         .to_string()
 }
 
+/// What a season's report lines are priced against: the worth and box tables of the
+/// season and the ones before, the box calibration, the draft priors, and for the players
+/// asked about their records and first seasons (to tell a rookie). One per pricing, so the
+/// availability answer and the full-strength replay price a player alike.
+pub struct Pricer {
+    season: SeasonYear,
+    tables: Vec<(SeasonYear, Arc<WorthTable>)>,
+    box_tables: Vec<(SeasonYear, Arc<BoxTable>)>,
+    pub calibration: Option<BoxCalibration>,
+    pub draft: Arc<app_rookie::DraftSummary>,
+    pub players: HashMap<PlayerId, Player>,
+    first_seasons: HashMap<PlayerId, SeasonYear>,
+}
+
+impl Pricer {
+    /// The pricing of `season` for the players `ids`, over the tables given.
+    pub async fn load(
+        app: &App,
+        season: SeasonYear,
+        tables: Vec<(SeasonYear, Arc<WorthTable>)>,
+        box_tables: Vec<(SeasonYear, Arc<BoxTable>)>,
+        ids: &[PlayerId],
+    ) -> Result<Self, SeasonLoadError> {
+        let draft = app_rookie::draft_table(app, season).await?;
+        let players: HashMap<PlayerId, Player> = if ids.is_empty() {
+            HashMap::new()
+        } else {
+            app.store
+                .players_by_id(ids)
+                .await?
+                .into_iter()
+                .map(|p| (p.id, p))
+                .collect()
+        };
+        // The first season each player has a line in: seen before this one, he is no
+        // rookie whatever the draft fields say.
+        let first_seasons = app.store.first_appearance_seasons(ids).await?;
+        // How much of a box worth shows up as a team drop, over these seasons' players.
+        let calibration = calibration_from(&tables, &box_tables);
+        Ok(Self {
+            season,
+            tables,
+            box_tables,
+            calibration,
+            draft,
+            players,
+            first_seasons,
+        })
+    }
+
+    /// A player's box worth and minutes this season, over his stints.
+    fn this_season(&self, player: PlayerId) -> Option<(f64, f64)> {
+        self.box_tables
+            .iter()
+            .find(|(s, _)| *s == self.season)
+            .and_then(|(_, t)| app_rookie::season_box(t, player))
+    }
+
+    /// The estimate a player is priced with, and the bracket of the prior when one priced
+    /// it. `player` is his record, when known, to tell a rookie.
+    pub fn estimate(
+        &self,
+        player_id: PlayerId,
+        player: Option<&Player>,
+    ) -> (Option<Estimate>, Option<DraftBracket>) {
+        let season = self.season;
+        let calibration = self.calibration.as_ref();
+        let found = choose_estimate(
+            pick_estimate(&self.tables, player_id),
+            pick_box_estimate(&self.box_tables, player_id),
+            calibration,
+        );
+        let Some(p) = player else {
+            return (found, None);
+        };
+        // A rookie is a player with no line in any stored season before this one,
+        // whatever his draft year: a first-year player, one who lost his first season,
+        // or an arrival from abroad. His bracket is his draft's.
+        // A draft older than five years before the season is no rookie's: a gap in the
+        // stored box scores must not turn a veteran into one.
+        let rookie = !self
+            .first_seasons
+            .get(&player_id)
+            .is_some_and(|s| *s < season)
+            && p.draft_year
+                .is_none_or(|y| y >= i32::from(season) - ROOKIE_DRAFT_YEARS);
+        if !rookie {
+            return (found, None);
+        }
+        let Some(prior) = self
+            .draft
+            .prior_for(DraftBracket::of(p.draft_round, p.draft_number))
+        else {
+            return (found, None);
+        };
+        match found {
+            Some(e) if matches!(e.source, WorthSource::Worth | WorthSource::Blend) => {
+                (Some(e), None)
+            }
+            other => {
+                // The prior and his own box worth on the veterans' scale: through the
+                // calibration when there is one.
+                let scale = calibration.map_or(1.0, |c| c.slope);
+                let scaled = rookie::DraftPrior {
+                    bracket: prior.bracket,
+                    players: prior.players,
+                    mean_elo: prior.mean_elo * scale,
+                    se_elo: prior.se_elo * scale,
+                    sd_elo: prior.sd_elo * scale,
+                };
+                let own = other
+                    .and_then(|_| self.this_season(player_id))
+                    .map(|(worth, minutes)| (worth * scale, minutes));
+                let (elo, se_elo) = rookie::shrink(&scaled, own);
+                // Within one error of zero, the prior says nothing: the box worth stands,
+                // or nothing does, as for a worth from the missed games.
+                if elo.abs() < se_elo {
+                    return (other, None);
+                }
+                (
+                    Some(Estimate {
+                        elo,
+                        se_elo,
+                        season,
+                        first_season: season,
+                        source: WorthSource::Draft,
+                    }),
+                    Some(prior.bracket),
+                )
+            }
+        }
+    }
+}
+
 /// The tables a report is priced against: the season's and the `WORTH_LOOKBACK` before
 /// it, oldest last; a season without games is left out.
 async fn lookback_tables(
@@ -408,36 +672,53 @@ async fn box_lookback_tables(
     Ok(out)
 }
 
-/// The estimate to price a player with, among the tables given: the one with the
-/// smallest standard error, so a season with one absence does not displace a full
-/// season before it. Ties go to the latest season.
+/// The estimate to price a player with from the games his team played without him, over
+/// the tables given (latest season first): the seasons pooled under one prior, that of the
+/// latest season that has him (`worth::pool_seasons`), so a few games this season do not stand for a player
+/// measured over the seasons before. None when no table has him.
 pub fn pick_estimate(
     tables: &[(SeasonYear, Arc<WorthTable>)],
     player: PlayerId,
 ) -> Option<Estimate> {
-    tables
+    let found: Vec<(SeasonYear, worth::SeasonWorth)> = tables
         .iter()
         .filter_map(|(season, t)| {
-            t.players
-                .iter()
-                .find(|w| w.player_id == player)
-                .map(|w| (w.se_points, *season, w.worth_elo, w.se_elo))
+            let w = t.players.iter().find(|w| w.player_id == player)?;
+            Some((
+                *season,
+                worth::SeasonWorth {
+                    elo: w.worth_elo,
+                    se_elo: w.se_elo,
+                    prior_sd_elo: t.prior_sd_points * worth::ELO_PER_POINT,
+                },
+            ))
         })
-        .min_by(|a, b| a.0.total_cmp(&b.0).then(b.1.cmp(&a.1)))
-        .map(|(_, season, elo, se_elo)| Estimate {
-            elo,
-            se_elo,
-            season,
-            source: WorthSource::Worth,
-        })
+        .collect();
+    let season = found.iter().map(|(s, _)| *s).max()?;
+    let first_season = found.iter().map(|(s, _)| *s).min()?;
+    let prior = tables
+        .iter()
+        .find(|(s, _)| *s == season)
+        .map_or(0.0, |(_, t)| t.prior_sd_points * worth::ELO_PER_POINT);
+    let seasons: Vec<worth::SeasonWorth> = found.iter().map(|(_, w)| *w).collect();
+    let (elo, se_elo) = worth::pool_seasons(&seasons, prior);
+    Some(Estimate {
+        elo,
+        se_elo,
+        season,
+        first_season,
+        source: WorthSource::Worth,
+    })
 }
 
-/// The worth estimate a report line is priced with.
+/// The worth estimate a report line is priced with, and the seasons it draws on: from
+/// `first_season` to `season`.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Estimate {
     pub elo: f64,
     pub se_elo: f64,
     pub season: SeasonYear,
+    pub first_season: SeasonYear,
     pub source: WorthSource,
 }
 
@@ -460,18 +741,26 @@ pub enum WorthSource {
 }
 
 /// The box-score estimate for a player among the tables given (latest season first): his
-/// box worth over his stints, weighted by minutes, in the latest season that has one.
+/// box worth in each season over his stints, weighted by minutes, and the seasons pooled by
+/// minutes (`worth::pool_box`), so a handful of games this season count for their minutes.
 pub fn pick_box_estimate(
     tables: &[(SeasonYear, Arc<BoxTable>)],
     player: PlayerId,
 ) -> Option<Estimate> {
-    tables.iter().find_map(|(season, t)| {
-        super::rookie::season_box(t, player).map(|(elo, _)| Estimate {
-            elo,
-            se_elo: 0.0,
-            season: *season,
-            source: WorthSource::Box,
+    let found: Vec<(SeasonYear, f64, f64)> = tables
+        .iter()
+        .filter_map(|(season, t)| {
+            super::rookie::season_box(t, player).map(|(elo, minutes)| (*season, elo, minutes))
         })
+        .collect();
+    let pairs: Vec<(f64, f64)> = found.iter().map(|(_, e, m)| (*e, *m)).collect();
+    let elo = worth::pool_box(&pairs)?;
+    Some(Estimate {
+        elo,
+        se_elo: 0.0,
+        season: found.iter().map(|(s, _, _)| *s).max()?,
+        first_season: found.iter().map(|(s, _, _)| *s).min()?,
+        source: WorthSource::Box,
     })
 }
 
@@ -499,6 +788,7 @@ pub fn choose_estimate(
             elo,
             se_elo,
             season: b.season,
+            first_season: b.first_season,
             source: WorthSource::Box,
         }
     });
@@ -509,6 +799,7 @@ pub fn choose_estimate(
                 elo,
                 se_elo,
                 season: w.season.max(b.season),
+                first_season: w.first_season.min(b.first_season),
                 source: WorthSource::Blend,
             })
         }
@@ -654,92 +945,11 @@ pub async fn availability(app: &App, season: SeasonYear) -> Result<Availability,
         }
     }
     let measured = status_table(app, season).await?;
-    let draft = app_rookie::draft_table(app, season).await?;
-    // The listed players, for the draft of each: a rookie is priced by his draft slot
-    // until his minutes say otherwise.
     let listed_ids: Vec<PlayerId> = report.iter().map(|l| l.player_id).collect();
-    let listed_players: HashMap<PlayerId, Player> = if listed_ids.is_empty() {
-        HashMap::new()
-    } else {
-        app.store
-            .players_by_id(&listed_ids)
-            .await?
-            .into_iter()
-            .map(|p| (p.id, p))
-            .collect()
-    };
-    // The first season each listed player has a line in: seen before this one, he is no
-    // rookie whatever the draft fields say.
-    let first_seasons = app.store.first_appearance_seasons(&listed_ids).await?;
-    // A player's box worth and minutes this season, over his stints.
-    let this_season = |player: PlayerId| -> Option<(f64, f64)> {
-        box_tables
-            .iter()
-            .find(|(s, _)| *s == season)
-            .and_then(|(_, t)| app_rookie::season_box(t, player))
-    };
-    // The estimate a line is priced with, and the bracket of the prior when one priced it.
-    // How much of a box worth shows up as a team drop, over these seasons' players.
-    let calibration = calibration_from(&tables, &box_tables);
-    let estimate = |player_id: PlayerId, player: Option<&Player>| {
-        let found = choose_estimate(
-            pick_estimate(&tables, player_id),
-            pick_box_estimate(&box_tables, player_id),
-            calibration.as_ref(),
-        );
-        let Some(p) = player else {
-            return (found, None);
-        };
-        // A rookie is a player with no line in any stored season before this one,
-        // whatever his draft year: a first-year player, one who lost his first season,
-        // or an arrival from abroad. His bracket is his draft's.
-        // A draft older than five years before the season is no rookie's: a gap in the
-        // stored box scores must not turn a veteran into one.
-        let rookie = !first_seasons.get(&player_id).is_some_and(|s| *s < season)
-            && p.draft_year
-                .is_none_or(|y| y >= i32::from(season) - ROOKIE_DRAFT_YEARS);
-        if !rookie {
-            return (found, None);
-        }
-        let Some(prior) = draft.prior_for(DraftBracket::of(p.draft_round, p.draft_number)) else {
-            return (found, None);
-        };
-        match found {
-            Some(e) if matches!(e.source, WorthSource::Worth | WorthSource::Blend) => {
-                (Some(e), None)
-            }
-            other => {
-                // The prior and his own box worth on the veterans' scale: through the
-                // calibration when there is one.
-                let scale = calibration.as_ref().map_or(1.0, |c| c.slope);
-                let scaled = rookie::DraftPrior {
-                    bracket: prior.bracket,
-                    players: prior.players,
-                    mean_elo: prior.mean_elo * scale,
-                    se_elo: prior.se_elo * scale,
-                    sd_elo: prior.sd_elo * scale,
-                };
-                let own = other
-                    .and_then(|_| this_season(player_id))
-                    .map(|(worth, minutes)| (worth * scale, minutes));
-                let (elo, se_elo) = rookie::shrink(&scaled, own);
-                // Within one error of zero, the prior says nothing: the box worth stands,
-                // or nothing does, as for a worth from the missed games.
-                if elo.abs() < se_elo {
-                    return (other, None);
-                }
-                (
-                    Some(Estimate {
-                        elo,
-                        se_elo,
-                        season,
-                        source: WorthSource::Draft,
-                    }),
-                    Some(prior.bracket),
-                )
-            }
-        }
-    };
+    let pricer = Pricer::load(app, season, tables, box_tables, &listed_ids).await?;
+    let listed_players = &pricer.players;
+    let estimate =
+        |player_id: PlayerId, player: Option<&Player>| pricer.estimate(player_id, player);
     let rule = Some(SpanRule {
         survival: fitted.as_ref().map(|(s, _)| s),
         statuses: measured.as_ref().map(|(t, _)| t),
@@ -798,6 +1008,7 @@ pub async fn availability(app: &App, season: SeasonYear) -> Result<Availability,
             worth_elo: found.map(|e| e.elo),
             se_elo: found.map(|e| e.se_elo),
             worth_season: found.map(|e| e.season),
+            worth_first_season: found.map(|e| e.first_season),
             worth_source: found.map(|e| e.source),
             penalty_elo: one.map(|a| a.elo),
             weight: one.and(span).map(|s| s.weight),
@@ -934,8 +1145,8 @@ pub async fn availability(app: &App, season: SeasonYear) -> Result<Availability,
         absences,
         survival,
         statuses,
-        draft: Some((*draft).clone()),
-        box_calibration: calibration,
+        draft: Some((*pricer.draft).clone()),
+        box_calibration: pricer.calibration.clone(),
         unlisted,
         note: None,
     })
@@ -1013,9 +1224,13 @@ pub struct InjuryCard {
     /// over, so a stored report of a past season still reads.
     pub today: NaiveDate,
     pub season_end: NaiveDate,
-    /// The team's rating as of that date, the date it is from, and whether no game is
-    /// played yet.
+    /// The team's full-strength rating as of that date (`full_strength`), the date of its
+    /// last game, and whether no game is played yet.
     pub rating_elo: Option<f64>,
+    /// The stored Elo at the same point, which the absences of the games played are in.
+    pub rating_stored: Option<f64>,
+    /// The team's games played short, whose absences the full-strength rating takes out.
+    pub games_short: u32,
     pub rating_date: Option<NaiveDate>,
     pub rating_is_preseason: Option<bool>,
     /// The regular-season home bonus the win probabilities use: the one asked for, else
@@ -1061,17 +1276,12 @@ pub async fn injury_card(
     };
     let home_advantage_fitted = app.home_advantage(season).await?.regular;
     let home_advantage = home_advantage.unwrap_or(home_advantage_fitted);
-    let mut ratings: HashMap<TeamId, f64> = HashMap::new();
-    for g in &data.games {
-        for t in [g.home_team_id, g.away_team_id] {
-            if let std::collections::hash_map::Entry::Vacant(e) = ratings.entry(t) {
-                if let Some((elo, _, _)) = rating_as_of(&data.games, t, today) {
-                    e.insert(elo);
-                }
-            }
-        }
-    }
+    // The full-strength ratings: the absences of the games played are out of them, so
+    // today's absences come off the full team once.
+    let full = full_strength(app, season, today).await?;
+    let ratings: HashMap<TeamId, f64> = full.iter().map(|(t, f)| (*t, f.rating)).collect();
     let rating = rating_as_of(&data.games, team.id, today);
+    let own = full.get(&team.id).copied();
     let absences: Vec<Absence> = a
         .absences
         .iter()
@@ -1122,13 +1332,15 @@ pub async fn injury_card(
         report_date: a.report_date,
         today,
         season_end: a.season_end,
-        rating_elo: rating.map(|(e, _, _)| e),
+        rating_elo: own.map(|f| f.rating),
+        rating_stored: rating.map(|(e, _, _)| e),
+        games_short: own.map_or(0, |f| f.games_short),
         rating_date: rating.map(|(_, d, _)| d),
         rating_is_preseason: rating.map(|(_, _, played)| !played),
         home_advantage,
         home_advantage_fitted,
         penalty_today,
-        rating_today: rating.map(|(e, _, _)| e - penalty_today),
+        rating_today: own.map(|f| f.rating - penalty_today),
         lines,
         last_regular_game,
         listed,
@@ -1159,8 +1371,13 @@ pub struct TeamTonight {
     pub team_id: TeamId,
     pub code: String,
     pub name: String,
-    /// The rating as of the date; the league mean for a team without one.
+    /// The full-strength rating as of the date (`full_strength`); the league mean for a
+    /// team without one.
     pub rating: f64,
+    /// The stored Elo at the same point, which the absences of the games played are in.
+    pub stored_rating: f64,
+    /// The team's games played short, whose absences the full-strength rating takes out.
+    pub games_short: u32,
     /// The sum of the `out` penalties.
     pub penalty: f64,
     pub rating_tonight: f64,
@@ -1192,6 +1409,10 @@ pub struct Tonight {
     /// The night's regular-season games already played, when it is partly over.
     pub games_played: u32,
     pub report_date: Option<NaiveDate>,
+    /// The team games of the season played short, whose absences the full-strength ratings
+    /// take out, and the model that replays them.
+    pub games_played_short: u32,
+    pub rating_model: &'static str,
     /// The regular-season home bonus the night is priced with: the one asked for, else
     /// the season's fitted one, which `home_advantage_fitted` gives either way.
     pub home_advantage: f64,
@@ -1222,16 +1443,10 @@ pub async fn tonight(
     };
     let home_advantage_fitted = app.home_advantage(season).await?.regular;
     let home_advantage = home_advantage.unwrap_or(home_advantage_fitted);
-    let mut ratings: HashMap<TeamId, f64> = HashMap::new();
-    for g in &data.games {
-        for t in [g.home_team_id, g.away_team_id] {
-            if let std::collections::hash_map::Entry::Vacant(e) = ratings.entry(t) {
-                if let Some((elo, _, _)) = rating_as_of(&data.games, t, as_of) {
-                    e.insert(elo);
-                }
-            }
-        }
-    }
+    // The full-strength ratings, so tonight's absences come off the full team once.
+    let full = full_strength(app, season, as_of).await?;
+    let ratings: HashMap<TeamId, f64> = full.iter().map(|(t, f)| (*t, f.rating)).collect();
+    let games_short: u32 = full.values().map(|f| f.games_short).sum();
     let slate = worth::tonight(&data.games, as_of, &ratings, &a.absences, home_advantage);
     let night = slate.as_ref().map(|n| n.date);
     let games_played = slate.as_ref().map_or(0, |n| n.played);
@@ -1314,6 +1529,8 @@ pub async fn tonight(
             code,
             name,
             rating,
+            stored_rating: full.get(&team_id).map_or(rating, |f| f.stored),
+            games_short: full.get(&team_id).map_or(0, |f| f.games_short),
             penalty,
             rating_tonight: rating - penalty,
             out,
@@ -1346,6 +1563,8 @@ pub async fn tonight(
         night,
         games_played,
         report_date: a.report_date,
+        games_played_short: games_short,
+        rating_model: full_strength::FULL_STRENGTH_MODEL,
         home_advantage,
         home_advantage_fitted,
         games,
@@ -1390,21 +1609,36 @@ mod tests {
     }
 
     #[test]
-    fn the_estimate_with_the_smallest_error_wins_and_ties_go_to_the_latest_season() {
+    fn the_seasons_without_the_player_are_pooled_under_the_latest_prior() {
         let tables = vec![
             table_with(2026, 3.5, 10.0),
             table_with(2025, 1.2, 120.0),
             table_with(2024, 1.2, 90.0),
         ];
-        assert_eq!(
-            pick_estimate(&tables, PlayerId::new(1)),
-            Some(Estimate {
-                elo: 120.0,
-                se_elo: 1.2 * 28.0,
-                season: SeasonYear::of(2025),
-                source: WorthSource::Worth,
-            })
+        let e = pick_estimate(&tables, PlayerId::new(1)).unwrap();
+        let prior = 3.0 * 28.0;
+        let season = |se: f64, elo: f64| worth::SeasonWorth {
+            elo,
+            se_elo: se * 28.0,
+            prior_sd_elo: prior,
+        };
+        let expected = worth::pool_seasons(
+            &[season(3.5, 10.0), season(1.2, 120.0), season(1.2, 90.0)],
+            prior,
         );
+        assert_eq!((e.elo, e.se_elo), expected);
+        assert_eq!(
+            (e.season, e.first_season, e.source),
+            (
+                SeasonYear::of(2026),
+                SeasonYear::of(2024),
+                WorthSource::Worth
+            )
+        );
+        // The five-game season at 10 barely moves the two measured ones, at 90 and 120;
+        // with their games added up, the one prior pulls them less toward zero than each
+        // season's did.
+        assert!(e.elo > 100.0 && e.elo < 120.0, "{}", e.elo);
         assert_eq!(pick_estimate(&tables, PlayerId::new(2)), None);
         assert_eq!(pick_estimate(&[], PlayerId::new(1)), None);
     }
@@ -1437,7 +1671,7 @@ mod tests {
     }
 
     #[test]
-    fn the_box_estimate_weighs_the_stints_of_the_latest_season_by_minutes() {
+    fn the_box_estimate_pools_the_seasons_and_their_stints_by_minutes() {
         use crate::domain::bpm::{BoxTable, Coverage, LeagueBox, PlayerBox};
         let row = |team: i32, minutes: f64, elo: f64| PlayerBox {
             player_id: PlayerId::new(1),
@@ -1483,12 +1717,17 @@ mod tests {
             table(2026, vec![row(1, 300.0, 15.0), row(2, 900.0, 45.0)]),
             table(2025, vec![row(1, 2000.0, 80.0)]),
         ];
-        // The latest season, over both stints weighted by minutes: 300 at 15 and 900 at
-        // 45 give 37.5.
+        // Each season over its stints weighted by minutes (300 at 15 and 900 at 45 give
+        // 37.5 in 2026), then the seasons by minutes: 1,200 at 37.5 and 2,000 at 80.
         let e = pick_box_estimate(&tables, PlayerId::new(1)).unwrap();
         assert_eq!(
-            (e.elo, e.se_elo, e.season),
-            (37.5, 0.0, SeasonYear::of(2026))
+            (e.elo, e.se_elo, e.season, e.first_season),
+            (
+                (1200.0 * 37.5 + 2000.0 * 80.0) / 3200.0,
+                0.0,
+                SeasonYear::of(2026),
+                SeasonYear::of(2025)
+            )
         );
         assert_eq!(e.source, WorthSource::Box);
         assert_eq!(pick_box_estimate(&tables, PlayerId::new(9)), None);
@@ -1500,6 +1739,7 @@ mod tests {
             elo,
             se_elo: se,
             season: SeasonYear::of(2025),
+            first_season: SeasonYear::of(2025),
             source,
         };
         let noisy = est(-16.0, 70.0, WorthSource::Worth);

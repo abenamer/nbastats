@@ -7,6 +7,7 @@ pub mod continuation;
 pub mod cup;
 pub mod elo;
 pub mod eras;
+pub mod full_strength;
 pub mod ids;
 pub mod market;
 pub mod models;

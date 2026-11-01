@@ -881,6 +881,13 @@ pub async fn submit_season(
                 crate::domain::worth::MAX_ABSENCES
             )));
         }
+        // The report's absences come off the full-strength ratings, not off ratings the
+        // absences of the games played are already in.
+        if let Some(as_of) = params.as_of {
+            params.rating_shifts = worth::rating_shifts(&app, params.season, as_of)
+                .await
+                .map_err(season_load_error)?;
+        }
     }
     if !body.sample_worth {
         worth::fix_penalties(&mut params.absences);

@@ -221,6 +221,7 @@ async fn forecasts_never_use_future_information(pool: PgPool) {
     // The engine-level guard: identical forecast whether or not later games are present.
     let params = SeasonParams {
         hold_absences: false,
+        rating_shifts: Vec::new(),
         season: S2016,
         as_of: Some(cutoff),
         iterations: 300,
@@ -305,6 +306,7 @@ async fn forecasts_never_use_future_information(pool: PgPool) {
     // A cutoff inside the playoffs is clamped back to the day before they started.
     let late = SeasonParams {
         hold_absences: false,
+        rating_shifts: Vec::new(),
         as_of: Some(NaiveDate::from_ymd_opt(2016, 6, 1).unwrap()),
         ..params.clone()
     };
@@ -768,6 +770,7 @@ async fn computed_elo_continues_from_the_previous_season(pool: PgPool) {
     let by_id = store.team_map().await.unwrap();
     let params = SeasonParams {
         hold_absences: false,
+        rating_shifts: Vec::new(),
         season: s2017,
         as_of: None,
         iterations: 200,

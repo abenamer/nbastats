@@ -109,6 +109,10 @@ pub struct App {
     /// The draft priors for pricing each season, likewise.
     pub(crate) draft_tables:
         RwLock<HashMap<SeasonYear, Arc<crate::application::rookie::DraftSummary>>>,
+    /// The Elo each side was missing in each played game of a season, for the
+    /// full-strength rating; cleared with the player caches.
+    pub(crate) played_absences:
+        RwLock<HashMap<SeasonYear, Arc<crate::domain::full_strength::MissingElo>>>,
     /// The sportsbook lines read per date, kept a while, one read at a time.
     pub(crate) market_lines: super::market::LinesCache,
     /// Counts the cache invalidations, so a load that began before one is not cached after it.
@@ -156,6 +160,7 @@ impl App {
             spell_runs: RwLock::new(HashMap::new()),
             status_samples: RwLock::new(HashMap::new()),
             draft_tables: RwLock::new(HashMap::new()),
+            played_absences: RwLock::new(HashMap::new()),
             market_lines: super::market::LinesCache::default(),
             cache_generation: AtomicU64::new(0),
             teams: RwLock::new(None),
@@ -322,6 +327,10 @@ impl App {
             .write()
             .unwrap_or_else(|e| e.into_inner())
             .clear();
+        self.played_absences
+            .write()
+            .unwrap_or_else(|e| e.into_inner())
+            .clear();
         *self.teams.write().unwrap_or_else(|e| e.into_inner()) = None;
     }
 
@@ -351,6 +360,10 @@ impl App {
             .unwrap_or_else(|e| e.into_inner())
             .clear();
         self.draft_tables
+            .write()
+            .unwrap_or_else(|e| e.into_inner())
+            .clear();
+        self.played_absences
             .write()
             .unwrap_or_else(|e| e.into_inner())
             .clear();
