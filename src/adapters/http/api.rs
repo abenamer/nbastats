@@ -23,7 +23,7 @@ use crate::application::ports::{
 use crate::application::reports::{self, Fetching, PlayedGame, ReportError};
 use crate::application::state::SeasonLoadError;
 use crate::application::{boxscore, dashboard, dynasty, recovery, worth};
-use crate::application::{results_sync, scheduler};
+use crate::application::{results_sync, scheduler, update};
 use crate::config::APP_VERSION;
 use crate::domain::backtesting::BacktestParams;
 use crate::domain::elo;
@@ -1309,6 +1309,26 @@ pub async fn sync_results(
     }
 }
 
+/// Bring the current season up to date in the background: results and schedule with the
+/// Elo recomputed, then box scores, today's injury report and the rosters.
+pub async fn update_data(State(app): State<AppState>) -> ApiResult<Value> {
+    match update::start(app.clone()) {
+        Ok(season) => Ok(Json(json!({
+            "started": true, "season": season, "label": season.label(),
+            "status_url": "/api/data/update/status",
+        }))),
+        Err(e @ update::StartError::NotConfigured) => Err(ApiError::bad_request(e.to_string())),
+        Err(e @ (update::StartError::AlreadyRunning | update::StartError::ResultsRunning)) => {
+            Err(ApiError::conflict(e.to_string()))
+        }
+    }
+}
+
+/// Live state of the update for the Data page to poll.
+pub async fn update_status(State(app): State<AppState>) -> ApiResult<Value> {
+    Ok(Json(json!(app.update_phase())))
+}
+
 /// Live state of the results sync (manual or scheduled) for the Data page to poll.
 pub async fn sync_status(State(app): State<AppState>) -> ApiResult<Value> {
     Ok(Json(json!(app.sync_phase())))
@@ -1411,6 +1431,7 @@ pub async fn coverage(State(app): State<AppState>) -> ApiResult<Value> {
     Ok(Json(json!({
         "seasons": rows,
         "missing_seasons": missing,
+        "current_season": scheduler::current_season(app.today()),
         "source_url": app.config.data_source_url,
         "next_season": next_season,
         "results_example": continuation::results_example(),

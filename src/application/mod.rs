@@ -19,4 +19,5 @@ pub mod rookie;
 pub mod scheduler;
 pub mod state;
 pub mod strength;
+pub mod update;
 pub mod worth;
