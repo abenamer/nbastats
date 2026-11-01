@@ -80,6 +80,10 @@ pub struct App {
     /// Held while a player sync runs (backfill, daily run or injury report); at most one.
     pub player_lock: Arc<tokio::sync::Mutex<()>>,
     player_phase: std::sync::Mutex<PlayerPhase>,
+    /// One update at a time, across both of its steps.
+    pub update_lock: Arc<tokio::sync::Mutex<()>>,
+    /// The one-click update of the current season, when one has run.
+    update_phase: std::sync::Mutex<super::update::UpdatePhase>,
     pub started_at: chrono::DateTime<chrono::Utc>,
     /// Wakes the job runner when a job is queued.
     pub job_notify: Notify,
@@ -136,6 +140,8 @@ impl App {
             sync_phase: std::sync::Mutex::new(SyncPhase::Idle),
             player_lock: Arc::new(tokio::sync::Mutex::new(())),
             player_phase: std::sync::Mutex::new(PlayerPhase::Idle),
+            update_lock: Arc::new(tokio::sync::Mutex::new(())),
+            update_phase: std::sync::Mutex::new(super::update::UpdatePhase::Idle),
             started_at: chrono::Utc::now(),
             job_notify: Notify::new(),
             cancel_flags: std::sync::Mutex::new(HashMap::new()),
@@ -265,6 +271,17 @@ impl App {
 
     pub fn set_player_phase(&self, phase: PlayerPhase) {
         *self.player_phase.lock().unwrap_or_else(|e| e.into_inner()) = phase;
+    }
+
+    pub fn update_phase(&self) -> super::update::UpdatePhase {
+        self.update_phase
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+    }
+
+    pub fn set_update_phase(&self, phase: super::update::UpdatePhase) {
+        *self.update_phase.lock().unwrap_or_else(|e| e.into_inner()) = phase;
     }
 
     /// Drop cached data after an import. The generation moves first, under the season lock,

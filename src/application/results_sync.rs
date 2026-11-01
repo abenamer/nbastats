@@ -144,6 +144,42 @@ pub async fn run_tracked<R: ResultsSource>(
     result
 }
 
+/// Sync `season` while the caller holds the sync lock. When the season before it is
+/// missing (the first run after a new season starts), that season is synced first so the
+/// ratings chain from the archive; once only, so a previous season that yields nothing
+/// either ends the run with the error. A previous season with nothing beyond its archive
+/// games does not stop the target season.
+pub async fn run_chained<R: ResultsSource>(
+    app: &App,
+    source: &R,
+    season: SeasonYear,
+    trigger: Trigger,
+) -> Result<ImportOutcome, ContinuationUseCaseError> {
+    let mut chained = false;
+    let mut pending = vec![season];
+    while let Some(target) = pending.pop() {
+        match run_tracked(app, source, target, trigger).await {
+            Ok(outcome) => {
+                if target == season {
+                    return Ok(outcome);
+                }
+            }
+            Err(ContinuationUseCaseError::NoPreviousSeason(previous)) if !chained => {
+                info!(season = %target, %previous, "previous season missing; syncing it first");
+                chained = true;
+                pending.push(target);
+                pending.push(previous);
+            }
+            Err(ContinuationUseCaseError::NoGames(s)) if target != season => {
+                info!(season = %s, "previous season has nothing new beyond the archive; continuing");
+            }
+            Err(e) => return Err(e),
+        }
+    }
+    // The target season is always the last one popped, so the loop returns above.
+    Err(ContinuationUseCaseError::NoGames(season))
+}
+
 /// Start a manual sync in the background. Returns at once; poll `app.sync_phase()`.
 pub fn start(app: Arc<App>, season: SeasonYear) -> Result<(), StartError> {
     if app.results.is_none() {

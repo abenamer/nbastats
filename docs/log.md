@@ -1,5 +1,8 @@
 # Bundle update log
 
+## 2026-11-01
+* **Update**: [Player data](/concepts/player-data.md) and the import runbook describe the Data page's **Update Data** button and the Advanced section; the API reference and the term Update follow.
+
 ## 2026-10-28
 * **Update**: [Player worth](/concepts/player-worth.md): the placeholder rule covers every status, the box worth is scaled by a measured calibration and combined with the missed-games worth by precision, and a rookie is defined by his first stored season. The API reference and the term Box calibration follow.
 

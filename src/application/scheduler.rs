@@ -13,7 +13,6 @@ use tracing::{info, warn};
 use crate::domain::ids::SeasonYear;
 use crate::domain::models::ImportStatus;
 
-use super::continuation::ContinuationUseCaseError;
 use super::players;
 use super::ports::{ImportLog, PlayerSource, ResultsSource};
 use super::results_sync::{self, Trigger};
@@ -115,33 +114,10 @@ pub async fn sync_current<R: ResultsSource>(app: &App, source: &R) -> Option<Sea
         info!("a manual results sync is running; the scheduled sync waits for the next run");
         return None;
     };
-    // At most one season back, once: the archive ends one season before the first synced
-    // one. When the previous season yields nothing either, the run stops instead of asking
-    // the source again and again.
-    let mut chained = false;
-    let mut pending = vec![season];
-    while let Some(target) = pending.pop() {
-        match results_sync::run_tracked(app, source, target, Trigger::Scheduled).await {
-            Ok(_) => {
-                if target == season {
-                    return Some(season);
-                }
-            }
-            Err(ContinuationUseCaseError::NoPreviousSeason(previous)) if !chained => {
-                info!(season = %target, %previous, "previous season missing; syncing it first");
-                chained = true;
-                pending.push(target);
-                pending.push(previous);
-            }
-            // The previous season was synced only to chain from it; when the source has
-            // nothing beyond its archive games, the target season still runs.
-            Err(ContinuationUseCaseError::NoGames(s)) if target != season => {
-                info!(season = %s, "previous season has nothing new beyond the archive; continuing");
-            }
-            Err(_) => return None,
-        }
-    }
-    None
+    results_sync::run_chained(app, source, season, Trigger::Scheduled)
+        .await
+        .ok()
+        .map(|_| season)
 }
 
 /// The daily player sync of the current season, after the results sync marked the games

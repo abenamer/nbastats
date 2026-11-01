@@ -1,47 +1,50 @@
 {% extends "base.html" %}
 {% block content %}
+<section class="panel"><h2>Update data</h2>
+  <p class="small">One click brings the current season up to date from the BALLDONTLIE API: the results and the schedule, with every Elo rating computed again; then the box scores of every played date not fetched yet and of the last days again; today's injury report; and the current rosters. Each step resumes where the last run stopped.</p>
+  <div class="row"><button id="update" class="primary">Update Data</button><span id="updateHint" class="muted small"></span></div>
+  <div id="updateStatus" class="small" style="margin:.5rem 0"></div>
+  <div id="syncStatus" class="small muted"></div>
+  <div id="playerStatus" class="small muted"></div>
+</section>
 <section class="grid2">
   <div class="panel"><h2>Application and database</h2><div id="health" class="kv"></div></div>
-  <div class="panel"><h2>Refresh and import</h2>
-    <p class="small">Download the latest game log from the configured source (<code id="sourceUrl"></code>) or upload a CSV in FiveThirtyEight's <code>nba_elo.csv</code> or <code>nbaallelo.csv</code> layout (gzip accepted). Imports are idempotent: unchanged games are skipped, changed games updated.</p>
-    <div class="row"><button id="refresh" class="primary">Download &amp; import latest</button><label><input id="force" type="checkbox"> Force re-import</label></div>
-    <form id="uploadForm" class="row"><input type="file" id="file" name="file" accept=".csv,.gz"><button type="submit">Upload CSV</button></form>
-    <pre id="importResult" class="small"></pre>
+  <div class="panel"><h2>Players, box scores and injury reports</h2>
+    <div id="playerCoverage" class="kv"></div>
+    <div id="playerBackfillSummary" class="small muted" style="margin:.5rem 0"></div>
+    <div class="row"><label>Season (end year) <input id="playerSeason" type="number" min="1947" max="2100" style="width:6rem"></label><label>Find a player <input id="playerQuery" type="search" placeholder="at least two letters of the name" style="width:14rem"></label></div>
+    <div id="playerResults" class="table-wrap"></div>
+    <details><summary class="small">Dates fetched for that season</summary><div id="playerFetches" class="table-wrap"></div></details>
   </div>
 </section>
-<section class="panel"><h2>Seasons beyond the Elo dataset</h2>
-  <p class="small">The application computes every rating itself with FiveThirtyEight's formulas (25% reversion toward 1505 between seasons, K = 20 with the margin-of-victory multiplier, a new franchise at 1300), season after season from 1946-47. The archive supplies results and schedules through the 2024-25 regular season, and its own ratings stay stored as reference values; the application's ratings reproduce them to a mean difference below 0.01 points. Later results come from the BALLDONTLIE API or a CSV upload.</p>
+<section class="panel"><details><summary><strong>Advanced: history, archive and uploads</strong></summary>
+  <h3>Archive</h3>
+  <p class="small">Download the latest game log from the configured source (<code id="sourceUrl"></code>) or upload a CSV in FiveThirtyEight's <code>nba_elo.csv</code> or <code>nbaallelo.csv</code> layout (gzip accepted). Imports are idempotent: unchanged games are skipped, changed games updated.</p>
+  <div class="row"><button id="refresh">Download &amp; import latest</button><label><input id="force" type="checkbox"> Force re-import</label></div>
+  <form id="uploadForm" class="row"><input type="file" id="file" name="file" accept=".csv,.gz"><button type="submit">Upload CSV</button></form>
+  <h3>Seasons beyond the Elo dataset</h3>
+  <p class="small">The application computes every rating itself with FiveThirtyEight's formulas (25% reversion toward 1505 between seasons, K = 20 with the margin-of-victory multiplier, a new franchise at 1300), season after season from 1946-47. The archive supplies results and schedules through the 2024-25 regular season, and its own ratings stay stored as reference values; the application's ratings reproduce them to a mean difference below 0.01 points. Later results come from <strong>Update Data</strong> or a CSV upload.</p>
   <div class="row">
     <label>Season (end year) <input id="nextSeason" type="number" min="1948" max="2100" style="width:6rem"></label>
-    <button id="project" class="primary">Project preseason (synthetic schedule)</button>
-    <span class="muted small">Repeats the previous season's regular-season matchups one year later with no results, so the Season Forecast page can run a preseason forecast.</span>
+    <button id="project">Project preseason (synthetic schedule)</button>
+    <span class="muted small">Repeats the previous season's regular-season matchups one year later with no results, so the Season Forecast page can run a preseason forecast of a season the source has no schedule for yet.</span>
   </div>
-  <div class="row">
-    <button id="sync">Sync results from BALLDONTLIE</button>
-    <span id="syncHint" class="muted small">Fetches every game of that season (results and schedule) from the BALLDONTLIE API and recomputes the Elo. On the free tier (5 requests per minute) a full season takes about three minutes.</span>
-  </div>
-  <div id="syncStatus" class="small" style="margin:.5rem 0"></div>
   <form id="resultsForm" class="row"><input type="file" id="resultsFile" accept=".csv,.gz"><button type="submit">Upload results / schedule CSV for that season</button></form>
   <p class="muted small">CSV layout: <code>date,home,away,home_score,away_score,neutral,playoff</code>. Leave the scores empty for games not yet played. Team codes as in the Elo Explorer (OKC, GSW, …). Uploading again replaces the season's games that did not come from the archive; archive games always stand.</p>
-</section>
-<section class="panel"><h2>Players, box scores and injury reports</h2>
-  <p class="small">Player data comes from the BALLDONTLIE API (the ALL-STAR tier or above). It holds every player's box-score line in every stored game (minutes, points, rebounds, assists, steals, blocks, turnovers, fouls, shooting, plus/minus), matched to the game by date and team. It holds the league's injury report day by day, the source's whole player list and the current rosters. A backfill walks the dates of a season that have a played game and no fetch yet, so a run that stops resumes where it stopped. After the daily results sync the application fetches the last days' box scores, today's injury report and the rosters.</p>
-  <div id="playerCoverage" class="kv"></div>
+  <h3>Player history</h3>
   <div class="row">
-    <label>Season (end year) <input id="playerSeason" type="number" min="1947" max="2100" style="width:6rem"></label>
-    <button id="playerBackfill">Backfill box scores</button>
     <button id="playerBackfillAll">Backfill every season</button>
-    <button id="playerInjuries">Fetch today's injury report</button>
-    <button id="playerRosters">Refresh rosters</button>
     <button id="playerLoadAll">Load every player</button>
     <span id="playerHint" class="muted small"></span>
   </div>
-  <div id="playerStatus" class="small" style="margin:.5rem 0"></div>
-  <div id="playerBackfillSummary" class="small muted" style="margin:.5rem 0"></div>
-  <div class="row"><label>Find a player <input id="playerQuery" type="search" placeholder="at least two letters of the name" style="width:16rem"></label></div>
-  <div id="playerResults" class="table-wrap"></div>
-  <details><summary class="small">Dates fetched for that season</summary><div id="playerFetches" class="table-wrap"></div></details>
-</section>
+  <h3>A past season</h3>
+  <div class="row">
+    <label>Season (end year) <input id="pastSeason" type="number" min="1948" max="2100" style="width:6rem"></label>
+    <button id="syncPast">Sync that season from BALLDONTLIE</button>
+    <span class="muted small">For a season <strong>Update Data</strong> does not cover: the late games of last season, or a season the archive ends before. The line under Update Data shows its progress.</span>
+  </div>
+</details></section>
+<pre id="importResult" class="small"></pre>
 <section class="panel"><h2>Season coverage</h2><div id="coverage" class="table-wrap"></div></section>
 <section class="panel"><h2>Import history</h2><div id="imports" class="table-wrap"></div></section>
 {% endblock %}
