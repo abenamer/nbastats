@@ -118,6 +118,9 @@ pub struct GameMarket {
     pub p_home: Option<f64>,
     pub p_away: Option<f64>,
     pub book_margin: Option<f64>,
+    /// When the game is due to start, and whether it has, as the source says.
+    pub start_time: Option<DateTime<Utc>>,
+    pub started: bool,
 }
 
 /// The night's market: the games the source prices, matched to the panel's games.
@@ -188,6 +191,8 @@ fn priced(game_id: i64, l: &MarketLine, turned: bool) -> GameMarket {
         p_home: fair.map(|f| f.home),
         p_away: fair.map(|f| f.away),
         book_margin: fair.map(|f| f.margin),
+        start_time: l.start_time,
+        started: l.started,
     }
 }
 
@@ -203,6 +208,16 @@ fn unmatched_note(night: NaiveDate, lines_listed: usize) -> String {
 /// The market for the next night with games of `season`, beside the panel's games.
 pub async fn tonight_market(app: &App, season: SeasonYear) -> Result<Market, SeasonLoadError> {
     let t = worth::tonight(app, season, None).await?;
+    market_for(app, season, &t).await
+}
+
+/// The market for the night of `t`, the Tonight panel already computed, so a caller that
+/// has it does not compute it again.
+pub async fn market_for(
+    app: &App,
+    season: SeasonYear,
+    t: &worth::Tonight,
+) -> Result<Market, SeasonLoadError> {
     let empty = |note: String| Market {
         season,
         night: t.night,
@@ -291,6 +306,8 @@ mod tests {
             home_moneyline: Some(-135.0),
             away_moneyline: Some(114.0),
             total: Some(219.5),
+            start_time: None,
+            started: false,
         }
     }
 

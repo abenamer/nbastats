@@ -14,6 +14,9 @@ sources:
   - id: rosters
     resource: /migrations/0006_player_rosters.sql
     title: Rosters and plus/minus
+  - id: market
+    resource: /migrations/0007_market_snapshots.sql
+    title: Market snapshots
 ---
 
 # Reference tables
@@ -58,6 +61,12 @@ Added by migration `0005_players`; see [Player data](/concepts/player-data.md).
 | `appearances` | (game, player) | One player's line in one game: team, seconds, points, rebounds (total, offensive, defensive), assists, steals, blocks, turnovers, fouls, field goals, three-pointers and free throws made and attempted, `plus_minus` (migration `0006`). Deleted with the game. |
 | `box_score_fetches` | game date | Source, time of the fetch, lines received, matched and unmatched. |
 | `injury_reports` | (report date, player) | Team, status, expected return date, description, time of the fetch. |
+
+# Market data
+
+| Table | Key | Content |
+|-------|-----|---------|
+| `market_snapshots` | (game date, home code, away code) | One game's model numbers and sportsbook lines in the last capture before its start (migration `0007`): season, capture and start times, model and application versions, home bonus, full-strength and stored ratings, penalties, the model's home chances and margin, the sportsbook and source, the home spread with both prices, both moneylines, the total, the market's home chance and its margin. See [Market tracking](/concepts/market-tracking.md). |
 
 # Indexes
 

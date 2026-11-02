@@ -44,6 +44,9 @@ pub struct Config {
     pub openrouter_model: String,
     /// Look up game report links (the AP recaps ESPN hosts) for the games the pages show.
     pub game_reports_enabled: bool,
+    /// Keep a snapshot of the model and the sportsbook lines before each game's start, to
+    /// score the model against the market (needs the ESPN feed on).
+    pub market_tracking_enabled: bool,
     pub espn_base_url: String,
 }
 
@@ -144,6 +147,9 @@ impl Config {
         let game_reports_enabled = env::var("GAME_REPORTS_ENABLED")
             .map(|v| matches!(v.to_ascii_lowercase().as_str(), "1" | "true" | "yes"))
             .unwrap_or(true);
+        let market_tracking_enabled = env::var("MARKET_TRACKING_ENABLED")
+            .map(|v| matches!(v.to_ascii_lowercase().as_str(), "1" | "true" | "yes"))
+            .unwrap_or(true);
         let espn_base_url = env::var("ESPN_BASE_URL")
             .ok()
             .map(|u| u.trim().to_string())
@@ -174,6 +180,7 @@ impl Config {
             openrouter_base_url,
             openrouter_model,
             game_reports_enabled,
+            market_tracking_enabled,
             espn_base_url,
         })
     }
@@ -244,6 +251,7 @@ mod tests {
             openrouter_base_url: String::new(),
             openrouter_model: String::new(),
             game_reports_enabled: false,
+            market_tracking_enabled: false,
             espn_base_url: String::new(),
         }
     }

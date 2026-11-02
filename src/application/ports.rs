@@ -679,6 +679,28 @@ pub struct MarketLine {
     pub home_moneyline: Option<f64>,
     pub away_moneyline: Option<f64>,
     pub total: Option<f64>,
+    /// When the game is due to start, and whether it has: a line read after the start is
+    /// no longer the one the game was played at.
+    pub start_time: Option<chrono::DateTime<chrono::Utc>>,
+    pub started: bool,
+}
+
+/// Where the market snapshots are kept: each game's model numbers and sportsbook lines in
+/// the last capture before tip-off (`domain::tracking`). The concrete adapter is
+/// `PostgresStore`.
+#[allow(async_fn_in_trait)]
+pub trait MarketStore: Send + Sync {
+    /// Keep each snapshot, replacing a stored one for the same game only when it was
+    /// captured later and before the game's start. Returns how many rows were written.
+    async fn save_snapshots(
+        &self,
+        snapshots: &[crate::domain::tracking::Snapshot],
+    ) -> StoreResult<u64>;
+    /// Every snapshot of a season, by date.
+    async fn snapshots(
+        &self,
+        season: SeasonYear,
+    ) -> StoreResult<Vec<crate::domain::tracking::Snapshot>>;
 }
 
 /// Where sportsbook lines come from: the night's games as the market prices them. The

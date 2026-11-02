@@ -172,7 +172,25 @@ pub fn parse_lines(bytes: &[u8]) -> Result<Vec<MarketLine>, SourceError> {
         let side_odds = |side: &str, field: &str| -> Option<f64> {
             odds.get(side).and_then(|s| odds_number(s.get(field)))
         };
+        // The start and the state: `pre` before the game, `in` and `post` after it starts.
+        let start_time = text(event, "date").and_then(|d| {
+            chrono::DateTime::parse_from_rfc3339(&d)
+                .map(|t| t.with_timezone(&chrono::Utc))
+                .ok()
+                .or_else(|| {
+                    chrono::NaiveDateTime::parse_from_str(&d, "%Y-%m-%dT%H:%MZ")
+                        .ok()
+                        .map(|t| t.and_utc())
+                })
+        });
+        let started = event
+            .get("status")
+            .and_then(|s| s.get("type"))
+            .and_then(|t| text(t, "state"))
+            .is_some_and(|s| s != "pre");
         let line = MarketLine {
+            start_time,
+            started,
             home_abbr,
             away_abbr,
             home_name,
@@ -342,7 +360,7 @@ mod tests {
 
     /// Two games with lines in the two shapes the feed has used, and one without.
     const LINES: &str = r#"{"events":[
-      {"id":"401909905","competitions":[{"competitors":[
+      {"id":"401909905","date":"2026-11-02T01:30Z","status":{"type":{"state":"pre"}},"competitions":[{"competitors":[
          {"homeAway":"home","team":{"abbreviation":"GS","displayName":"Golden State Warriors"}},
          {"homeAway":"away","team":{"abbreviation":"LAC","displayName":"LA Clippers"}}],
        "odds":[{"provider":{"name":"DraftKings","displayName":"DraftKings"},"details":"GS -2.5",
@@ -351,7 +369,7 @@ mod tests {
                       "away":{"close":{"odds":"+114"},"open":{"odds":"+110"}}},
          "pointSpread":{"home":{"close":{"line":"-2.5","odds":"-105"},"open":{"line":"-2.5","odds":"-105"}},
                         "away":{"close":{"line":"+2.5","odds":"-115"}}}}]}]},
-      {"id":"401360460","competitions":[{"competitors":[
+      {"id":"401360460","date":"2022-01-15T20:00:00Z","status":{"type":{"state":"post"}},"competitions":[{"competitors":[
          {"homeAway":"home","team":{"abbreviation":"MIL","displayName":"Milwaukee Bucks"}},
          {"homeAway":"away","team":{"abbreviation":"NY","displayName":"New York Knicks"}}],
        "odds":[{"provider":{"name":"consensus"},"spread":-7.5,"overUnder":221,
@@ -383,6 +401,11 @@ mod tests {
             (Some(-135.0), Some(114.0))
         );
         assert_eq!(gs.total, Some(219.5));
+        assert_eq!(
+            (gs.start_time.map(|t| t.to_rfc3339()), gs.started),
+            (Some("2026-11-02T01:30:00+00:00".to_string()), false)
+        );
+        assert!(lines[1].started && lines[1].start_time.is_some());
         let mil = &lines[1];
         assert_eq!((mil.home_spread, mil.home_spread_odds), (Some(-7.5), None));
         assert_eq!(
@@ -424,6 +447,8 @@ mod tests {
         // The game without both teams is skipped.
         assert_eq!(lines.len(), 3);
         let ny = &lines[0];
+        // No date and no status: no start time, and not taken as started.
+        assert_eq!((ny.start_time, ny.started), (None, false));
         // The away moneyline has no closing price, so both sides read the opening one.
         assert_eq!(
             (ny.home_moneyline, ny.away_moneyline),

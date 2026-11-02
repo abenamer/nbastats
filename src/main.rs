@@ -353,6 +353,7 @@ async fn serve(
     }
     let runner = tokio::spawn(jobs::runner(app.clone()));
     let sync = tokio::spawn(scheduler::run(app.clone()));
+    let tracking = tokio::spawn(nba_elo_simulator::application::tracking::run(app.clone()));
     let backfill = match (config.player_backfill_from, app.results.is_some()) {
         (Some(from), true) => {
             info!(%from, "box-score backfill of every season scheduled (PLAYER_BACKFILL_FROM)");
@@ -383,6 +384,7 @@ async fn serve(
     // Give the runner a moment to record an interrupted job before the pool closes.
     let _ = tokio::time::timeout(std::time::Duration::from_secs(10), runner).await;
     sync.abort();
+    tracking.abort();
     if let Some(b) = backfill {
         b.abort();
     }

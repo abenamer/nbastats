@@ -1273,6 +1273,99 @@ async fn question_box_tools_read_the_store(pool: PgPool) {
     ));
 }
 
+/// Market snapshots are kept by date and team codes; a later capture replaces an earlier one
+/// only while the game has not started.
+#[sqlx::test(migrations = "./migrations")]
+async fn market_snapshots_keep_the_last_capture_before_the_start(pool: PgPool) {
+    use chrono::{DateTime, Duration, Utc};
+    use nba_elo_simulator::application::ports::MarketStore;
+    use nba_elo_simulator::domain::tracking::Snapshot;
+    let (store, _teams) = common::setup(pool).await;
+    let start = DateTime::<Utc>::from_timestamp(1_800_000_000, 0).unwrap();
+    let snap = |captured: DateTime<Utc>, spread: f64| Snapshot {
+        season: SeasonYear::of(2027),
+        game_date: NaiveDate::from_ymd_opt(2026, 11, 1).unwrap(),
+        home_code: "GSW".into(),
+        away_code: "LAC".into(),
+        captured_at: captured,
+        start_time: Some(start),
+        model_version: "m1".into(),
+        app_version: "0.1.0".into(),
+        home_advantage: 41.0,
+        home_rating: 1497.0,
+        away_rating: 1497.0,
+        home_stored: 1494.0,
+        away_stored: 1497.0,
+        home_penalty: 58.0,
+        away_penalty: 17.0,
+        p_home_full: 0.56,
+        p_home_model: 0.5,
+        home_margin_model: 0.0,
+        provider: "DraftKings".into(),
+        source: "espn".into(),
+        home_spread: Some(spread),
+        home_spread_odds: Some(-105.0),
+        away_spread_odds: Some(-115.0),
+        home_moneyline: Some(-135.0),
+        away_moneyline: Some(114.0),
+        total: None,
+        p_home_market: Some(0.55),
+        book_margin: Some(0.046),
+    };
+    assert!(store
+        .snapshots(SeasonYear::of(2027))
+        .await
+        .unwrap()
+        .is_empty());
+    let early = start - Duration::hours(3);
+    assert_eq!(store.save_snapshots(&[snap(early, -1.5)]).await.unwrap(), 1);
+    // A later capture before the start replaces it; an older one does not.
+    let late = start - Duration::minutes(10);
+    assert_eq!(store.save_snapshots(&[snap(late, -2.5)]).await.unwrap(), 1);
+    assert_eq!(store.save_snapshots(&[snap(early, -9.0)]).await.unwrap(), 0);
+    // A capture after the start never replaces the last one before it.
+    assert_eq!(
+        store
+            .save_snapshots(&[snap(start + Duration::minutes(5), -7.0)])
+            .await
+            .unwrap(),
+        0
+    );
+    let stored = store.snapshots(SeasonYear::of(2027)).await.unwrap();
+    assert_eq!(stored.len(), 1);
+    assert_eq!(stored[0].home_spread, Some(-2.5));
+    assert_eq!(stored[0].captured_at, late);
+    assert_eq!(stored[0].total, None);
+    assert!(store
+        .snapshots(SeasonYear::of(2026))
+        .await
+        .unwrap()
+        .is_empty());
+    // A capture without a start keeps the stored start, so one after the start still
+    // cannot replace the last capture before it.
+    let mut no_start = snap(late + Duration::minutes(5), -3.0);
+    no_start.start_time = None;
+    assert_eq!(store.save_snapshots(&[no_start]).await.unwrap(), 1);
+    let stored = store.snapshots(SeasonYear::of(2027)).await.unwrap();
+    assert_eq!(
+        (stored[0].start_time, stored[0].home_spread),
+        (Some(start), Some(-3.0))
+    );
+    let mut after = snap(start + Duration::minutes(20), -8.0);
+    after.start_time = None;
+    assert_eq!(store.save_snapshots(&[after]).await.unwrap(), 0);
+    // A tip moved two hours later: a capture after the old start with the new one is
+    // taken, and the stored start moves.
+    let mut moved = snap(start + Duration::minutes(30), -4.0);
+    moved.start_time = Some(start + Duration::hours(2));
+    assert_eq!(store.save_snapshots(&[moved]).await.unwrap(), 1);
+    let stored = store.snapshots(SeasonYear::of(2027)).await.unwrap();
+    assert_eq!(
+        (stored[0].start_time, stored[0].home_spread),
+        (Some(start + Duration::hours(2)), Some(-4.0))
+    );
+}
+
 /// Game report links are kept by date and team codes with the lookup of their date.
 #[sqlx::test(migrations = "./migrations")]
 async fn game_reports_are_stored_with_their_lookup(pool: PgPool) {
