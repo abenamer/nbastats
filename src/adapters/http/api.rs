@@ -889,6 +889,36 @@ pub async fn submit_season(
                 .map_err(season_load_error)?;
         }
     }
+    // The reader's what-ifs: each player's team moves by the difference from the model's
+    // estimate, on top of the full-strength shift, and his absences are priced at the
+    // what-if. They stay in the parameters, so the stored forecast says what it priced.
+    if !params.worth_overrides.is_empty() {
+        let what_ifs = worth::what_ifs(&app, params.season, &params.worth_overrides)
+            .await
+            .map_err(what_if_error)?;
+        for (team_id, elo) in worth::what_if_shifts(&what_ifs) {
+            match params
+                .rating_shifts
+                .iter_mut()
+                .find(|s| s.team_id == team_id)
+            {
+                Some(s) => {
+                    s.elo = (s.elo + elo).clamp(
+                        -crate::domain::full_strength::MAX_SHIFT_ELO,
+                        crate::domain::full_strength::MAX_SHIFT_ELO,
+                    )
+                }
+                None => params
+                    .rating_shifts
+                    .push(crate::domain::full_strength::RatingShift { team_id, elo }),
+            }
+        }
+        params.rating_shifts.sort_by_key(|s| s.team_id);
+        crate::domain::worth::override_absences(
+            &mut params.absences,
+            &worth::resolved_worths(&what_ifs),
+        );
+    }
     if !body.sample_worth {
         worth::fix_penalties(&mut params.absences);
     }
@@ -1217,6 +1247,82 @@ pub async fn season_availability(
 #[derive(Debug, Deserialize)]
 pub struct HomeQuery {
     pub home_advantage: Option<String>,
+    /// The reader's what-ifs on players' worth: `id:elo` or `id:lastN` pairs separated by
+    /// commas.
+    pub worth: Option<String>,
+}
+
+/// The what-ifs in a `worth` parameter: `id:elo` or `id:lastN` pairs separated by commas,
+/// at most [`MAX_OVERRIDES`](crate::domain::worth::MAX_OVERRIDES), one per player. The
+/// count is checked before any pair is read.
+fn parse_worth(text: &str) -> Result<Vec<crate::domain::worth::WorthOverride>, String> {
+    use crate::domain::worth::{
+        override_ok, WorthOverride, MAX_ABSENCE_ELO, MAX_OVERRIDES, MAX_WINDOW_GAMES,
+    };
+    let pairs: Vec<&str> = text
+        .split(',')
+        .map(str::trim)
+        .filter(|p| !p.is_empty())
+        .collect();
+    if pairs.len() > MAX_OVERRIDES {
+        return Err(format!("at most {MAX_OVERRIDES} worth what-ifs"));
+    }
+    let mut overrides = Vec::with_capacity(pairs.len());
+    for pair in pairs {
+        // `id:60` sets a worth; `id:last5` reads it from the player's last five games.
+        let parsed = pair.split_once(':').and_then(|(id, basis)| {
+            let id: i32 = id.trim().parse().ok()?;
+            let basis = basis.trim();
+            let (elo, last_games) = match basis.strip_prefix("last") {
+                Some(n) => (None, Some(n.parse::<u8>().ok()?)),
+                None => (Some(basis.parse::<f64>().ok()?), None),
+            };
+            (id > 0).then(|| WorthOverride {
+                player_id: PlayerId::new(id),
+                elo,
+                last_games,
+            })
+        });
+        match parsed {
+            Some(o) if override_ok(&o) => overrides.push(o),
+            _ => {
+                return Err(format!(
+                    "worth must be id:elo or id:lastN pairs separated by commas, each a stored player's id with a worth of at most {MAX_ABSENCE_ELO} Elo either way or a window of 1 to {MAX_WINDOW_GAMES} games"
+                ))
+            }
+        }
+    }
+    let mut players: Vec<PlayerId> = overrides.iter().map(|o| o.player_id).collect();
+    players.sort_unstable();
+    players.dedup();
+    if players.len() != overrides.len() {
+        return Err("a player may have one worth what-if, not two".to_string());
+    }
+    Ok(overrides)
+}
+
+/// The what-ifs asked for, resolved against the season: none when absent or empty; a
+/// pair that is not `id:elo` or `id:lastN` within the caps, an unknown player, one without
+/// a team or one without a window answers 400.
+async fn chosen_what_ifs(
+    app: &crate::application::state::App,
+    season: SeasonYear,
+    worth: Option<&str>,
+) -> Result<Vec<worth::WhatIf>, ApiError> {
+    let Some(text) = worth.map(str::trim).filter(|t| !t.is_empty()) else {
+        return Ok(Vec::new());
+    };
+    let overrides = parse_worth(text).map_err(ApiError::bad_request)?;
+    worth::what_ifs(app, season, &overrides)
+        .await
+        .map_err(what_if_error)
+}
+
+fn what_if_error(e: worth::WhatIfError) -> ApiError {
+    match e {
+        worth::WhatIfError::Load(l) => season_load_error(l),
+        other => ApiError::bad_request(other.to_string()),
+    }
 }
 
 /// The bonus asked for: none when absent or empty, else a number in the forecast's range.
@@ -1242,7 +1348,8 @@ pub async fn season_tonight(
     Path(season): Path<SeasonYear>,
     Query(q): Query<HomeQuery>,
 ) -> ApiResult<Value> {
-    let t = worth::tonight(&app, season, chosen_home_advantage(&q)?)
+    let what_ifs = chosen_what_ifs(&app, season, q.worth.as_deref()).await?;
+    let t = worth::tonight(&app, season, chosen_home_advantage(&q)?, &what_ifs)
         .await
         .map_err(season_load_error)?;
     Ok(Json(json!(t)))
@@ -1254,11 +1361,41 @@ pub async fn season_tonight(
 pub async fn season_tonight_market(
     State(app): State<AppState>,
     Path(season): Path<SeasonYear>,
+    Query(q): Query<EdgeQuery>,
 ) -> ApiResult<Value> {
-    let m = crate::application::market::tonight_market(&app, season)
-        .await
-        .map_err(season_load_error)?;
+    let what_ifs = chosen_what_ifs(&app, season, q.worth.as_deref()).await?;
+    let m =
+        crate::application::market::tonight_market(&app, season, chosen_min_return(&q)?, &what_ifs)
+            .await
+            .map_err(season_load_error)?;
     Ok(Json(json!(m)))
+}
+
+/// The bar a bet's expected return must clear to be flagged, as a share of the stake.
+#[derive(Debug, Default, Deserialize)]
+pub struct EdgeQuery {
+    pub min_return: Option<String>,
+    /// The reader's what-ifs, as for the Tonight panel.
+    pub worth: Option<String>,
+}
+
+/// The bar asked for: the default when absent or empty, else a number from 0 (any
+/// positive return) to 1 (a return of the whole stake).
+fn chosen_min_return(q: &EdgeQuery) -> Result<f64, ApiError> {
+    let Some(text) = q
+        .min_return
+        .as_deref()
+        .map(str::trim)
+        .filter(|t| !t.is_empty())
+    else {
+        return Ok(crate::domain::market::DEFAULT_MIN_RETURN);
+    };
+    text.parse::<f64>()
+        .ok()
+        .filter(|r| r.is_finite() && (0.0..=1.0).contains(r))
+        .ok_or_else(|| {
+            ApiError::bad_request("min_return must be a number from 0 to 1, the share of the stake a bet must return on average to be flagged")
+        })
 }
 
 /// The model against the market over a season: each stored snapshot scored once its game
@@ -1266,8 +1403,9 @@ pub async fn season_tonight_market(
 pub async fn season_market_track(
     State(app): State<AppState>,
     Path(season): Path<SeasonYear>,
+    Query(q): Query<EdgeQuery>,
 ) -> ApiResult<Value> {
-    let r = crate::application::tracking::record(&app, season)
+    let r = crate::application::tracking::record(&app, season, chosen_min_return(&q)?)
         .await
         .map_err(season_load_error)?;
     Ok(Json(json!(r)))
@@ -1279,7 +1417,8 @@ pub async fn injury_card(
     Path((season, code)): Path<(SeasonYear, String)>,
     Query(q): Query<HomeQuery>,
 ) -> ApiResult<Value> {
-    let card = worth::injury_card(&app, season, &code, chosen_home_advantage(&q)?)
+    let what_ifs = chosen_what_ifs(&app, season, q.worth.as_deref()).await?;
+    let card = worth::injury_card(&app, season, &code, chosen_home_advantage(&q)?, &what_ifs)
         .await
         .map_err(season_load_error)?
         .ok_or_else(|| ApiError::not_found(format!("{code} is not in the {season} season")))?;
@@ -1883,7 +2022,34 @@ mod tests {
     fn a_chosen_home_bonus_is_read_and_checked_against_the_forecast_range() {
         let q = |v: Option<&str>| HomeQuery {
             home_advantage: v.map(str::to_string),
+            worth: None,
         };
+        // The what-if text: both bases, trimmed, one per player, at most sixteen.
+        let ok = parse_worth(" 1 : -20 , 2:last5 ").unwrap();
+        assert_eq!(ok.len(), 2);
+        assert_eq!(
+            (ok[0].player_id, ok[0].elo, ok[0].last_games),
+            (PlayerId::new(1), Some(-20.0), None)
+        );
+        assert_eq!(
+            (ok[1].player_id, ok[1].elo, ok[1].last_games),
+            (PlayerId::new(2), None, Some(5))
+        );
+        for bad in [
+            "0:60",
+            "1:last0",
+            "1:last256",
+            "1:last83",
+            "1:NaN",
+            "1:401",
+            "1",
+            "a:5",
+            "1:60,1:70",
+        ] {
+            assert!(parse_worth(bad).is_err(), "{bad}");
+        }
+        let many: Vec<String> = (1..=17).map(|i| format!("{i}:10")).collect();
+        assert!(parse_worth(&many.join(",")).is_err());
         assert_eq!(chosen_home_advantage(&q(None)).unwrap(), None);
         assert_eq!(chosen_home_advantage(&q(Some("  "))).unwrap(), None);
         assert_eq!(chosen_home_advantage(&q(Some("20"))).unwrap(), Some(20.0));

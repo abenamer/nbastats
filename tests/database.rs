@@ -222,6 +222,7 @@ async fn forecasts_never_use_future_information(pool: PgPool) {
     let params = SeasonParams {
         hold_absences: false,
         rating_shifts: Vec::new(),
+        worth_overrides: Vec::new(),
         season: S2016,
         as_of: Some(cutoff),
         iterations: 300,
@@ -307,6 +308,7 @@ async fn forecasts_never_use_future_information(pool: PgPool) {
     let late = SeasonParams {
         hold_absences: false,
         rating_shifts: Vec::new(),
+        worth_overrides: Vec::new(),
         as_of: Some(NaiveDate::from_ymd_opt(2016, 6, 1).unwrap()),
         ..params.clone()
     };
@@ -771,6 +773,7 @@ async fn computed_elo_continues_from_the_previous_season(pool: PgPool) {
     let params = SeasonParams {
         hold_absences: false,
         rating_shifts: Vec::new(),
+        worth_overrides: Vec::new(),
         season: s2017,
         as_of: None,
         iterations: 200,

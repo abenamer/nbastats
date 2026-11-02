@@ -692,6 +692,50 @@ pub fn pool_box(seasons: &[(f64, f64)]) -> Option<f64> {
     (minutes > 0.0).then(|| seasons.iter().map(|(elo, m)| elo * m.max(0.0)).sum::<f64>() / minutes)
 }
 
+/// A reader's what-if on a player's worth, in place of the model's estimate: either a
+/// worth in Elo (what his team is taken to lose when he sits), or his last `last_games`
+/// games of the season read as his worth through the box-score conversion, so a reader
+/// need not translate a stat line into Elo. His team's rating moves by the difference
+/// from the estimate, and his absences are priced at the what-if.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct WorthOverride {
+    pub player_id: PlayerId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub elo: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_games: Option<u8>,
+}
+
+/// The most what-ifs one request takes.
+pub const MAX_OVERRIDES: usize = 16;
+/// The longest window of games a what-if reads: a whole season.
+pub const MAX_WINDOW_GAMES: u8 = 82;
+
+/// Whether a what-if is usable: one basis, not both; a finite worth within the penalty cap
+/// either way, since a player may be taken to hurt his team; a window of one game to a
+/// season.
+pub fn override_ok(o: &WorthOverride) -> bool {
+    match (o.elo, o.last_games) {
+        (Some(elo), None) => elo.is_finite() && elo.abs() <= MAX_ABSENCE_ELO,
+        (None, Some(n)) => (1..=MAX_WINDOW_GAMES).contains(&n),
+        _ => false,
+    }
+}
+
+/// Price the absences of each player in `resolved` at his what-if worth, with no error:
+/// a worth at or below zero makes his absence cost nothing.
+pub fn override_absences(absences: &mut [Absence], resolved: &[(PlayerId, f64)]) {
+    for a in absences {
+        let Some(player) = a.player_id else {
+            continue;
+        };
+        if let Some((_, elo)) = resolved.iter().find(|(p, _)| *p == player) {
+            a.elo = elo.clamp(0.0, MAX_ABSENCE_ELO);
+            a.se_elo = 0.0;
+        }
+    }
+}
+
 /// A rating penalty for a team over a span of dates: a player out, weighted by his status.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Absence {
@@ -1129,7 +1173,7 @@ fn normal_pdf(x: f64) -> f64 {
 
 /// The standard normal distribution function, by Abramowitz and Stegun 7.1.26 (error
 /// below 1.5e-7).
-fn normal_cdf(x: f64) -> f64 {
+pub fn normal_cdf(x: f64) -> f64 {
     let z = x / std::f64::consts::SQRT_2;
     let t = 1.0 / (1.0 + 0.3275911 * z.abs());
     let poly = t
@@ -2187,5 +2231,65 @@ mod tests {
             se_elo: 60.0,
         };
         assert!((penalty(&[a], TeamId::new(1), d(3)) - 23.9).abs() < 0.1);
+    }
+
+    #[test]
+    fn a_worth_override_prices_the_players_absences_and_is_checked() {
+        let d = NaiveDate::from_ymd_opt(2026, 11, 2).unwrap();
+        let mut absences = vec![
+            Absence {
+                team_id: TeamId::new(1),
+                from: d,
+                to: d,
+                elo: 7.0,
+                player_id: Some(PlayerId::new(5)),
+                se_elo: 20.0,
+            },
+            Absence {
+                team_id: TeamId::new(1),
+                from: d,
+                to: d,
+                elo: 30.0,
+                player_id: Some(PlayerId::new(6)),
+                se_elo: 0.0,
+            },
+            Absence {
+                team_id: TeamId::new(2),
+                from: d,
+                to: d,
+                elo: 12.0,
+                player_id: None,
+                se_elo: 0.0,
+            },
+        ];
+        let resolved = [(PlayerId::new(5), 60.0), (PlayerId::new(7), -20.0)];
+        override_absences(&mut absences, &resolved);
+        assert_eq!((absences[0].elo, absences[0].se_elo), (60.0, 0.0));
+        assert_eq!((absences[1].elo, absences[2].elo), (30.0, 12.0));
+        // A worth below zero makes an absence cost nothing.
+        let mut hurt = vec![absences[0].clone()];
+        override_absences(&mut hurt, &resolved[1..]);
+        assert_eq!(hurt[0].elo, 60.0);
+        hurt[0].player_id = Some(PlayerId::new(7));
+        override_absences(&mut hurt, &resolved[1..]);
+        assert_eq!(hurt[0].elo, 0.0);
+        // One basis, within its range.
+        let by = |elo: Option<f64>, last_games: Option<u8>| WorthOverride {
+            player_id: PlayerId::new(1),
+            elo,
+            last_games,
+        };
+        assert!(override_ok(&by(Some(-20.0), None)) && override_ok(&by(None, Some(5))));
+        assert!(override_ok(&by(None, Some(82))));
+        for bad in [
+            by(Some(401.0), None),
+            by(Some(f64::NAN), None),
+            by(None, Some(0)),
+            by(None, Some(83)),
+            by(Some(10.0), Some(5)),
+            by(None, None),
+        ] {
+            assert!(!override_ok(&bad), "{bad:?}");
+        }
     }
 }

@@ -16,7 +16,7 @@ use crate::domain::spell::{self, SeasonRuns, Survival};
 use crate::domain::status::{self, StatusSample, StatusTable};
 use crate::domain::worth::{
     self, Absence, AbsenceEffect, AbsenceStatus, BoxCalibration, NightGame, PlayerWorth,
-    ReportedAbsence, SpanRule, SpanSource, WeightSource, WorthParams, WorthTable,
+    ReportedAbsence, SpanRule, SpanSource, WeightSource, WorthOverride, WorthParams, WorthTable,
 };
 
 use super::boxscore;
@@ -1251,6 +1251,8 @@ pub struct InjuryCard {
     /// The season's regular-season home bonus and the survival and status curves are
     /// those of the availability answer; its note, when nothing is priced.
     pub note: Option<String>,
+    /// The reader's what-ifs the card is priced with, resolved.
+    pub what_ifs: Vec<WhatIf>,
 }
 
 /// The injury card of `code` in `season`; none for a team not in the season.
@@ -1259,6 +1261,7 @@ pub async fn injury_card(
     season: SeasonYear,
     code: &str,
     home_advantage: Option<f64>,
+    what_ifs: &[WhatIf],
 ) -> Result<Option<InjuryCard>, SeasonLoadError> {
     let data = app.season_data(season).await?;
     let teams = app.store.team_code_map().await?;
@@ -1269,7 +1272,9 @@ pub async fn injury_card(
     if !data.games.iter().any(|g| g.involves(team.id)) {
         return Ok(None);
     }
-    let a = availability(app, season).await?;
+    let mut a = availability(app, season).await?;
+    let shifts = what_if_shifts(what_ifs);
+    worth::override_absences(&mut a.absences, &resolved_worths(what_ifs));
     let today = match a.report_date {
         Some(report) if app.today() > a.season_end => report,
         _ => app.today(),
@@ -1279,9 +1284,16 @@ pub async fn injury_card(
     // The full-strength ratings: the absences of the games played are out of them, so
     // today's absences come off the full team once.
     let full = full_strength(app, season, today).await?;
-    let ratings: HashMap<TeamId, f64> = full.iter().map(|(t, f)| (*t, f.rating)).collect();
+    let ratings: HashMap<TeamId, f64> = full
+        .iter()
+        .map(|(t, f)| (*t, f.rating + shifts.get(t).copied().unwrap_or(0.0)))
+        .collect();
     let rating = rating_as_of(&data.games, team.id, today);
-    let own = full.get(&team.id).copied();
+    let own_shift = shifts.get(&team.id).copied().unwrap_or(0.0);
+    let own = full.get(&team.id).map(|f| full_strength::FullStrength {
+        rating: f.rating + own_shift,
+        ..*f
+    });
     let absences: Vec<Absence> = a
         .absences
         .iter()
@@ -1346,7 +1358,260 @@ pub async fn injury_card(
         listed,
         held,
         note: a.note,
+        what_ifs: what_ifs.to_vec(),
     }))
+}
+
+/// A reader's what-if on a player's worth, resolved: the model's own estimate of him, his
+/// current team, and the shift the team's rating takes (the what-if less the estimate, or
+/// the whole what-if for a player without one).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct WhatIf {
+    pub player_id: PlayerId,
+    pub name: String,
+    pub team_id: TeamId,
+    pub team_code: String,
+    /// The what-if worth: the one typed, or the one read from the window of games.
+    pub elo: f64,
+    /// The window the worth was read from, and how: "last 5 games: BPM +7.2 in 34 min a
+    /// game, 61 Elo on the box scale, 44 on the worth scale"; none for a typed worth.
+    pub last_games: Option<u8>,
+    pub basis: Option<String>,
+    pub current_elo: Option<f64>,
+    pub current_source: Option<WorthSource>,
+    pub shift_elo: f64,
+}
+
+/// Why a what-if cannot be priced.
+#[derive(Debug, thiserror::Error)]
+pub enum WhatIfError {
+    #[error("no player {0} is stored")]
+    UnknownPlayer(PlayerId),
+    #[error("{0} has no current team on the last roster refresh, so his what-if moves no rating")]
+    NoTeam(String),
+    #[error("{0} has no played regular-season game with a full box score this season to read a worth from")]
+    NoWindow(String),
+    #[error("the what-if for player {0} needs one basis: a worth in Elo or a window of games")]
+    Invalid(PlayerId),
+    #[error(transparent)]
+    Load(#[from] SeasonLoadError),
+}
+
+/// A player's worth read from a window of his games: the box-score worth of those games
+/// alone, as if the season were only them, scaled to the worth scale by the season's box
+/// calibration when there is one.
+#[derive(Debug, Clone, PartialEq)]
+pub struct WindowWorth {
+    pub games: u8,
+    pub minutes_per_game: f64,
+    pub bpm: f64,
+    pub box_elo: f64,
+    pub elo: f64,
+}
+
+/// The game identifiers of a player's last `n` played regular-season games, in date order,
+/// from his lines of the season: fewer than `n` when he has fewer.
+pub fn window_game_ids(played: &[super::ports::Appearance], n: u8) -> Vec<i64> {
+    let mut played: Vec<&super::ports::Appearance> = played
+        .iter()
+        .filter(|a| a.game_type == GameType::Regular && a.seconds.is_some_and(|s| s > 0))
+        .collect();
+    played.sort_by_key(|a| (a.game_date, a.game_id));
+    let keep = played.len().saturating_sub(usize::from(n));
+    played[keep..].iter().map(|a| a.game_id).collect()
+}
+
+/// A player's worth read from a box-score table built from a window of his games: his
+/// box worth pooled over his stints by minutes, scaled by the calibration; the BPM is
+/// minutes-weighted. None without BPM or without minutes for him.
+pub fn window_from_table(
+    table: &crate::domain::bpm::BoxTable,
+    player: PlayerId,
+    calibration: Option<&BoxCalibration>,
+) -> Option<WindowWorth> {
+    if !table.bpm_available {
+        return None;
+    }
+    let (box_elo, minutes) = app_rookie::season_box(table, player)?;
+    let rows: Vec<_> = table
+        .players
+        .iter()
+        .filter(|p| p.player_id == player)
+        .collect();
+    let games_played: u32 = rows.iter().map(|p| p.games).sum();
+    let bpm = rows.iter().map(|p| p.bpm * p.minutes).sum::<f64>() / minutes;
+    Some(WindowWorth {
+        games: u8::try_from(games_played).unwrap_or(u8::MAX),
+        minutes_per_game: minutes / f64::from(games_played.max(1)),
+        bpm,
+        box_elo,
+        elo: calibration.map_or(box_elo, |c| c.prior(box_elo).0),
+    })
+}
+
+/// The window worths of the window what-ifs, in one read of the lines of every window's
+/// games and one table build per player off the request thread. A player without a
+/// window has none.
+async fn window_worths(
+    app: &App,
+    season: SeasonYear,
+    windows: &[(PlayerId, u8)],
+    calibration: Option<&BoxCalibration>,
+) -> Result<HashMap<PlayerId, Option<WindowWorth>>, SeasonLoadError> {
+    let mut out = HashMap::new();
+    if windows.is_empty() {
+        return Ok(out);
+    }
+    let data = app.season_data(season).await?;
+    let mut per_player: Vec<(PlayerId, Vec<i64>)> = Vec::with_capacity(windows.len());
+    for (player, n) in windows {
+        let played = app.store.player_appearances(*player, season).await?;
+        per_player.push((*player, window_game_ids(&played, *n)));
+    }
+    let mut all_ids: Vec<i64> = per_player
+        .iter()
+        .flat_map(|(_, ids)| ids.iter().copied())
+        .collect();
+    all_ids.sort_unstable();
+    all_ids.dedup();
+    let lines = app.store.box_lines_of_games(&all_ids).await?;
+    let mut player_ids: Vec<PlayerId> = lines.iter().map(|l| l.player_id).collect();
+    player_ids.sort_unstable();
+    player_ids.dedup();
+    let listed: HashMap<PlayerId, f64> = app
+        .store
+        .players_by_id(&player_ids)
+        .await?
+        .into_iter()
+        .filter_map(|p| {
+            p.position
+                .as_deref()
+                .and_then(crate::domain::bpm::listed_position)
+                .map(|v| (p.id, v))
+        })
+        .collect();
+    let calibration = calibration.cloned();
+    // A table per window, each a fixed-point iteration over a few hundred lines: off the
+    // request thread, as the season's table is.
+    let built = tokio::task::spawn_blocking(move || {
+        per_player
+            .into_iter()
+            .map(|(player, ids)| {
+                let games: Vec<Game> = data
+                    .games
+                    .iter()
+                    .filter(|g| ids.contains(&g.id))
+                    .cloned()
+                    .collect();
+                let own: Vec<_> = lines
+                    .iter()
+                    .filter(|l| ids.contains(&l.game_id))
+                    .copied()
+                    .collect();
+                let table = crate::domain::bpm::table(season, &games, &own, &listed);
+                (
+                    player,
+                    window_from_table(&table, player, calibration.as_ref()),
+                )
+            })
+            .collect::<Vec<_>>()
+    })
+    .await
+    .map_err(|e| SeasonLoadError::Store(StoreError::Query(e.to_string())))?;
+    out.extend(built);
+    Ok(out)
+}
+
+/// Resolve the reader's what-ifs for `season`: each player's estimate, team and shift.
+pub async fn what_ifs(
+    app: &App,
+    season: SeasonYear,
+    overrides: &[WorthOverride],
+) -> Result<Vec<WhatIf>, WhatIfError> {
+    if overrides.is_empty() {
+        return Ok(Vec::new());
+    }
+    let ids: Vec<PlayerId> = overrides.iter().map(|o| o.player_id).collect();
+    let tables = lookback_tables(app, season).await?;
+    let box_tables = box_lookback_tables(app, season).await?;
+    let pricer = Pricer::load(app, season, tables, box_tables, &ids).await?;
+    let teams = app
+        .store
+        .team_code_map()
+        .await
+        .map_err(SeasonLoadError::from)?;
+    let windows: Vec<(PlayerId, u8)> = overrides
+        .iter()
+        .filter_map(|o| o.last_games.map(|n| (o.player_id, n)))
+        .collect();
+    let windows = window_worths(app, season, &windows, pricer.calibration.as_ref()).await?;
+    let mut out = Vec::with_capacity(overrides.len());
+    for o in overrides {
+        let Some(player) = pricer.players.get(&o.player_id) else {
+            return Err(WhatIfError::UnknownPlayer(o.player_id));
+        };
+        let name = format!("{} {}", player.first_name, player.last_name)
+            .trim()
+            .to_string();
+        let Some(team) = player
+            .team_code
+            .as_deref()
+            .and_then(|c| teams.get(&c.trim().to_ascii_uppercase()))
+        else {
+            return Err(WhatIfError::NoTeam(name));
+        };
+        let (estimate, _) = pricer.estimate(o.player_id, Some(player));
+        let current = estimate.map(|e| e.elo);
+        let (elo, last_games, basis) = match (o.elo, o.last_games) {
+            (Some(elo), None) => (elo, None, None),
+            (None, Some(_)) => {
+                let Some(w) = windows.get(&o.player_id).and_then(|w| w.as_ref()) else {
+                    return Err(WhatIfError::NoWindow(name));
+                };
+                let basis = format!(
+                    "last {} game{}: BPM {:+.1} in {:.0} min a game, {:.0} Elo on the box scale, {:.0} on the worth scale",
+                    w.games,
+                    if w.games == 1 { "" } else { "s" },
+                    w.bpm,
+                    w.minutes_per_game,
+                    w.box_elo,
+                    w.elo
+                );
+                (w.elo, Some(w.games), Some(basis))
+            }
+            _ => return Err(WhatIfError::Invalid(o.player_id)),
+        };
+        let elo = elo.clamp(-worth::MAX_ABSENCE_ELO, worth::MAX_ABSENCE_ELO);
+        out.push(WhatIf {
+            player_id: o.player_id,
+            name,
+            team_id: team.id,
+            team_code: team.code.clone(),
+            elo,
+            last_games,
+            basis,
+            current_elo: current,
+            current_source: estimate.map(|e| e.source),
+            shift_elo: (elo - current.unwrap_or(0.0))
+                .clamp(-full_strength::MAX_SHIFT_ELO, full_strength::MAX_SHIFT_ELO),
+        });
+    }
+    Ok(out)
+}
+
+/// The what-ifs' resolved worths, for the absence pricing.
+pub fn resolved_worths(what_ifs: &[WhatIf]) -> Vec<(PlayerId, f64)> {
+    what_ifs.iter().map(|w| (w.player_id, w.elo)).collect()
+}
+
+/// The what-ifs' shifts summed per team, each team's sum held within the shift cap.
+pub fn what_if_shifts(what_ifs: &[WhatIf]) -> HashMap<TeamId, f64> {
+    let mut shifts: HashMap<TeamId, f64> = HashMap::new();
+    for w in what_ifs {
+        let s = shifts.entry(w.team_id).or_insert(0.0);
+        *s = (*s + w.shift_elo).clamp(-full_strength::MAX_SHIFT_ELO, full_strength::MAX_SHIFT_ELO);
+    }
+    shifts
 }
 
 /// A player out on the night, for the Tonight panel: one absence that covers it.
@@ -1422,6 +1687,8 @@ pub struct Tonight {
     /// remains.
     pub teams: Vec<TeamTonight>,
     pub note: Option<String>,
+    /// The reader's what-ifs the night is priced with, resolved.
+    pub what_ifs: Vec<WhatIf>,
     /// The absences the night was priced from, so a reader that needs more from them (the
     /// mean over the remaining games) reads the same report.
     #[serde(skip)]
@@ -1433,10 +1700,15 @@ pub async fn tonight(
     app: &App,
     season: SeasonYear,
     home_advantage: Option<f64>,
+    what_ifs: &[WhatIf],
 ) -> Result<Tonight, SeasonLoadError> {
     let data = app.season_data(season).await?;
     let teams = app.store.team_code_map().await?;
-    let a = availability(app, season).await?;
+    let mut a = availability(app, season).await?;
+    // The what-ifs, resolved by `what_ifs`: each player's team moves by the difference,
+    // and his absences are priced at the what-if.
+    let shifts = what_if_shifts(what_ifs);
+    worth::override_absences(&mut a.absences, &resolved_worths(what_ifs));
     let as_of = match a.report_date {
         Some(report) if app.today() > a.season_end => report,
         _ => app.today(),
@@ -1445,7 +1717,10 @@ pub async fn tonight(
     let home_advantage = home_advantage.unwrap_or(home_advantage_fitted);
     // The full-strength ratings, so tonight's absences come off the full team once.
     let full = full_strength(app, season, as_of).await?;
-    let ratings: HashMap<TeamId, f64> = full.iter().map(|(t, f)| (*t, f.rating)).collect();
+    let ratings: HashMap<TeamId, f64> = full
+        .iter()
+        .map(|(t, f)| (*t, f.rating + shifts.get(t).copied().unwrap_or(0.0)))
+        .collect();
     let games_short: u32 = full.values().map(|f| f.games_short).sum();
     let slate = worth::tonight(&data.games, as_of, &ratings, &a.absences, home_advantage);
     let night = slate.as_ref().map(|n| n.date);
@@ -1570,6 +1845,7 @@ pub async fn tonight(
         games,
         teams: rows,
         note: a.note,
+        what_ifs: what_ifs.to_vec(),
         absences: a.absences,
     })
 }
@@ -1653,6 +1929,142 @@ mod tests {
             player_id: player.map(PlayerId::new),
             se_elo: se,
         }
+    }
+
+    #[test]
+    fn a_window_takes_the_last_played_games_and_reads_the_table_by_minutes() {
+        use crate::domain::bpm::{BoxTable, Coverage, LeagueBox, PlayerBox};
+        let d = |day: u32| NaiveDate::from_ymd_opt(2026, 11, day).unwrap();
+        let app = |id: i64, day: u32, seconds: Option<i32>, kind: GameType| {
+            super::super::ports::Appearance {
+                game_id: id,
+                season: SeasonYear::of(2027),
+                game_date: d(day),
+                game_type: kind,
+                player_id: PlayerId::new(1),
+                team_id: TeamId::new(1),
+                team_code: "T1".into(),
+                opponent_code: "T2".into(),
+                home: true,
+                seconds,
+                pts: None,
+                reb: None,
+                oreb: None,
+                dreb: None,
+                ast: None,
+                stl: None,
+                blk: None,
+                tov: None,
+                pf: None,
+                fgm: None,
+                fga: None,
+                fg3m: None,
+                fg3a: None,
+                ftm: None,
+                fta: None,
+                plus_minus: None,
+            }
+        };
+        // Five regular-season games played, one not played and a playoff game: the last
+        // three played are 4, 6 and 7 by date, however the lines come.
+        let played = vec![
+            app(6, 6, Some(1_800), GameType::Regular),
+            app(2, 2, Some(1_200), GameType::Regular),
+            app(4, 4, Some(1_500), GameType::Regular),
+            app(5, 5, Some(0), GameType::Regular),
+            app(7, 7, Some(1_900), GameType::Regular),
+            app(8, 8, Some(2_000), GameType::Playoff),
+            app(1, 1, Some(900), GameType::Regular),
+        ];
+        assert_eq!(window_game_ids(&played, 3), vec![4, 6, 7]);
+        assert_eq!(window_game_ids(&played, 10), vec![1, 2, 4, 6, 7]);
+        assert!(window_game_ids(&[], 5).is_empty());
+        // The table: two stints pooled by minutes; the calibration halves the box worth.
+        let row = |team: i32, games: u32, minutes: f64, bpm: f64, worth: f64| PlayerBox {
+            player_id: PlayerId::new(1),
+            team_id: TeamId::new(team),
+            games,
+            minutes,
+            minutes_share: 0.7,
+            position: 3.0,
+            offensive_role: 3.0,
+            pts_per_100: 20.0,
+            raw_bpm: bpm,
+            bpm,
+            obpm: bpm / 2.0,
+            dbpm: bpm / 2.0,
+            vorp: 1.0,
+            wins: 2.7,
+            per: None,
+            worth_points: worth / 28.0,
+            worth_elo: worth,
+            turnovers_imputed: false,
+        };
+        let table = BoxTable {
+            season: SeasonYear::of(2027),
+            model: "test",
+            games: 3,
+            games_without_lines: 0,
+            teams_without_minutes: 0,
+            coverage: Coverage::default(),
+            bpm_available: true,
+            per_available: false,
+            per_partial: false,
+            league: LeagueBox::default(),
+            teams: vec![],
+            players: vec![row(1, 2, 60.0, 6.0, 60.0), row(2, 1, 30.0, 3.0, 30.0)],
+            note: None,
+        };
+        let w = window_from_table(&table, PlayerId::new(1), None).unwrap();
+        assert_eq!((w.games, w.minutes_per_game), (3, 30.0));
+        assert!((w.bpm - 5.0).abs() < 1e-12 && (w.box_elo - 50.0).abs() < 1e-12);
+        assert_eq!(w.elo, w.box_elo);
+        let c = BoxCalibration {
+            model: "test",
+            pairs: 100,
+            slope: 0.5,
+            slope_se: 0.1,
+            error_elo: 10.0,
+        };
+        let scaled = window_from_table(&table, PlayerId::new(1), Some(&c)).unwrap();
+        assert!((scaled.elo - 25.0).abs() < 1e-12);
+        // No BPM, or a player not in the table: nothing to read.
+        assert!(window_from_table(&table, PlayerId::new(9), None).is_none());
+        let bare = BoxTable {
+            bpm_available: false,
+            ..table.clone()
+        };
+        assert!(window_from_table(&bare, PlayerId::new(1), None).is_none());
+    }
+
+    #[test]
+    fn what_ifs_sum_per_team_within_the_cap_and_turn_back_into_overrides() {
+        let w = |id: i32, team: i32, elo: f64, shift: f64| WhatIf {
+            player_id: PlayerId::new(id),
+            name: format!("Player {id}"),
+            team_id: TeamId::new(team),
+            team_code: format!("T{team}"),
+            elo,
+            last_games: None,
+            basis: None,
+            current_elo: Some(elo - shift),
+            current_source: Some(WorthSource::Box),
+            shift_elo: shift,
+        };
+        let what_ifs = vec![
+            w(1, 1, 60.0, 53.0),
+            w(2, 1, 30.0, -10.0),
+            w(3, 2, 400.0, 400.0),
+            w(4, 2, 50.0, 50.0),
+        ];
+        let shifts = what_if_shifts(&what_ifs);
+        assert_eq!(shifts.get(&TeamId::new(1)), Some(&43.0));
+        // Two players on one team cannot push it past the cap.
+        assert_eq!(shifts.get(&TeamId::new(2)), Some(&400.0));
+        let resolved = resolved_worths(&what_ifs);
+        assert_eq!(resolved.len(), 4);
+        assert_eq!(resolved[0], (PlayerId::new(1), 60.0));
+        assert!(what_if_shifts(&[]).is_empty());
     }
 
     #[test]

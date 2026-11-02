@@ -143,6 +143,35 @@ impl FromRow<'_, PgRow> for AppearanceRow {
     }
 }
 
+/// The full statistics of a line, for the box-score worth.
+const BOX_LINE_SELECT: &str =
+    "SELECT a.game_id, a.player_id, a.team_id, a.seconds, a.pts, a.reb, a.oreb, a.dreb,
+            a.ast, a.stl, a.blk, a.tov, a.pf, a.fgm, a.fga, a.fg3m, a.ftm, a.fta
+     FROM appearances a JOIN games g ON g.id = a.game_id";
+
+fn box_line_row(r: &sqlx::postgres::PgRow) -> Result<BoxLine, sqlx::Error> {
+    Ok(BoxLine {
+        game_id: r.try_get("game_id")?,
+        player_id: r.try_get("player_id")?,
+        team_id: r.try_get("team_id")?,
+        seconds: r.try_get("seconds")?,
+        pts: r.try_get("pts")?,
+        reb: r.try_get("reb")?,
+        oreb: r.try_get("oreb")?,
+        dreb: r.try_get("dreb")?,
+        ast: r.try_get("ast")?,
+        stl: r.try_get("stl")?,
+        blk: r.try_get("blk")?,
+        tov: r.try_get("tov")?,
+        pf: r.try_get("pf")?,
+        fgm: r.try_get("fgm")?,
+        fga: r.try_get("fga")?,
+        fg3m: r.try_get("fg3m")?,
+        ftm: r.try_get("ftm")?,
+        fta: r.try_get("fta")?,
+    })
+}
+
 const APPEARANCE_SELECT: &str = "SELECT a.game_id, g.season, g.game_date, g.game_type, a.player_id, a.team_id, t.code AS team_code,
             CASE WHEN g.home_team_id = a.team_id THEN o.code ELSE h.code END AS opponent_code,
             g.home_team_id = a.team_id AS home,
@@ -583,38 +612,26 @@ impl PlayerStore for PostgresStore {
     }
 
     async fn season_box_lines(&self, season: SeasonYear) -> StoreResult<Vec<BoxLine>> {
-        let rows = sqlx::query(
-            "SELECT a.game_id, a.player_id, a.team_id, a.seconds, a.pts, a.reb, a.oreb, a.dreb,
-                    a.ast, a.stl, a.blk, a.tov, a.pf, a.fgm, a.fga, a.fg3m, a.ftm, a.fta
-             FROM appearances a JOIN games g ON g.id = a.game_id
-             WHERE g.season = $1",
-        )
-        .bind(season)
-        .fetch_all(&self.pool)
-        .await?;
+        let rows = sqlx::query(&format!("{BOX_LINE_SELECT} WHERE g.season = $1"))
+            .bind(season)
+            .fetch_all(&self.pool)
+            .await?;
         rows.iter()
-            .map(|r| {
-                Ok(BoxLine {
-                    game_id: r.try_get("game_id")?,
-                    player_id: r.try_get("player_id")?,
-                    team_id: r.try_get("team_id")?,
-                    seconds: r.try_get("seconds")?,
-                    pts: r.try_get("pts")?,
-                    reb: r.try_get("reb")?,
-                    oreb: r.try_get("oreb")?,
-                    dreb: r.try_get("dreb")?,
-                    ast: r.try_get("ast")?,
-                    stl: r.try_get("stl")?,
-                    blk: r.try_get("blk")?,
-                    tov: r.try_get("tov")?,
-                    pf: r.try_get("pf")?,
-                    fgm: r.try_get("fgm")?,
-                    fga: r.try_get("fga")?,
-                    fg3m: r.try_get("fg3m")?,
-                    ftm: r.try_get("ftm")?,
-                    fta: r.try_get("fta")?,
-                })
-            })
+            .map(box_line_row)
+            .collect::<Result<Vec<_>, sqlx::Error>>()
+            .map_err(Into::into)
+    }
+
+    async fn box_lines_of_games(&self, game_ids: &[i64]) -> StoreResult<Vec<BoxLine>> {
+        if game_ids.is_empty() {
+            return Ok(vec![]);
+        }
+        let rows = sqlx::query(&format!("{BOX_LINE_SELECT} WHERE a.game_id = ANY($1)"))
+            .bind(game_ids)
+            .fetch_all(&self.pool)
+            .await?;
+        rows.iter()
+            .map(box_line_row)
             .collect::<Result<Vec<_>, sqlx::Error>>()
             .map_err(Into::into)
     }

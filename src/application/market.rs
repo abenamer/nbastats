@@ -18,7 +18,8 @@ use tracing::warn;
 
 use crate::adapters::odds_api::Quota;
 use crate::domain::ids::SeasonYear;
-use crate::domain::market;
+use crate::domain::market::{self, Edge};
+use crate::domain::worth as worth_domain;
 
 use super::ports::{GameLog, MarketLine, MarketSource};
 use super::reports::codes_of;
@@ -127,6 +128,72 @@ pub struct GameMarket {
     /// When the game is due to start, and whether it has, as the source says.
     pub start_time: Option<DateTime<Utc>>,
     pub started: bool,
+    /// The bets whose expected return at the posted price clears the bar, best first.
+    pub edges: Vec<Edge>,
+}
+
+/// How far real margins scatter around the pre-game ratings' expected ones, in points,
+/// measured from the played regular-season games of the season and the seasons of its
+/// home-bonus window: the standard deviation of the residuals (`domain::worth::residual`),
+/// with the games and seasons it rests on.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+pub struct MarginScatter {
+    pub sigma: f64,
+    pub games: usize,
+    pub from: Option<SeasonYear>,
+    pub to: Option<SeasonYear>,
+}
+
+/// The fewest games the scatter is measured from; under that, the Cup engine's margin
+/// scatter stands in.
+pub const MIN_SCATTER_GAMES: usize = 200;
+
+/// The scatter of real margins for `season`, from its own played games and its window's.
+pub async fn margin_scatter(
+    app: &App,
+    season: SeasonYear,
+) -> Result<MarginScatter, SeasonLoadError> {
+    let mut residuals: Vec<f64> = Vec::new();
+    let (mut from, mut to) = (None, None);
+    let mut seasons = super::home_advantage::window(season);
+    seasons.push(season);
+    for s in seasons {
+        let data = match app.season_data(s).await {
+            Ok(data) => data,
+            Err(SeasonLoadError::NoGames(_)) => continue,
+            Err(e) => return Err(e),
+        };
+        let before = residuals.len();
+        residuals.extend(
+            data.games
+                .iter()
+                .filter(|g| g.game_type == crate::domain::models::GameType::Regular)
+                .filter(|g| g.home_elo_pre.is_finite() && g.away_elo_pre.is_finite())
+                .filter_map(worth_domain::residual)
+                .filter(|r| r.is_finite()),
+        );
+        if residuals.len() > before {
+            from.get_or_insert(s);
+            to = Some(s);
+        }
+    }
+    let n = residuals.len();
+    if n < MIN_SCATTER_GAMES {
+        return Ok(MarginScatter {
+            sigma: crate::domain::cup::MARGIN_SD,
+            games: 0,
+            from: None,
+            to: None,
+        });
+    }
+    let mean = residuals.iter().sum::<f64>() / n as f64;
+    let var = residuals.iter().map(|r| (r - mean).powi(2)).sum::<f64>() / (n - 1) as f64;
+    Ok(MarginScatter {
+        sigma: var.sqrt(),
+        games: n,
+        from,
+        to,
+    })
 }
 
 /// The night's market: the games the source prices, matched to the panel's games.
@@ -142,6 +209,10 @@ pub struct Market {
     pub source_note: Option<String>,
     /// The Odds API's credits as its latest answer reported them, when it is configured.
     pub quota: Option<Quota>,
+    /// The edge rule's inputs: the bar an expected return must clear, and the scatter of
+    /// real margins the spread chances come from.
+    pub min_return: f64,
+    pub scatter: MarginScatter,
     pub games: Vec<GameMarket>,
     /// Why there are no lines, when there are none.
     pub note: Option<String>,
@@ -155,6 +226,8 @@ pub fn match_lines(
     lines: &[MarketLine],
     games: &[GameTonight],
     by_name: &HashMap<String, String>,
+    sigma: f64,
+    min_return: f64,
 ) -> Vec<GameMarket> {
     games
         .iter()
@@ -164,13 +237,20 @@ pub fn match_lines(
                 let a = codes_of(&l.away_abbr, &l.away_name, by_name);
                 let same = h.contains(&g.home_code) && a.contains(&g.away_code);
                 let turned = h.contains(&g.away_code) && a.contains(&g.home_code);
-                (same || turned).then(|| priced(g.game.game_id, l, turned))
+                (same || turned).then(|| priced(g, l, turned, sigma, min_return))
             })
         })
         .collect()
 }
 
-fn priced(game_id: i64, l: &MarketLine, turned: bool) -> GameMarket {
+fn priced(
+    g: &GameTonight,
+    l: &MarketLine,
+    turned: bool,
+    sigma: f64,
+    min_return: f64,
+) -> GameMarket {
+    let game_id = g.game.game_id;
     let (home_spread, home_spread_odds, away_spread_odds, home_ml, away_ml) = if turned {
         (
             l.home_spread.map(|s| -s),
@@ -191,6 +271,19 @@ fn priced(game_id: i64, l: &MarketLine, turned: bool) -> GameMarket {
     let fair = home_ml
         .zip(away_ml)
         .and_then(|(h, a)| market::without_margin(h, a));
+    let edges = market::edges(
+        g.game.p_home_tonight,
+        g.game.home_margin_tonight,
+        &market::Lines {
+            home_moneyline: home_ml,
+            away_moneyline: away_ml,
+            home_spread,
+            home_spread_odds,
+            away_spread_odds,
+        },
+        sigma,
+        min_return,
+    );
     GameMarket {
         game_id,
         provider: l.provider.clone(),
@@ -205,6 +298,7 @@ fn priced(game_id: i64, l: &MarketLine, turned: bool) -> GameMarket {
         book_margin: fair.map(|f| f.margin),
         start_time: l.start_time,
         started: l.started,
+        edges,
     }
 }
 
@@ -223,10 +317,16 @@ fn unmatched_note(night: NaiveDate, lines_listed: usize, source: &str) -> String
     }
 }
 
-/// The market for the next night with games of `season`, beside the panel's games.
-pub async fn tonight_market(app: &App, season: SeasonYear) -> Result<Market, SeasonLoadError> {
-    let t = worth::tonight(app, season, None).await?;
-    market_for(app, season, &t).await
+/// The market for the next night with games of `season`, beside the panel's games priced
+/// with the reader's `what_ifs`, with the bets that clear `min_return`.
+pub async fn tonight_market(
+    app: &App,
+    season: SeasonYear,
+    min_return: f64,
+    what_ifs: &[worth::WhatIf],
+) -> Result<Market, SeasonLoadError> {
+    let t = worth::tonight(app, season, None, what_ifs).await?;
+    market_for(app, season, &t, min_return).await
 }
 
 /// Whether any market source is configured.
@@ -292,7 +392,9 @@ pub async fn market_for(
     app: &App,
     season: SeasonYear,
     t: &worth::Tonight,
+    min_return: f64,
 ) -> Result<Market, SeasonLoadError> {
+    let scatter = margin_scatter(app, season).await?;
     // The credits are read when the market is built, so a refused read shows its count.
     let empty = |note: String| Market {
         season,
@@ -301,6 +403,8 @@ pub async fn market_for(
         source: None,
         source_note: None,
         quota: app.odds.as_ref().and_then(|o| o.quota()),
+        min_return,
+        scatter,
         games: Vec::new(),
         note: Some(note),
     };
@@ -320,7 +424,7 @@ pub async fn market_for(
         .into_iter()
         .map(|(code, team)| (team.name.trim().to_ascii_lowercase(), code))
         .collect();
-    let games = match_lines(&lines, &t.games, &by_name);
+    let games = match_lines(&lines, &t.games, &by_name, scatter.sigma, min_return);
     let note = games
         .is_empty()
         .then(|| unmatched_note(night, lines.len(), source));
@@ -331,6 +435,8 @@ pub async fn market_for(
         source: Some(source),
         source_note,
         quota: app.odds.as_ref().and_then(|o| o.quota()),
+        min_return,
+        scatter,
         games,
         note,
     })
@@ -476,6 +582,8 @@ mod tests {
             &lines,
             &[game(7, "GSW", "LAC"), game(8, "BOS", "ORL")],
             &by_name,
+            13.0,
+            0.05,
         );
         assert_eq!(m.len(), 1);
         let g = &m[0];
@@ -490,7 +598,7 @@ mod tests {
         );
         assert!(g.book_margin.unwrap() > 0.0);
         // The same line against a game with the sides the other way round turns to it.
-        let m = match_lines(&lines, &[game(9, "LAC", "GSW")], &by_name);
+        let m = match_lines(&lines, &[game(9, "LAC", "GSW")], &by_name, 13.0, 0.05);
         let g = &m[0];
         assert_eq!(
             (g.home_spread, g.home_spread_odds, g.away_spread_odds),
