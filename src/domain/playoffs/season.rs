@@ -18,7 +18,9 @@ use serde::{Deserialize, Serialize};
 use crate::domain::cup;
 use crate::domain::elo;
 use crate::domain::ids::{SeasonYear, TeamId};
-use crate::domain::models::{Conference, Game, GameType, PlayoffResult, Round, Team};
+use crate::domain::models::{
+    Conference, CupRound, CupStage, Game, GameType, PlayoffResult, Round, Team,
+};
 use crate::domain::simulation::progress::{ChunkTracker, Progress};
 use crate::domain::simulation::rng::{chunk_rng, chunks};
 use crate::domain::simulation::stats;
@@ -582,7 +584,7 @@ struct Remaining {
     away_sampled: Vec<usize>,
     /// The index of the Cup group game this game is, when it is one.
     cup_game: Option<usize>,
-    /// A game on a knockout date: its simulated result also decides the Cup game.
+    /// A game of a Cup knockout round: its simulated result also decides the Cup game.
     knockout_game: bool,
 }
 
@@ -612,7 +614,73 @@ struct CupGroupGame {
     played: Option<(bool, i32)>,
 }
 
-/// The Cup of the season, from its dates and the schedule.
+/// How the season's Cup games are told: by the stage the results source labels each game
+/// with, or, for a season without labels, by the curated dates of its rounds.
+enum CupRule {
+    Labels,
+    Dates(cup::Dates),
+}
+
+impl CupRule {
+    /// The Cup round the game belongs to, if any.
+    fn round_of(&self, g: &Game) -> Option<CupRound> {
+        match self {
+            CupRule::Labels => match g.game_type {
+                GameType::CupFinal => Some(CupRound::Final),
+                _ => g.cup_stage.map(CupStage::round),
+            },
+            CupRule::Dates(d) => match g.game_type {
+                GameType::CupFinal => Some(CupRound::Final),
+                GameType::Regular if d.group_nights.contains(&g.game_date) => Some(CupRound::Group),
+                GameType::Regular if d.quarterfinals.contains(&g.game_date) => {
+                    Some(CupRound::Quarterfinal)
+                }
+                GameType::Regular if d.semifinals == g.game_date => Some(CupRound::Semifinal),
+                GameType::Regular if d.final_date == g.game_date => Some(CupRound::Final),
+                _ => None,
+            },
+        }
+    }
+
+    /// The pairs of the regular-season games the rule makes group games.
+    fn group_pairs(&self, games: &[Game], idx: &HashMap<TeamId, Ti>) -> Vec<(Ti, Ti)> {
+        games
+            .iter()
+            .filter(|g| {
+                g.game_type == GameType::Regular && self.round_of(g) == Some(CupRound::Group)
+            })
+            .filter_map(|g| Some((*idx.get(&g.home_team_id)?, *idx.get(&g.away_team_id)?)))
+            .collect()
+    }
+
+    /// The rule for the season: the labels when a game carries one, unless the group games
+    /// they name do not form the groups and the curated dates' do; the curated dates for a
+    /// season without labels; none for a season with neither.
+    fn choose(
+        season: SeasonYear,
+        games: &[Game],
+        idx: &HashMap<TeamId, Ti>,
+        conf_of: &[Conference],
+    ) -> Option<Self> {
+        let labels = games
+            .iter()
+            .any(|g| g.cup_stage.is_some())
+            .then_some(CupRule::Labels);
+        let dates = cup::dates_for(season).map(CupRule::Dates);
+        let shaped =
+            |rule: &CupRule| cup::groups_from_games(conf_of, &rule.group_pairs(games, idx)).is_ok();
+        match (labels, dates) {
+            (Some(labels), Some(dates)) => Some(if shaped(&labels) || !shaped(&dates) {
+                labels
+            } else {
+                dates
+            }),
+            (labels, dates) => labels.or(dates),
+        }
+    }
+}
+
+/// The Cup of the season, from its games and the rule that tells them.
 struct CupSetup {
     groups: Vec<cup::Group>,
     group_games: Vec<CupGroupGame>,
@@ -903,11 +971,7 @@ impl Setup {
             })
             .collect();
         let mut played_play_in = Vec::new();
-        let dates = cup::dates_for(params.season);
-        let knockout_dates: Vec<NaiveDate> = dates
-            .as_ref()
-            .map(|d| d.knockout_dates())
-            .unwrap_or_default();
+        let rule = CupRule::choose(params.season, games, &idx, &conf_of);
         let mut group_pairs: Vec<(Ti, Ti)> = Vec::new();
         let mut group_games: Vec<CupGroupGame> = Vec::new();
         let mut knockout_played = Vec::new();
@@ -917,9 +981,13 @@ impl Setup {
                 continue;
             };
             let known = g.game_date <= as_of;
-            let on_knockout_date = dates.is_some() && knockout_dates.contains(&g.game_date);
-            let cup_game = match (&dates, g.game_type) {
-                (Some(d), GameType::Regular) if d.group_nights.contains(&g.game_date) => {
+            let round = rule.as_ref().and_then(|r| r.round_of(g));
+            let on_knockout_date = matches!(
+                round,
+                Some(CupRound::Quarterfinal | CupRound::Semifinal | CupRound::Final)
+            );
+            let cup_game = match (round, g.game_type) {
+                (Some(CupRound::Group), GameType::Regular) => {
                     group_pairs.push((h, a));
                     group_games.push(CupGroupGame {
                         home: h,
@@ -937,7 +1005,7 @@ impl Setup {
                     }
                     None
                 }
-                (Some(_), GameType::CupFinal) if known => {
+                (Some(CupRound::Final), GameType::CupFinal) if known => {
                     if let Some(o) = g.outcome() {
                         knockout_played.push((h, a, o.home_won()));
                         final_winner = Some(if o.home_won() { h } else { a });
@@ -999,14 +1067,14 @@ impl Setup {
                 _ => {}
             }
         }
-        let (cup, cup_note) = match dates {
+        let (cup, cup_note) = match rule {
             None if params.season < cup::CUP_SEASONS[0].season => {
                 (None, Some("The NBA Cup began in 2023-24.".to_string()))
             }
             None => (
                 None,
                 Some(format!(
-                    "No Cup dates are recorded for {}; add them to domain::cup.",
+                    "No Cup game of {} is labelled in the stored schedule and no Cup dates are recorded for it; sync the results or add the dates to domain::cup.",
                     params.season.label()
                 )),
             ),
@@ -2178,6 +2246,7 @@ mod tests {
             ref_away_elo_pre: None,
             ref_home_elo_post: None,
             ref_away_elo_post: None,
+            cup_stage: None,
         };
         let nights = [
             "2023-11-03",
@@ -2271,6 +2340,7 @@ mod tests {
                     ref_away_elo_pre: None,
                     ref_home_elo_post: None,
                     ref_away_elo_post: None,
+                    cup_stage: None,
                 });
                 seq += 1;
             }
@@ -2689,6 +2759,46 @@ mod tests {
         let (teams, games) = cup_season(2016, false, false);
         let r = run(&cup_params(2016, "2023-11-01"), &games, &teams, &Silent).unwrap();
         assert_eq!(r.cup_note.as_deref(), Some("The NBA Cup began in 2023-24."));
+        // A Cup season without curated dates has no Cup until its games carry the source's
+        // stage labels; with them the dates follow from the games and the groups the same.
+        let (teams, mut games) = cup_season(2027, false, false);
+        let r = run(&cup_params(2027, "2023-11-01"), &games, &teams, &Silent).unwrap();
+        assert!(r.cup.is_none());
+        assert!(r.cup_note.as_deref().unwrap().contains("labelled"));
+        let stages = [
+            CupStage::EastGroupA,
+            CupStage::EastGroupB,
+            CupStage::EastGroupC,
+            CupStage::WestGroupA,
+            CupStage::WestGroupB,
+            CupStage::WestGroupC,
+        ];
+        for g in games.iter_mut().filter(|g| g.seq >= 1) {
+            g.cup_stage = Some(stages[(g.home_team_id.as_i32() as usize - 1) / 5]);
+        }
+        let r = run(&cup_params(2027, "2023-11-01"), &games, &teams, &Silent).unwrap();
+        let c = r.cup.as_ref().expect("a Cup forecast from the labels");
+        assert_eq!(r.cup_note, None);
+        assert_eq!((c.groups.len(), c.group_games_total), (6, 60));
+        assert_eq!(c.groups[0].label, "East A");
+        // Labels that do not form the groups (one night's games unlabelled) leave a season
+        // without curated dates no Cup, and a season with them falls back to the dates.
+        let (teams, mut games) = cup_season(2024, false, false);
+        for g in games.iter_mut().filter(|g| g.seq >= 1 && g.seq % 7 != 3) {
+            g.cup_stage = Some(stages[(g.home_team_id.as_i32() as usize - 1) / 5]);
+        }
+        let r = run(&cup_params(2024, "2023-11-01"), &games, &teams, &Silent).unwrap();
+        let c = r
+            .cup
+            .as_ref()
+            .expect("a Cup forecast from the curated dates");
+        assert_eq!((c.groups.len(), c.group_games_total), (6, 60));
+        for g in games.iter_mut() {
+            g.season = SeasonYear::of(2027);
+        }
+        let r = run(&cup_params(2027, "2023-11-01"), &games, &teams, &Silent).unwrap();
+        assert!(r.cup.is_none());
+        assert!(r.cup_note.as_deref().unwrap().contains("six groups"));
         // The margin draw sits on the winner's side and is at least a point.
         let mut rng = chunk_rng(7, 0);
         for _ in 0..200 {

@@ -2,10 +2,11 @@
 //! with the Cup's tiebreaks, the knockout seeding and the exact chances through a knockout
 //! bracket.
 //!
-//! The only curated fact per season is its dates: the group nights, the quarterfinal and
-//! semifinal dates and the final. The groups themselves follow from the schedule: on the
-//! group nights every game is a group game, each team plays its four group-mates once, so
-//! the games on those nights split the league into six groups of five. The group-stage
+//! Which games are Cup games is told by the results source's stage labels from 2025-26
+//! (`Game::cup_stage`) and, for the seasons before, by the curated dates here: the group
+//! nights, the quarterfinal and semifinal dates and the final. The groups themselves follow
+//! from the group games: each team plays its four group-mates once, so the group games
+//! split the league into six groups of five. The group-stage
 //! games are regular-season games; the quarterfinals and semifinals count in the standings
 //! too; the final does not and is stored as its own game type.
 
@@ -16,6 +17,12 @@ use serde::{Deserialize, Serialize};
 
 use crate::domain::ids::SeasonYear;
 use crate::domain::models::Conference;
+
+/// The first season whose results source labels each Cup game with its stage
+/// (`Game::cup_stage`). From this season on the season engine tells the Cup games by their
+/// labels; the curated dates below serve the seasons before it, and a labelled season whose
+/// store has not read the labels yet.
+pub const FIRST_LABELLED_SEASON: SeasonYear = SeasonYear::of(2026);
 
 /// The dates of one Cup, curated from the league's announcements. Group games are the
 /// regular-season games played on the group nights.
@@ -102,15 +109,6 @@ pub struct Dates {
     pub final_date: NaiveDate,
 }
 
-impl Dates {
-    pub fn knockout_dates(&self) -> Vec<NaiveDate> {
-        let mut v = self.quarterfinals.clone();
-        v.push(self.semifinals);
-        v.push(self.final_date);
-        v
-    }
-}
-
 /// Regular-season games per team in a full NBA season.
 pub const GAMES_PER_TEAM: usize = 82;
 
@@ -133,6 +131,7 @@ pub fn schedule_note(season: SeasonYear, on_schedule: usize) -> Option<String> {
     })
 }
 
+/// The curated dates of a season's Cup; `None` for a season without them.
 pub fn dates_for(season: SeasonYear) -> Option<Dates> {
     CUP_SEASONS
         .iter()
@@ -147,7 +146,7 @@ pub fn dates_for(season: SeasonYear) -> Option<Dates> {
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum CupError {
-    #[error("the games on the group nights do not form six groups of five: {0}")]
+    #[error("the group games do not form six groups of five: {0}")]
     Shape(String),
 }
 
@@ -487,13 +486,12 @@ mod tests {
             7
         );
         assert_eq!(
-            dates_for(SeasonYear::of(2024))
-                .unwrap()
-                .knockout_dates()
-                .len(),
-            4
+            dates_for(SeasonYear::of(2024)).unwrap().quarterfinals.len(),
+            2
         );
         assert!(dates_for(SeasonYear::of(2023)).is_none());
+        // The labels begin after the first curated Cup, so no season loses its dates.
+        assert!(FIRST_LABELLED_SEASON > CUP_SEASONS[0].season);
     }
 
     fn result(home: usize, away: usize, home_won: bool, margin: i32) -> GroupResult {

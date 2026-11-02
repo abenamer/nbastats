@@ -11,9 +11,9 @@ use uuid::Uuid;
 
 use crate::domain::ids::{FranchiseId, PlayerId, SeasonYear, TeamId};
 use crate::domain::models::{
-    ChampionshipView, Conference, DataImport, EloSource, Franchise, Game, GameType, ImportStatus,
-    JobKind, JobStatus, PlayoffResult, ResultSource, Season, SimulationJob, Team, TeamSeason,
-    TeamSeasonView,
+    ChampionshipView, Conference, CupStage, DataImport, EloSource, Franchise, Game, GameType,
+    ImportStatus, JobKind, JobStatus, PlayoffResult, ResultSource, Season, SimulationJob, Team,
+    TeamSeason, TeamSeasonView,
 };
 use crate::domain::records::TeamSeasonStat;
 
@@ -178,6 +178,10 @@ impl FromRow<'_, PgRow> for Game {
             ref_away_elo_pre: r.try_get("ref_away_elo_pre")?,
             ref_home_elo_post: r.try_get("ref_home_elo_post")?,
             ref_away_elo_post: r.try_get("ref_away_elo_post")?,
+            cup_stage: r
+                .try_get::<Option<String>, _>("cup_stage")?
+                .as_deref()
+                .and_then(CupStage::parse),
         })
     }
 }

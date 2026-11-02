@@ -1,6 +1,7 @@
 # Bundle update log
 
 ## 2026-11-02
+* **New**: [ADR 0012](/decisions/0012-cup-games-from-the-stage-labels.md) records telling the Cup games by the source's stage labels; the [NBA Cup forecast](/concepts/nba-cup.md) Data section, [Elo continuation](/concepts/elo-continuation.md), [Player data](/concepts/player-data.md), the import runbook, the schema reference and the term Cup stage follow.
 * **New**: [ADR 0011](/decisions/0011-a-worth-what-if-moves-the-team-by-the-difference.md) records the worth what-if; the [Season forecast engine](/concepts/season-engine.md) describes it, the API reference gives `worth_overrides` and `worth`, and the term Worth what-if is added.
 * **New**: [ADR 0010](/decisions/0010-flag-a-bet-by-its-expected-return.md) records the edge rule; [Market tracking](/concepts/market-tracking.md) describes the flagged record, [Season forecast engine](/concepts/season-engine.md) the panel's highlights, the API reference `min_return`, `edges`, `scatter` and the flagged fields; the terms Edge and Margin scatter.
 * **Update**: [Season forecast engine](/concepts/season-engine.md) names the Tonight panel's columns for the model or the sportsbook; the term Market wins becomes Sportsbook wins.

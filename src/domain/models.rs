@@ -61,6 +61,82 @@ text_enum! {
 }
 
 text_enum! {
+    /// The NBA Cup stage of a game as the results source labels it: a group of the group
+    /// play (the league's own letters), a knockout round of a conference, or the final.
+    /// Given from the 2025-26 season on; the texts are the source's.
+    CupStage {
+        EastGroupA => "East Group A", EastGroupB => "East Group B", EastGroupC => "East Group C",
+        WestGroupA => "West Group A", WestGroupB => "West Group B", WestGroupC => "West Group C",
+        EastQuarterfinal => "East Quarterfinal", WestQuarterfinal => "West Quarterfinal",
+        EastSemifinal => "East Semifinal", WestSemifinal => "West Semifinal",
+        Championship => "Championship"
+    }
+}
+
+/// A round of the Cup, for a stage.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CupRound {
+    Group,
+    Quarterfinal,
+    Semifinal,
+    Final,
+}
+
+impl CupStage {
+    /// The stage a source's label names, whatever its case and spacing; none for a label
+    /// the application does not know.
+    pub fn parse(label: &str) -> Option<Self> {
+        let wanted: String = label.split_whitespace().collect::<Vec<_>>().join(" ");
+        Self::ALL
+            .iter()
+            .copied()
+            .find(|s| s.as_str().eq_ignore_ascii_case(&wanted))
+    }
+
+    pub const fn round(self) -> CupRound {
+        match self {
+            CupStage::EastGroupA
+            | CupStage::EastGroupB
+            | CupStage::EastGroupC
+            | CupStage::WestGroupA
+            | CupStage::WestGroupB
+            | CupStage::WestGroupC => CupRound::Group,
+            CupStage::EastQuarterfinal | CupStage::WestQuarterfinal => CupRound::Quarterfinal,
+            CupStage::EastSemifinal | CupStage::WestSemifinal => CupRound::Semifinal,
+            CupStage::Championship => CupRound::Final,
+        }
+    }
+
+    /// The conference of a group or a conference round; none for the final.
+    pub const fn conference(self) -> Option<Conference> {
+        match self {
+            CupStage::EastGroupA
+            | CupStage::EastGroupB
+            | CupStage::EastGroupC
+            | CupStage::EastQuarterfinal
+            | CupStage::EastSemifinal => Some(Conference::East),
+            CupStage::WestGroupA
+            | CupStage::WestGroupB
+            | CupStage::WestGroupC
+            | CupStage::WestQuarterfinal
+            | CupStage::WestSemifinal => Some(Conference::West),
+            CupStage::Championship => None,
+        }
+    }
+
+    /// The league's letter of a group stage.
+    pub const fn group_letter(self) -> Option<char> {
+        match self {
+            CupStage::EastGroupA | CupStage::WestGroupA => Some('A'),
+            CupStage::EastGroupB | CupStage::WestGroupB => Some('B'),
+            CupStage::EastGroupC | CupStage::WestGroupC => Some('C'),
+            _ => None,
+        }
+    }
+}
+
+text_enum! {
     /// Where a game's Elo ratings come from. The application rates every game itself
     /// (`computed`); `imported` marks rows an older version stored with the archive's ratings,
     /// which the application recomputes at start.
@@ -321,6 +397,10 @@ pub struct Game {
     pub ref_away_elo_pre: Option<f64>,
     pub ref_home_elo_post: Option<f64>,
     pub ref_away_elo_post: Option<f64>,
+    /// The NBA Cup stage the results source labels the game with; none for a game that is
+    /// not a Cup game, or stored before the labels were read.
+    #[serde(default)]
+    pub cup_stage: Option<CupStage>,
 }
 
 /// Outcome of a played game from the home team's perspective.
@@ -499,6 +579,19 @@ mod tests {
         assert_eq!("play_in".parse::<GameType>().unwrap(), GameType::PlayIn);
         assert!("bogus".parse::<GameType>().is_err());
         assert_eq!(
+            CupStage::parse(" east  group a "),
+            Some(CupStage::EastGroupA)
+        );
+        assert_eq!(
+            CupStage::parse("Championship"),
+            Some(CupStage::Championship)
+        );
+        assert_eq!(CupStage::parse("Group Play"), None);
+        assert_eq!(CupStage::WestSemifinal.round(), CupRound::Semifinal);
+        assert_eq!(CupStage::WestGroupC.conference(), Some(Conference::West));
+        assert_eq!(CupStage::WestGroupC.group_letter(), Some('C'));
+        assert_eq!(CupStage::Championship.conference(), None);
+        assert_eq!(
             serde_json::to_string(&PlayoffResult::ConfFinals).unwrap(),
             "\"conf_finals\""
         );
@@ -537,6 +630,7 @@ mod tests {
             ref_away_elo_pre: None,
             ref_home_elo_post: None,
             ref_away_elo_post: None,
+            cup_stage: None,
         };
         assert_eq!(g.outcome(), Some(Outcome::AwayWin { margin: 4 }));
         assert_eq!(g.elo_of(TeamId::new(2)), (1749.8, 1759.0));

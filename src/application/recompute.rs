@@ -45,6 +45,7 @@ pub fn as_result_game(g: &Game) -> ResultGame {
         game_type: g.game_type,
         home_score: g.home_score,
         away_score: g.away_score,
+        cup_stage: g.cup_stage,
     }
 }
 

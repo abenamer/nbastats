@@ -50,6 +50,8 @@ pub struct ResultGame {
     pub game_type: GameType,
     pub home_score: Option<i32>,
     pub away_score: Option<i32>,
+    /// The NBA Cup stage, kept with the game through a sync.
+    pub cup_stage: Option<crate::domain::models::CupStage>,
 }
 
 /// A rated game.
@@ -161,6 +163,7 @@ mod tests {
                 game_type: GameType::Regular,
                 home_score: None,
                 away_score: None,
+                cup_stage: None,
             },
             ResultGame {
                 date: d(21),
@@ -170,6 +173,7 @@ mod tests {
                 game_type: GameType::Regular,
                 home_score: Some(110),
                 away_score: Some(100),
+                cup_stage: None,
             },
         ];
         let rated = rate_games(&start, &games).unwrap();
@@ -200,6 +204,7 @@ mod tests {
             game_type: GameType::Regular,
             home_score: Some(1),
             away_score: Some(0),
+            cup_stage: None,
         };
         assert_eq!(
             rate_games(&start, &[g]),

@@ -22,7 +22,7 @@ const DELETE_ORPHAN_FETCHES: &str = "DELETE FROM box_score_fetches f
 
 const GAME_COLS: &str = "id, season, game_date, seq, home_team_id, away_team_id, neutral, game_type, home_score, away_score,
     home_elo_pre, away_elo_pre, home_elo_post, away_elo_post, home_win_prob, elo_source, result_source,
-    ref_home_elo_pre, ref_away_elo_pre, ref_home_elo_post, ref_away_elo_post";
+    ref_home_elo_pre, ref_away_elo_pre, ref_home_elo_post, ref_away_elo_post, cup_stage";
 const SEASON_COLS: &str = "season, label, team_count, game_count, playoff_game_count, play_in_game_count, cup_final_game_count,
     computed_game_count, archive_game_count, scheduled_game_count, regular_season_end, playoffs_start, playoffs_end, complete";
 
@@ -420,20 +420,25 @@ async fn upsert_games_in(
             chunk.iter().map(|r| r.reference.map(|v| v[i])).collect()
         };
         let (rhpre, rapre, rhpost, rapost) = (rf(0), rf(1), rf(2), rf(3));
+        let stage: Vec<Option<String>> = chunk
+            .iter()
+            .map(|r| r.cup_stage.map(|s| s.as_str().to_string()))
+            .collect();
         // An archive row keeps its result, type, source and reference ratings when a
         // results-source or projection row arrives for the same game; the application's
         // ratings always follow the incoming row.
         let returned: Vec<(bool,)> = sqlx::query_as(
                 "INSERT INTO games (season, game_date, seq, home_team_id, away_team_id, neutral, game_type, home_score, away_score,
                     home_elo_pre, away_elo_pre, home_elo_post, away_elo_post, home_win_prob, import_id, elo_source,
-                    result_source, ref_home_elo_pre, ref_away_elo_pre, ref_home_elo_post, ref_away_elo_post)
-                 SELECT s, d, q, h, a, n, t, hs, as_, hpre, apre, hpost, apost, p, $15, src, rs, rhpre, rapre, rhpost, rapost
+                    result_source, ref_home_elo_pre, ref_away_elo_pre, ref_home_elo_post, ref_away_elo_post, cup_stage)
+                 SELECT s, d, q, h, a, n, t, hs, as_, hpre, apre, hpost, apost, p, $15, src, rs, rhpre, rapre, rhpost, rapost, stage
                  FROM UNNEST($1::int4[], $2::date[], $3::int2[], $4::int4[], $5::int4[], $6::bool[], $7::text[], $8::int4[], $9::int4[],
                              $10::float8[], $11::float8[], $12::float8[], $13::float8[], $14::float8[], $16::text[], $17::text[],
-                             $18::float8[], $19::float8[], $20::float8[], $21::float8[])
-                      AS u(s, d, q, h, a, n, t, hs, as_, hpre, apre, hpost, apost, p, src, rs, rhpre, rapre, rhpost, rapost)
+                             $18::float8[], $19::float8[], $20::float8[], $21::float8[], $22::text[])
+                      AS u(s, d, q, h, a, n, t, hs, as_, hpre, apre, hpost, apost, p, src, rs, rhpre, rapre, rhpost, rapost, stage)
                  ON CONFLICT (game_date, home_team_id, away_team_id, seq) DO UPDATE SET
                     season = EXCLUDED.season,
+                    cup_stage = COALESCE(EXCLUDED.cup_stage, games.cup_stage),
                     neutral = CASE WHEN games.result_source = 'archive' AND EXCLUDED.result_source <> 'archive' THEN games.neutral ELSE EXCLUDED.neutral END,
                     game_type = CASE WHEN games.result_source = 'archive' AND EXCLUDED.result_source <> 'archive' THEN games.game_type
                                      WHEN games.game_type IN ('play_in', 'cup_final') AND EXCLUDED.game_type = 'regular' THEN games.game_type
@@ -467,14 +472,15 @@ async fn upsert_games_in(
                         CASE WHEN EXCLUDED.elo_source = 'imported' THEN games.home_win_prob ELSE EXCLUDED.home_win_prob END,
                         CASE WHEN EXCLUDED.elo_source = 'imported' THEN games.elo_source ELSE EXCLUDED.elo_source END, games.result_source,
                         games.ref_home_elo_pre, games.ref_away_elo_pre, games.ref_home_elo_post, games.ref_away_elo_post,
-                        CASE WHEN games.game_type IN ('play_in', 'cup_final') THEN 'regular' ELSE games.game_type END)
+                        CASE WHEN games.game_type IN ('play_in', 'cup_final') THEN 'regular' ELSE games.game_type END,
+                        games.cup_stage)
                        IS DISTINCT FROM
                        (EXCLUDED.season, EXCLUDED.neutral, EXCLUDED.home_score, EXCLUDED.away_score,
                         games.home_elo_pre, games.away_elo_pre, games.home_elo_post, games.away_elo_post, games.home_win_prob,
                         games.elo_source, CASE WHEN games.result_source = 'archive' THEN 'archive' ELSE EXCLUDED.result_source END,
                         COALESCE(EXCLUDED.ref_home_elo_pre, games.ref_home_elo_pre), COALESCE(EXCLUDED.ref_away_elo_pre, games.ref_away_elo_pre),
                         COALESCE(EXCLUDED.ref_home_elo_post, games.ref_home_elo_post), COALESCE(EXCLUDED.ref_away_elo_post, games.ref_away_elo_post),
-                        EXCLUDED.game_type)
+                        EXCLUDED.game_type, COALESCE(EXCLUDED.cup_stage, games.cup_stage))
                  RETURNING (xmax = 0) AS inserted",
             )
             .bind(&season)
@@ -498,6 +504,7 @@ async fn upsert_games_in(
             .bind(&rapre)
             .bind(&rhpost)
             .bind(&rapost)
+            .bind(&stage)
             .fetch_all(&mut *conn)
             .await?;
         let inserted = returned.iter().filter(|r| r.0).count() as i64;

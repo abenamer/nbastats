@@ -67,6 +67,7 @@ This project follows the [REAS engineering standard](https://github.com/abenamer
 * [ADR 0009 — Market lines from The Odds API, with ESPN as the fallback](decisions/0009-market-lines-from-the-odds-api.md) - Why one chosen sportsbook's lines come from The Odds API when a key is set, ESPN's scoreboard stays the fallback, and captures run only on the night's date.
 * [ADR 0010 — Flag a bet by its expected return at the posted price](decisions/0010-flag-a-bet-by-its-expected-return.md) - Why the Tonight panel marks a bet when the model's chance at the sportsbook's price returns a chosen share of the stake, with spreads on a measured scatter, and the record scores the flagged bets apart.
 * [ADR 0011 — A worth what-if moves the team by the difference](decisions/0011-a-worth-what-if-moves-the-team-by-the-difference.md) - Why a reader's what-if on a player's worth is a rating shift of the difference from the model's estimate plus his absences at the what-if, in the forecast, the Tonight panel and the injury card, without changing the model.
+* [ADR 0012 — Cup games from the source's stage labels](decisions/0012-cup-games-from-the-stage-labels.md) - Why the season engine tells the Cup games by the stage labels the results source puts on each game, with the curated dates kept for the seasons before the labels and as the fallback, and why a stored Cup season without labels is fetched whole once.
 
 # History
 

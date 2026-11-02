@@ -1253,6 +1253,7 @@ mod tests {
             ref_away_elo_pre: None,
             ref_home_elo_post: None,
             ref_away_elo_post: None,
+            cup_stage: None,
         }
     }
 
@@ -1912,6 +1913,7 @@ mod tests {
             ref_away_elo_pre: None,
             ref_home_elo_post: None,
             ref_away_elo_post: None,
+            cup_stage: None,
         };
         // Team 1 plays on days 10 (home), 12 (away) and 14 (home); day 8 is played.
         let mut played = game(8, 1, 2);
@@ -1984,6 +1986,7 @@ mod tests {
             ref_away_elo_pre: None,
             ref_home_elo_post: None,
             ref_away_elo_post: None,
+            cup_stage: None,
         };
         let played = |mut g: Game| {
             g.home_score = Some(100);
