@@ -63,8 +63,12 @@ tr:hover td { background:#f8fafc; }
 table.games tbody + tbody tr:first-child td { border-top:2px solid var(--line); }
 table.games tbody tr:first-child td { border-bottom:none; }
 table.games tbody:hover td { background:#f8fafc; }
-/* The sportsbook's columns, set apart from the model's beside them. */
+/* The sportsbook's columns, head and body, set apart from the model's beside them; a head
+   with a tooltip says so with a dotted underline. */
+table.games th[title] { cursor:help; text-decoration:underline dotted #9ca3af; text-underline-offset:3px; }
+table.games th.book { background:#f3f4f6; }
 table.games td.book { color:#4b5563; background:#f9fafb; }
+#tonightLegend { margin:.4rem 0 0; } #tonightLegend dt { font-weight:600; } #tonightLegend dt.book { color:#4b5563; } #tonightLegend dd { margin:0; }
 td.good { color:var(--good); font-weight:600; } td.warn { color:var(--warn); } td.bad { color:var(--bad); }
 .bar { display:inline-block; height:.6rem; background:#93c5fd; border-radius:3px; vertical-align:middle; margin-right:.3rem; }
 .kv { display:grid; grid-template-columns:max-content 1fr; gap:.3rem 1rem; font-size:.9rem; }

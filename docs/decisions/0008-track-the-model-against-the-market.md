@@ -16,14 +16,14 @@ generated: { by: "human:abenamer", at: "2026-11-02T09:00:00Z" }
 
 * A table, `market_snapshots` (migration `0007`), keeps one row per game: the model's numbers and the sportsbook's lines in the last capture before the start, with the model version and the application version. It is keyed by date and team codes, so a re-import of the games keeps it.
 * One store port, `MarketStore`, implemented by `PostgresStore`, saves the snapshots (a later capture replaces an earlier one only before the start) and reads a season's.
-* A background task captures the current season's night every ten minutes while the ESPN feed is on. `MARKET_TRACKING_ENABLED=false` turns it off. A page view starts no capture, so an unauthenticated request causes no model computation or write beyond what the page already does.
+* A background task captures the current season's night every ten minutes while the ESPN feed is on. (Amended 2026-11-02 by [ADR 0009](0009-market-lines-from-the-odds-api.md): the task now reads once when the night's date comes and once before each tip-off, from The Odds API when a key is set.) `MARKET_TRACKING_ENABLED=false` turns it off. A page view starts no capture, so an unauthenticated request causes no model computation or write beyond what the page already does.
 * `domain::tracking` scores a snapshot against its result: the Brier score and the log loss of the model and of the market, the lean on the moneyline and the side against the spread at the sportsbook's prices. The record groups them overall, per model version and per month.
 
 ## Consequences
 
 * The record starts on the day tracking is first on. Earlier games have no lines to score.
 * A model change shows as a new version with its own row, so its effect can be read from the record once it has games.
-* The application makes one ESPN request every ten minutes while it runs, besides the page's own reads.
+* The application makes one ESPN request every ten minutes while it runs, besides the page's own reads. (Since ADR 0009: a read per tip-off time instead.)
 * The market source stays swappable: a paid odds service would be another `MarketSource` adapter, and the snapshots name their sportsbook and source. (Done 2026-11-02 by [ADR 0009](0009-market-lines-from-the-odds-api.md), which also limits the captures to the night's date.)
 
 ## Alternatives
