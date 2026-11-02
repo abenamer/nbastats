@@ -72,6 +72,11 @@ pub struct SeasonParams {
     /// `domain::full_strength`.
     #[serde(default)]
     pub rating_shifts: Vec<crate::domain::full_strength::RatingShift>,
+    /// The reader's what-ifs on players' worth, which the application turns into rating
+    /// shifts and absence penalties before the run; kept here so the stored parameters say
+    /// what the forecast priced. The engine reads nothing from them.
+    #[serde(default)]
+    pub worth_overrides: Vec<worth::WorthOverride>,
 }
 
 fn default_home_adv() -> f64 {
@@ -150,6 +155,25 @@ impl SeasonParams {
                 "absences",
                 format!("at most {} absences", worth::MAX_ABSENCES),
             );
+        }
+        {
+            let mut players: Vec<_> = self.worth_overrides.iter().map(|o| o.player_id).collect();
+            players.sort_unstable();
+            players.dedup();
+            if self.worth_overrides.len() > worth::MAX_OVERRIDES
+                || players.len() != self.worth_overrides.len()
+                || !self.worth_overrides.iter().all(worth::override_ok)
+            {
+                return invalid(
+                    "worth_overrides",
+                    format!(
+                        "at most {} worth what-ifs, one per player, each either a finite worth of at most {} Elo either way or a window of 1 to {} games",
+                        worth::MAX_OVERRIDES,
+                        worth::MAX_ABSENCE_ELO,
+                        worth::MAX_WINDOW_GAMES
+                    ),
+                );
+            }
         }
         for a in &self.absences {
             if !(0.0..=worth::MAX_ABSENCE_ELO).contains(&a.elo) || a.to < a.from {
@@ -2258,6 +2282,7 @@ mod tests {
         SeasonParams {
             hold_absences: false,
             rating_shifts: Vec::new(),
+            worth_overrides: Vec::new(),
             season: SeasonYear::of(season),
             as_of: Some(NaiveDate::parse_from_str(as_of, "%Y-%m-%d").unwrap()),
             iterations: 200,
@@ -2334,6 +2359,25 @@ mod tests {
         let base = run(&params, &games, &teams, &Silent).unwrap();
         let team = base.teams[0].team_id;
         let base_wins = base.teams[0].expected_wins;
+        // A what-if is checked like a shift: a worth past the cap, or a player twice, fails.
+        params.worth_overrides = vec![crate::domain::worth::WorthOverride {
+            player_id: crate::domain::ids::PlayerId::new(1),
+            elo: Some(500.0),
+            last_games: None,
+        }];
+        assert!(params.validate(10_000).is_err());
+        params.worth_overrides = vec![
+            crate::domain::worth::WorthOverride {
+                player_id: crate::domain::ids::PlayerId::new(1),
+                elo: None,
+                last_games: Some(5),
+            };
+            2
+        ];
+        assert!(params.validate(10_000).is_err());
+        params.worth_overrides.truncate(1);
+        assert!(params.validate(10_000).is_ok());
+        params.worth_overrides.clear();
         // Up 100 Elo at full strength: more wins.
         params.rating_shifts = vec![RatingShift {
             team_id: team,

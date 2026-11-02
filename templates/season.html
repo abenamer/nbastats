@@ -26,7 +26,16 @@
   <label title="Run the season a second time with every absence that covers the cutoff date held to the last regular-season game: the forecast if the roster of the cutoff date were the roster all season, the bound the dated forecast sits above"><input id="holdAbsences" type="checkbox"> Hold the cutoff date's absences all season</label>
   <span id="whoStatus" class="muted small"></span>
 </section>
+<section class="controls" id="worthWhatIf">
+  <label>Player worth what-if <input id="wiName" list="whoOptions" placeholder="type a name" autocomplete="off" style="width:14rem" title="A player whose worth you set yourself, read from a window of his games or typed: his team's rating moves by the difference from the model's estimate, in the forecast, the Tonight panel and the injury card, and his absences are priced at the what-if. The model's own numbers do not change"></label>
+  <label>as he played in his <select id="wiBasis" title="His box scores over the window, read through the model's own conversion of a stat line to Elo (BPM over replacement per game, scaled by the season's box calibration), as if the season were only those games. One game is noise; ten is a read">
+    <option value="last5">last 5 games</option><option value="last1">last game</option><option value="last2">last 2 games</option><option value="last3">last 3 games</option><option value="last4">last 4 games</option><option value="last6">last 6 games</option><option value="last7">last 7 games</option><option value="last8">last 8 games</option><option value="last9">last 9 games</option><option value="last10">last 10 games</option><option value="last82">season so far</option><option value="elo">a worth I type (Elo)</option></select></label>
+  <label id="wiEloLabel" hidden>worth (Elo) <input id="wiElo" type="number" placeholder="60" min="-400" max="400" step="5" style="min-width:5rem;width:5.5rem" title="Elo points the team loses when he sits: a solid starter 20 to 40, a star 60 to 100; below zero means he hurts his team"></label>
+  <button id="wiAdd">Add</button>
+  <span id="wiStatus" class="muted small"></span>
+</section>
 <ul id="absences" class="small" style="margin:0 0 .5rem 0;padding-left:1.2rem"></ul>
+<ul id="whatIfs" class="small" style="margin:0 0 .5rem 0;padding-left:1.2rem"></ul>
 <p class="muted small" id="advNote"></p>
 <p class="muted small" id="note"></p>
 <section class="panel" id="tonightPanel"><h2>Tonight</h2>

@@ -439,6 +439,7 @@ impl PlayerLookups for App {
         let mut params = SeasonParams {
             hold_absences: false,
             rating_shifts: Vec::new(),
+            worth_overrides: Vec::new(),
             season,
             as_of: Some(today),
             iterations: EFFECT_ITERATIONS,
@@ -521,7 +522,7 @@ impl PlayerLookups for App {
 
     async fn league_tonight(&self, season: Option<SeasonYear>) -> Result<Value, StoreError> {
         let season = season.unwrap_or_else(|| current_season(self.today()));
-        let t = match or_error(app_worth::tonight(self, season, None).await)? {
+        let t = match or_error(app_worth::tonight(self, season, None, &[]).await)? {
             Ok(t) => t,
             Err(e) => return Ok(e),
         };
@@ -928,6 +929,7 @@ mod tests {
             home_advantage_fitted: 62.0,
             games: Vec::new(),
             teams,
+            what_ifs: vec![],
             note: None,
             absences: Vec::new(),
         }

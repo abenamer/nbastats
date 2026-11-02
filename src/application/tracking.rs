@@ -192,7 +192,7 @@ pub async fn capture(app: &App, season: SeasonYear) -> Result<u64, SeasonLoadErr
     if !due {
         return Ok(0);
     }
-    let t = worth::tonight(app, season, None).await?;
+    let t = worth::tonight(app, season, None, &[]).await?;
     if t.night != Some(today) {
         app.tracking
             .lock()
@@ -495,6 +495,7 @@ mod tests {
             home_advantage_fitted: 41.0,
             games,
             teams,
+            what_ifs: vec![],
             note: None,
             absences: vec![],
         }

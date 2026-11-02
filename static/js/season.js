@@ -115,7 +115,7 @@
       const priced = c.lines.filter(l => l.penalty_elo != null).length;
       document.getElementById('cardNote').textContent = c.note
         ? c.note
-        : `${c.team_code} · ${c.team_name}, ${labelOf(c.season)}. Full-strength rating ${num(c.rating_elo, 0)} (${c.rating_is_preseason ? 'preseason, before any game' : `after the game of ${c.rating_date}`}; stored Elo ${num(c.rating_stored, 0)}${c.games_short ? `, with ${c.games_short} game${c.games_short === 1 ? '' : 's'} played short taken out` : ''}); today ${c.today} the team plays at ${num(c.rating_today, 0)}, ${num(c.penalty_today, 0)} below it. Report of ${c.report_date}: ${c.lines.length} line${c.lines.length === 1 ? '' : 's'}, ${priced} priced. ${c.listed.games} regular-season games remain, ${c.listed.games_covered} with a penalty as listed. ${bonusText(c.home_advantage, c.home_advantage_fitted)}.`;
+        : `${c.team_code} · ${c.team_name}, ${labelOf(c.season)}. Full-strength rating ${num(c.rating_elo, 0)} (${c.rating_is_preseason ? 'preseason, before any game' : `after the game of ${c.rating_date}`}; stored Elo ${num(c.rating_stored, 0)}${c.games_short ? `, with ${c.games_short} game${c.games_short === 1 ? '' : 's'} played short taken out` : ''}); today ${c.today} the team plays at ${num(c.rating_today, 0)}, ${num(c.penalty_today, 0)} below it. Report of ${c.report_date}: ${c.lines.length} line${c.lines.length === 1 ? '' : 's'}, ${priced} priced. ${c.listed.games} regular-season games remain, ${c.listed.games_covered} with a penalty as listed. ${bonusText(c.home_advantage, c.home_advantage_fitted)}.${whatIfSentence(c.what_ifs)}`;
       const totals = [
         { label: 'As listed', e: c.listed, note: 'each absence ends when the report, the curve or the status default says' },
         { label: 'Held to the last game', e: c.held, note: `today's absences (${num(c.penalty_today, 0)} Elo) kept through the last regular-season game, ${c.last_regular_game}` }];
@@ -151,10 +151,14 @@
   const teamSpread = m => Math.abs(m) < 0.25 ? 'pick' : `${m > 0 ? '−' : '+'}${num(Math.abs(m), 1)}`;
   const line = o => (o > 0 ? '+' : '−') + Math.round(Math.abs(o));
   // The Reg-season home adv. field, when set, prices the Tonight panel and the injury card too.
-  const homeQuery = () => { const v = document.getElementById('radv').value.trim(); return v === '' ? '' : `?home_advantage=${encodeURIComponent(v)}`; };
+  // The what-ifs on players' worth, kept on the page and sent with every priced request.
+  const whatIfs = [];
+  const worthParam = () => whatIfs.length ? `worth=${encodeURIComponent(whatIfs.map(w => `${w.player_id}:${w.last_games ? `last${w.last_games}` : w.elo}`).join(','))}` : '';
+  const query = (...parts) => { const q = parts.filter(Boolean).join('&'); return q ? `?${q}` : ''; };
+  const homeQuery = () => { const v = document.getElementById('radv').value.trim(); return query(v === '' ? '' : `home_advantage=${encodeURIComponent(v)}`, worthParam()); };
   // The bar a bet's expected return must clear to be flagged, as the field gives it in percent.
   const minReturn = () => { const field = document.getElementById('minret'); const v = parseFloat(field.value); if (Number.isFinite(v) && v >= 0 && v <= 100) return v / 100; field.value = '5'; return 0.05; };
-  const minReturnQuery = () => `?min_return=${encodeURIComponent(minReturn())}`;
+  const minReturnQuery = () => query(`min_return=${encodeURIComponent(minReturn())}`, worthParam());
   const bonusText = (h, fitted) => Math.abs(h - fitted) < 0.05 ? `Home bonus ${num(h, 0)} (fitted)` : `Home bonus ${num(h, 0)} (yours; fitted ${num(fitted, num(h, 0) === num(fitted, 0) ? 1 : 0)})`;
   const teamLink = (code, season) => `<a href="#injuryCard" class="card-link" data-team="${esc(code)}" data-season="${esc(String(season))}" title="Open the team's injury card">${esc(code)}</a>`;
   const statusNames = { out: 'out', out_for_season: 'out for season', absent: 'absent', doubtful: 'doubtful', questionable: 'questionable', day_to_day: 'day-to-day', probable: 'probable', available: 'available', unknown: 'listed' };
@@ -169,8 +173,9 @@
       if (mine !== tonightRequest) return;
       // The night may not be today: an off day, a break, or every game of today played.
       const when = t.night === t.as_of ? 'tonight' : `on ${t.night}`;
+      const whatIfText = whatIfSentence(t.what_ifs);
       note.textContent = t.note ? t.note : t.night
-        ? `${labelOf(t.season)}: ${t.games.length} game${t.games.length === 1 ? '' : 's'} ${t.games_played ? `still to play of ${t.games.length + t.games_played} ` : ''}on ${t.night}${t.night === t.as_of ? ' (today)' : ', the next night with a game'}, read as of ${t.as_of} with the report of ${t.report_date}. ${bonusText(t.home_advantage, t.home_advantage_fitted)}. Ratings are at full strength: ${t.games_played_short ? `${t.games_played_short} team game${t.games_played_short === 1 ? '' : 's'} played short this season are taken out of them` : 'no game played short is on record, so they equal the stored Elo'} (${t.rating_model}).`
+        ? `${labelOf(t.season)}: ${t.games.length} game${t.games.length === 1 ? '' : 's'} ${t.games_played ? `still to play of ${t.games.length + t.games_played} ` : ''}on ${t.night}${t.night === t.as_of ? ' (today)' : ', the next night with a game'}, read as of ${t.as_of} with the report of ${t.report_date}. ${bonusText(t.home_advantage, t.home_advantage_fitted)}. Ratings are at full strength: ${t.games_played_short ? `${t.games_played_short} team game${t.games_played_short === 1 ? '' : 's'} played short this season are taken out of them` : 'no game played short is on record, so they equal the stored Elo'} (${t.rating_model}).${whatIfText}`
         : `${labelOf(t.season)}: no regular-season game remains on or after ${t.as_of}.`;
       // Laid out as a sportsbook lists a game: the visitor on top, the home team under it with
       // an @, each with its own spread and moneyline beside the sportsbook's; then each side's
@@ -269,7 +274,7 @@
       // The lines do not depend on the home bonus: a market read for this season, night and
       // bar in the last minute is reused rather than asked for again (the server keeps the
       // lines longer).
-      const key = `${season}|${t.night}|${minReturn()}`;
+      const key = `${season}|${t.night}|${minReturn()}|${worthParam()}`;
       if (marketSeen.key === key && Date.now() - marketSeen.at < 60 * 1000) renderGames(marketSeen.market);
       else {
         renderGames(undefined);
@@ -374,8 +379,38 @@
     const b = e.target.closest('button[data-remove]'); if (!b) return;
     absences.splice(Number(b.dataset.remove), 1); renderAbsences();
   });
+  const sourceName = s => ({ worth: 'missed games', box: 'box score', blend: 'missed games and box score', draft: 'draft prior' })[s] || s || 'estimate';
+  // The what-ifs an answer was priced with, in words, for the Tonight note and the card.
+  const whatIfSentence = ws => (ws || []).length ? ` What-if: ${ws.map(w => `${w.name} at ${num(w.elo, 0)} Elo (${w.basis ? `${w.basis}; ` : ''}the model's estimate: ${w.current_elo == null ? 'none' : `${num(w.current_elo, 0)} from the ${sourceName(w.current_source)}`}), so ${w.team_code} ${w.shift_elo >= 0 ? '+' : '−'}${num(Math.abs(w.shift_elo), 0)}`).join('; ')}.` : '';
+  function renderWhatIfs() {
+    document.getElementById('whatIfs').innerHTML = whatIfs.map((w, i) =>
+      `<li>What-if: ${esc(w.name)} ${w.last_games ? `as in his ${w.last_games === 82 ? 'season so far' : w.last_games === 1 ? 'last game' : `last ${w.last_games} games`}` : `worth ${num(w.elo, 0)} Elo`} <button type="button" data-remove-whatif="${i}" class="small">remove</button></li>`).join('');
+  }
+  document.getElementById('whatIfs').addEventListener('click', e => {
+    const b = e.target.closest('button[data-remove-whatif]'); if (!b) return;
+    whatIfs.splice(Number(b.dataset.removeWhatif), 1); renderWhatIfs(); loadTonight();
+    if (cardAsked && document.getElementById('cardTeam').value) loadCard();
+  });
+  document.getElementById('wiAdd').addEventListener('click', () => {
+    const name = document.getElementById('wiName').value.trim();
+    const player = found.get(name);
+    const wiStatus = document.getElementById('wiStatus');
+    if (!player) { setStatus(wiStatus, 'Pick a player from the list first.', true); return; }
+    const basis = document.getElementById('wiBasis').value;
+    let entry;
+    if (basis === 'elo') {
+      const elo = parseFloat(document.getElementById('wiElo').value);
+      if (!Number.isFinite(elo) || Math.abs(elo) > 400) { setStatus(wiStatus, 'The worth must be a number of at most 400 Elo either way.', true); return; }
+      entry = { name, player_id: player.id, elo };
+    } else entry = { name, player_id: player.id, last_games: parseInt(basis.slice(4)) };
+    const existing = whatIfs.findIndex(w => w.player_id === player.id);
+    if (existing >= 0) { whatIfs[existing] = entry; setStatus(wiStatus, `${name} replaced.`); } else if (whatIfs.length >= 16) { setStatus(wiStatus, 'At most 16 what-ifs.', true); return; } else { whatIfs.push(entry); setStatus(wiStatus, ''); }
+    renderWhatIfs(); loadTonight();
+    if (cardAsked && document.getElementById('cardTeam').value) loadCard();
+  });
+  document.getElementById('wiBasis').addEventListener('change', e => { document.getElementById('wiEloLabel').hidden = e.target.value !== 'elo'; });
   let searchTimer = null;
-  document.getElementById('whoName').addEventListener('input', e => {
+  const searchNames = e => {
     const q = e.target.value.trim();
     clearTimeout(searchTimer);
     if (q.length < 2) return;
@@ -388,7 +423,9 @@
         document.getElementById('whoOptions').innerHTML = [...found.keys()].map(n => `<option value="${esc(n)}"></option>`).join('');
       } catch (err) { setStatus(whoStatus, err.message, true); }
     }, 250);
-  });
+  };
+  document.getElementById('whoName').addEventListener('input', searchNames);
+  document.getElementById('wiName').addEventListener('input', searchNames);
   document.getElementById('whoAdd').addEventListener('click', async () => {
     const name = document.getElementById('whoName').value.trim();
     const player = found.get(name);
@@ -426,6 +463,7 @@
     if (!document.getElementById('preseason').checked && document.getElementById('asOf').value) p.as_of = document.getElementById('asOf').value;
     if (document.getElementById('injuries').checked) p.use_injury_report = true;
     if (absences.length) p.absences = absences.map(a => ({ team_id: a.team_id, from: a.from, to: a.to, elo: a.elo, se_elo: a.se_elo, player_id: a.player_id }));
+    if (whatIfs.length) p.worth_overrides = whatIfs.map(w => w.last_games ? { player_id: w.player_id, last_games: w.last_games } : { player_id: w.player_id, elo: w.elo });
     if (document.getElementById('sampleWorth').checked) p.sample_worth = true;
     if (document.getElementById('holdAbsences').checked) p.hold_absences = true;
     const name = document.getElementById('name').value.trim(); if (name) p.name = name;

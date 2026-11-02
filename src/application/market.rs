@@ -317,14 +317,15 @@ fn unmatched_note(night: NaiveDate, lines_listed: usize, source: &str) -> String
     }
 }
 
-/// The market for the next night with games of `season`, beside the panel's games, with
-/// the bets that clear `min_return`.
+/// The market for the next night with games of `season`, beside the panel's games priced
+/// with the reader's `what_ifs`, with the bets that clear `min_return`.
 pub async fn tonight_market(
     app: &App,
     season: SeasonYear,
     min_return: f64,
+    what_ifs: &[worth::WhatIf],
 ) -> Result<Market, SeasonLoadError> {
-    let t = worth::tonight(app, season, None).await?;
+    let t = worth::tonight(app, season, None, what_ifs).await?;
     market_for(app, season, &t, min_return).await
 }
 
