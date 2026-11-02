@@ -248,6 +248,51 @@
     } catch (e) { note.textContent = `Tonight unavailable: ${e.message}`; document.getElementById('tonightGames').innerHTML = ''; document.getElementById('tonightTeams').innerHTML = ''; document.getElementById('tonightMarketNote').textContent = ''; }
   }
   document.getElementById('season').addEventListener('change', loadTonight);
+  // Model vs market: the stored snapshots of the season scored against the results.
+  let trackRequest = 0;
+  async function loadTrack() {
+    const season = parseInt(document.getElementById('season').value);
+    const note = document.getElementById('trackNote');
+    const mine = ++trackRequest;
+    try {
+      const r = await getJSON(`/api/seasons/${season}/market/track`);
+      if (mine !== trackRequest) return;
+      note.textContent = r.note ? r.note : `${labelOf(r.season)}: ${r.snapshots} game${r.snapshots === 1 ? '' : 's'} saved, ${r.scored} scored, ${r.pending} waiting for a result${r.unmatched ? `, ${r.unmatched} matching no stored game (a game moved to another date)` : ''}. The model saving now is ${r.current_model}.`;
+      const signedUnits = u => `${u > 0 ? '+' : u < 0 ? '−' : ''}${num(Math.abs(u), 2)}`;
+      const record = (w, l, p) => `${w}-${l}${p ? `-${p}` : ''}`;
+      const rows = r.scored ? [{ key: 'All games', ...r.overall }]
+        .concat(r.by_model.map(g => ({ ...g, key: `Model ${g.key}${g.key === r.current_model ? ' (now)' : ''}` })))
+        .concat(r.by_month.map(g => ({ ...g, key: `Month ${g.key}` }))) : [];
+      document.getElementById('trackSummary').innerHTML = rows.length ? table([
+        { label: 'Group', value: g => g.key, left: true },
+        { label: 'Games', value: g => g.games },
+        { label: 'Brier, model', value: g => g.priced ? num(g.brier_model, 3) : '', cls: g => g.priced && g.brier_model < g.brier_market ? 'good' : '', title: 'Mean squared error of the home chance against the result, over the games the sportsbook priced; lower is better' },
+        { label: 'Brier, market', value: g => g.priced ? num(g.brier_market, 3) : '' },
+        { label: 'Log loss, model', value: g => g.priced ? num(g.log_loss_model, 3) : '', cls: g => g.priced && g.log_loss_model < g.log_loss_market ? 'good' : '', title: 'Mean of minus the log of the chance the forecast gave to what happened; lower is better' },
+        { label: 'Log loss, market', value: g => g.priced ? num(g.log_loss_market, 3) : '' },
+        { label: 'Lean W-L', value: g => record(g.lean_won, g.lean_lost), title: 'The side whose chance the model put above the market\'s, bet on the moneyline' },
+        { label: 'Lean units', value: g => signedUnits(g.lean_units), cls: g => g.lean_units > 0 ? 'good' : g.lean_units < 0 ? 'bad' : '', title: 'One unit a game at the sportsbook\'s moneyline' },
+        { label: 'Per bet', value: g => (g.lean_won + g.lean_lost) ? signedUnits(g.lean_return) : '' },
+        { label: 'Spread W-L-P', value: g => record(g.spread_won, g.spread_lost, g.spread_push), title: 'The side the model\'s margin took against the sportsbook\'s spread' },
+        { label: 'Spread units', value: g => signedUnits(g.spread_units), cls: g => g.spread_units > 0 ? 'good' : g.spread_units < 0 ? 'bad' : '', title: 'One unit a game at the spread\'s price' },
+        { label: 'Per bet', value: g => (g.spread_won + g.spread_lost + g.spread_push) ? signedUnits(g.spread_return) : '' }], rows) : '';
+      const sideCode = (g, side) => side === 'home' ? g.snapshot.home_code : g.snapshot.away_code;
+      const bet = (side, result, g) => side ? `${sideCode(g, side)} ${{ won: 'won', lost: 'lost', push: 'push' }[result] || ''}` : '';
+      document.getElementById('trackGames').innerHTML = r.games.length ? table([
+        { label: 'Date', value: g => g.snapshot.game_date, left: true },
+        { label: 'Game', value: g => `${g.snapshot.away_code} ${g.away_score} @ ${g.snapshot.home_code} ${g.home_score}`, left: true },
+        { label: 'Model, home wins', value: g => pct(g.snapshot.p_home_model, 0), title: 'The model\'s home chance at the ratings the teams played at' },
+        { label: 'Market, home wins', value: g => g.snapshot.p_home_market == null ? '' : pct(g.snapshot.p_home_market, 0), title: 'The sportsbook\'s home chance with its margin taken out' },
+        { label: 'Spread', value: g => g.snapshot.home_spread == null ? '' : `${g.snapshot.home_code} ${g.snapshot.home_spread > 0 ? '+' : g.snapshot.home_spread < 0 ? '−' : ''}${num(Math.abs(g.snapshot.home_spread), 1)}`, title: 'The sportsbook\'s spread for the home team in the last save before the start' },
+        { label: 'Lean', value: g => bet(g.lean, g.lean_result, g), left: true },
+        { label: 'Units', value: g => g.lean_units == null ? '' : signedUnits(g.lean_units), cls: g => g.lean_units > 0 ? 'good' : g.lean_units < 0 ? 'bad' : '' },
+        { label: 'Spread bet', value: g => bet(g.spread_side, g.spread_result, g), left: true },
+        { label: 'Units', value: g => g.spread_units == null ? '' : signedUnits(g.spread_units), cls: g => g.spread_units > 0 ? 'good' : g.spread_units < 0 ? 'bad' : '' },
+        { label: 'Model', value: g => g.snapshot.model_version, left: true }], r.games) : '';
+    } catch (e) { if (mine === trackRequest) { note.textContent = `Model vs market unavailable: ${e.message}`; document.getElementById('trackSummary').innerHTML = ''; document.getElementById('trackGames').innerHTML = ''; } }
+  }
+  document.getElementById('season').addEventListener('change', loadTrack);
+  loadTrack();
   // A home bonus typed in the field prices the night and an open injury card again.
   document.getElementById('radv').addEventListener('change', () => {
     loadTonight();

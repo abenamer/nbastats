@@ -543,6 +543,10 @@ impl AbsenceStatus {
 
 /// Named in the availability answer.
 pub const BOX_CALIBRATION_VERSION: &str = "box-calibration-1.0";
+/// How a player's estimates over several seasons are pooled (`pool_seasons`, `pool_box`).
+pub const WORTH_POOLING_VERSION: &str = "worth-pooled-1.0";
+/// How a rating gap becomes points of margin: [`ELO_PER_POINT`] with the home bonus.
+pub const MARGIN_MODEL_VERSION: &str = "margin-28-elo-1.0";
 /// Fewer players with both estimates than this give no calibration.
 pub const MIN_CALIBRATION_PAIRS: usize = 30;
 /// The calibrated error never reads below this, in Elo: a floor against a lucky fit.

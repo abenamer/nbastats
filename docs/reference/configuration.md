@@ -37,6 +37,7 @@ sources:
 | `OPENROUTER_MODEL` | `openai/gpt-4o-mini` | The model the box asks through OpenRouter; it must support tool calling. |
 | `OPENROUTER_BASE_URL` | `https://openrouter.ai/api/v1` | Base URL of the OpenAI-compatible chat API. |
 | `GAME_REPORTS_ENABLED` | `true` | Look up game report links (the AP recaps ESPN hosts) for the games the Records page shows, see [Historical data](/concepts/historical-data.md), and read the night's sportsbook lines for the Tonight panel, see [ADR 0006](/decisions/0006-market-lines-from-espn-scoreboard.md). |
+| `MARKET_TRACKING_ENABLED` | `true` | With the ESPN feed on, save the model's numbers and the sportsbook's lines before each game's start every ten minutes, to score the model against the market; see [Market tracking](/concepts/market-tracking.md). |
 | `ESPN_BASE_URL` | `https://site.api.espn.com` | Base URL of ESPN's scoreboard feed, for the reports and the lines. |
 | `DB_MAX_CONNECTIONS` | `8` | Connection pool size. |
 | `DB_CONNECT_TIMEOUT_SECS` | `120` | How long the start waits for PostgreSQL. |

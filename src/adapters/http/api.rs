@@ -1261,6 +1261,18 @@ pub async fn season_tonight_market(
     Ok(Json(json!(m)))
 }
 
+/// The model against the market over a season: each stored snapshot scored once its game
+/// is played, overall, per model version and per month.
+pub async fn season_market_track(
+    State(app): State<AppState>,
+    Path(season): Path<SeasonYear>,
+) -> ApiResult<Value> {
+    let r = crate::application::tracking::record(&app, season)
+        .await
+        .map_err(season_load_error)?;
+    Ok(Json(json!(r)))
+}
+
 /// A team's injury card: every report line priced for it and the sum as listed and held.
 pub async fn injury_card(
     State(app): State<AppState>,

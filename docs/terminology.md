@@ -66,8 +66,10 @@ These are project-specific technical terms. They are not a reproduction of the A
 | Injury report | The source's list of players with a status (out, day-to-day, questionable), the expected return date and a description, stored once per day under the day it was fetched. |
 | Language model | A chat model with tool calling behind the `LanguageModel` port; the `OpenRouterModel` adapter calls it through OpenRouter's OpenAI-compatible API. |
 | League size | The number of teams of one league (NBA/BAA or ABA) in one season. |
+| Lean | In market tracking, the side whose win chance the model puts above the market's; scored as a one-unit bet at the sportsbook's moneyline. |
 | Lookup | One tool call the language model makes to read the stored data (tool, arguments, rows). It goes through a store port or the application's caches. The question box lists the lookups under each answer. |
 | Market wins | On the Tonight panel, the chance a sportsbook's two moneylines imply for a team once the bookmaker margin is taken out: its implied chance divided by the sum of both. Set beside the model's chance on the night. |
+| Market snapshot | One game's model numbers and sportsbook lines in the last capture before its start, with the model's version; scored after the result. See [Market tracking](concepts/market-tracking.md). |
 | Matchup (greatest, clanker) | A played game ranked by the combined Elo of the two teams before tip-off: the 20 highest are the greatest matchups; the lowest of each era, per league, is its clanker. |
 | Mean Elo | The mean season-end rating across a league in a season, averaged over a group's seasons. A check that the ratings hold their level between periods. |
 | NBA Cup | The in-season tournament, from 2023-24: six groups of five, a knockout of eight, a final on a neutral floor. The application keeps the dates of each Cup and derives the groups from the games on the group nights; see the [NBA Cup forecast](/concepts/nba-cup.md). |

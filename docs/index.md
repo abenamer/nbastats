@@ -35,6 +35,7 @@ This project follows the [REAS engineering standard](https://github.com/abenamer
 * [Era builder](concepts/era-builder.md) - How the facets on the Records page replay every record table over the seasons of chosen eras, and how the group panel computes one row of records per combination of dimensions.
 * [Parity profile](concepts/parity.md) - How the Records page measures, season by season, how far the champion, the finalists, the final four and the playoff field stood above their league, in Elo points and in standard deviations.
 * [Question box](concepts/question-box.md) - How the dashboard answers a question from the stored data through a language model with read-only tools, and what it refuses.
+* [Market tracking](concepts/market-tracking.md) - How each game's model numbers and sportsbook lines are saved before tip-off and scored after the result, per model version.
 
 # Runbooks
 
@@ -62,6 +63,7 @@ This project follows the [REAS engineering standard](https://github.com/abenamer
 * [ADR 0005 — Question box through OpenRouter](decisions/0005-question-box-via-openrouter.md) - Why the question box uses a hosted model through an OpenAI-compatible API with read-only tools.
 * [ADR 0006 — Market lines from ESPN's scoreboard](decisions/0006-market-lines-from-espn-scoreboard.md) - Why the Tonight panel reads the night's sportsbook lines from ESPN's free feed, not stored, instead of a paid odds service.
 * [ADR 0007 — Full-strength rating from a replayed season](decisions/0007-full-strength-rating.md) - Why tonight's absences are priced off a rating whose played games are replayed with each side's absences, instead of off the stored Elo.
+* [ADR 0008 — Track the model against the market](decisions/0008-track-the-model-against-the-market.md) - Why the model's numbers and the sportsbook's lines are stored before tip-off and scored after, amending ADR 0006.
 
 # History
 

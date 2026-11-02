@@ -17,7 +17,7 @@ ESPN's public scoreboard feed, which the application already reads for the game 
 ## Decision
 
 * One port, `MarketSource`, with one method: the lines for a date. The concrete adapter is `EspnScoreboard` (renamed from `EspnReportSource` with this decision), which already reads the same feed for `ReportSource`; one fetch routine serves either port, each making its own request.
-* `application::market::tonight_market` reads the lines for the Tonight panel's night when asked, one read at a time, and keeps them five minutes (a failed read one minute), so reloads and concurrent requests ask ESPN at most once per date in that time. It matches the lines to the night's games by team, the way the game reports match. Nothing is stored.
+* `application::market::tonight_market` reads the lines for the Tonight panel's night when asked, one read at a time, and keeps them five minutes (a failed read one minute), so reloads and concurrent requests ask ESPN at most once per date in that time. It matches the lines to the night's games by team, the way the game reports match. Nothing is stored. (Amended 2026-11-02 by [ADR 0008](0008-track-the-model-against-the-market.md): the last capture before each game's start is now stored and scored.)
 * `domain::market` reads a moneyline as the probability it implies and takes the bookmaker's margin out of a game's two moneylines by scaling them to add up to 1. The panel shows the sportsbook's spread, moneyline and that chance beside the model's, with the difference.
 * The lines use the existing switch: `GAME_REPORTS_ENABLED=false` turns them off with the reports. A source that is off or fails answers with a note, and the panel still shows the model.
 

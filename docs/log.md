@@ -1,5 +1,8 @@
 # Bundle update log
 
+## 2026-11-02
+* **New**: [Market tracking](/concepts/market-tracking.md) describes the snapshots, the capture and the scoring; [ADR 0008](/decisions/0008-track-the-model-against-the-market.md) records it and amends [ADR 0006](/decisions/0006-market-lines-from-espn-scoreboard.md); [ADR 0001](/decisions/0001-ports-at-three-boundaries.md) lists the fourteenth port; the schema, API and configuration references, the [Security model](/concepts/security.md) and the terms Lean and Market snapshot follow.
+
 ## 2026-11-01
 * **Update**: [Player worth](/concepts/player-worth.md) pools the seasons of a worth and of a box worth and describes the full-strength rating; [ADR 0007](/decisions/0007-full-strength-rating.md) records it. The [Season forecast engine](/concepts/season-engine.md), the [Question box](/concepts/question-box.md), the API and jobs references and the term Full-strength rating follow.
 * **New**: [ADR 0006](/decisions/0006-market-lines-from-espn-scoreboard.md) records reading the night's sportsbook lines from ESPN's scoreboard. [Season forecast engine](/concepts/season-engine.md) describes the market columns of the Tonight panel; [ADR 0001](/decisions/0001-ports-at-three-boundaries.md) lists the thirteenth port; the [Security model](/concepts/security.md), the API and configuration references and the terms Bookmaker margin and Market wins follow.
