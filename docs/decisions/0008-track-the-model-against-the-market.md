@@ -24,7 +24,7 @@ generated: { by: "human:abenamer", at: "2026-11-02T09:00:00Z" }
 * The record starts on the day tracking is first on. Earlier games have no lines to score.
 * A model change shows as a new version with its own row, so its effect can be read from the record once it has games.
 * The application makes one ESPN request every ten minutes while it runs, besides the page's own reads.
-* The market source stays swappable: a paid odds service would be another `MarketSource` adapter, and the snapshots name their sportsbook and source.
+* The market source stays swappable: a paid odds service would be another `MarketSource` adapter, and the snapshots name their sportsbook and source. (Done 2026-11-02 by [ADR 0009](0009-market-lines-from-the-odds-api.md), which also limits the captures to the night's date.)
 
 ## Alternatives
 

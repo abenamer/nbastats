@@ -1,10 +1,12 @@
-//! Tonight beside the market: the night's sportsbook lines, read from the market source
-//! (ESPN's scoreboard, which carries one sportsbook's lines for games not yet played), set
-//! against the Tonight panel's games. Each game gets the sportsbook's spread, moneylines
-//! and total, and the chances its moneylines imply with the bookmaker's margin taken out
-//! (`domain::market`). Nothing is stored: the lines are read when asked for and kept
-//! `LINES_TTL` (a failure `FAILURE_TTL`), one read at a time, so reloads and concurrent
-//! requests ask the source at most once per date in that time.
+//! Tonight beside the market: the night's sportsbook lines, read from the market source,
+//! set against the Tonight panel's games. The source is The Odds API with the sportsbook
+//! of the configuration when a key is set, else ESPN's scoreboard, which carries one
+//! sportsbook's lines for games not yet played; a failed read of The Odds API falls back
+//! to ESPN. Each game gets the sportsbook's spread, moneylines and total, and the chances
+//! its moneylines imply with the bookmaker's margin taken out (`domain::market`). The
+//! lines are read when asked for and kept `LINES_TTL` (a failure `FAILURE_TTL`), one read
+//! at a time, so reloads and concurrent requests ask a source at most once per date in
+//! that time; `application::tracking` stores the last read before each game's start.
 
 use std::collections::HashMap;
 use std::sync::{Arc, PoisonError};
@@ -14,6 +16,7 @@ use chrono::{DateTime, NaiveDate, Utc};
 use serde::Serialize;
 use tracing::warn;
 
+use crate::adapters::odds_api::Quota;
 use crate::domain::ids::SeasonYear;
 use crate::domain::market;
 
@@ -35,14 +38,16 @@ pub struct LinesUnavailable;
 
 /// What a read of a date gave: the lines with when they were read, or that it failed.
 type Read = Result<(DateTime<Utc>, Arc<Vec<MarketLine>>), LinesUnavailable>;
+/// The reads kept, by source name and date, with when each was made.
+type Entries = HashMap<(&'static str, NaiveDate), (Instant, Read)>;
 
-/// The lines read per date, kept for a while, with one read from the source at a time: a
-/// request that finds no fresh entry waits its turn, then looks again before asking. The
-/// one slot serves every date; the panel reads one night, so a per-date slot would buy
-/// nothing but code.
+/// The lines read per source and date, kept for a while, with one read from a source at
+/// a time: a request that finds no fresh entry waits its turn, then looks again before
+/// asking. The one slot serves every date and source; the panel reads one night, so a
+/// per-date slot would buy nothing but code.
 #[derive(Debug)]
 pub struct LinesCache {
-    entries: std::sync::Mutex<HashMap<NaiveDate, (Instant, Read)>>,
+    entries: std::sync::Mutex<Entries>,
     slot: tokio::sync::Mutex<()>,
     ttl: Duration,
     failure_ttl: Duration,
@@ -64,9 +69,9 @@ impl LinesCache {
         }
     }
 
-    fn fresh(&self, date: NaiveDate) -> Option<Read> {
+    fn fresh(&self, key: (&'static str, NaiveDate)) -> Option<Read> {
         let entries = self.entries.lock().unwrap_or_else(PoisonError::into_inner);
-        let (at, read) = entries.get(&date)?;
+        let (at, read) = entries.get(&key)?;
         let ttl = if read.is_ok() {
             self.ttl
         } else {
@@ -75,20 +80,21 @@ impl LinesCache {
         (at.elapsed() < ttl).then(|| read.clone())
     }
 
-    /// The lines for `date`: kept ones while fresh, else one read from `source`.
+    /// The lines for `date` from `source`: kept ones while fresh, else one read.
     pub async fn lines<M: MarketSource>(&self, source: &M, date: NaiveDate) -> Read {
-        if let Some(read) = self.fresh(date) {
+        let key = (source.name(), date);
+        if let Some(read) = self.fresh(key) {
             return read;
         }
         let _turn = self.slot.lock().await;
         // Another request may have read the date while this one waited.
-        if let Some(read) = self.fresh(date) {
+        if let Some(read) = self.fresh(key) {
             return read;
         }
         let read: Read = match source.lines_on(date).await {
             Ok(lines) => Ok((Utc::now(), Arc::new(lines))),
             Err(e) => {
-                warn!(%date, error = %e, "market lines could not be read");
+                warn!(source = source.name(), %date, error = %e, "market lines could not be read");
                 Err(LinesUnavailable)
             }
         };
@@ -96,7 +102,7 @@ impl LinesCache {
         // Only recent dates are kept: the night changes once a day.
         let keep = self.ttl.max(self.failure_ttl);
         entries.retain(|_, (at, _)| at.elapsed() < keep);
-        entries.insert(date, (Instant::now(), read.clone()));
+        entries.insert(key, (Instant::now(), read.clone()));
         read
     }
 }
@@ -130,6 +136,12 @@ pub struct Market {
     pub night: Option<NaiveDate>,
     /// When the lines were read from the source.
     pub read_at: Option<DateTime<Utc>>,
+    /// The source the lines were read from (`the-odds-api` or `espn`), none when no
+    /// source answered; `source_note` says when it is not the first choice.
+    pub source: Option<&'static str>,
+    pub source_note: Option<String>,
+    /// The Odds API's credits as its latest answer reported them, when it is configured.
+    pub quota: Option<Quota>,
     pub games: Vec<GameMarket>,
     /// Why there are no lines, when there are none.
     pub note: Option<String>,
@@ -196,12 +208,18 @@ fn priced(game_id: i64, l: &MarketLine, turned: bool) -> GameMarket {
     }
 }
 
-/// Why a night read from the source has no line for any of its games.
-fn unmatched_note(night: NaiveDate, lines_listed: usize) -> String {
-    if lines_listed == 0 {
-        format!("the source lists no lines for {night}: they appear before a game and go once it starts")
-    } else {
-        format!("none of the source's {lines_listed} lines for {night} matched the night's games")
+/// Why a night read from the source has no line for any of its games. ESPN lists a line
+/// before a game and drops it once the game starts; The Odds API lists the coming games
+/// as the sportsbook prices them.
+fn unmatched_note(night: NaiveDate, lines_listed: usize, source: &str) -> String {
+    match (lines_listed, source) {
+        (0, "espn") => format!(
+            "ESPN's scoreboard lists no lines for {night}: they appear before a game and go once it starts"
+        ),
+        (0, _) => format!(
+            "The Odds API lists no lines for {night}: the sportsbook has not priced the games yet"
+        ),
+        (n, _) => format!("none of the source's {n} lines for {night} matched the night's games"),
     }
 }
 
@@ -211,6 +229,63 @@ pub async fn tonight_market(app: &App, season: SeasonYear) -> Result<Market, Sea
     market_for(app, season, &t).await
 }
 
+/// Whether any market source is configured.
+pub fn has_source(app: &App) -> bool {
+    app.odds.is_some() || app.reports.is_some()
+}
+
+/// The lines for `night` from the first source that answers: The Odds API when a key is
+/// set, else, or when its read fails, ESPN's scoreboard. The read's source comes with it.
+async fn read_lines(
+    app: &App,
+    night: NaiveDate,
+) -> Result<
+    (
+        DateTime<Utc>,
+        Arc<Vec<MarketLine>>,
+        &'static str,
+        Option<String>,
+    ),
+    String,
+> {
+    let mut fell_back = None;
+    if let Some(odds) = app.odds.as_ref() {
+        match app.market_lines.lines(odds, night).await {
+            Ok((read_at, lines)) => return Ok((read_at, lines, odds.name(), None)),
+            Err(LinesUnavailable) if app.reports.is_some() => {
+                fell_back = Some(
+                    "The Odds API could not be read, so the lines are ESPN's scoreboard's"
+                        .to_string(),
+                );
+            }
+            Err(LinesUnavailable) => {
+                return Err(format!(
+                    "the lines could not be read from The Odds API; the next try is within {} seconds",
+                    FAILURE_TTL.as_secs()
+                ));
+            }
+        }
+    }
+    let Some(espn) = app.reports.as_ref() else {
+        return Err(
+            "no market source is configured: set ODDS_API_KEY, or turn ESPN's scoreboard on (GAME_REPORTS_ENABLED=true)"
+                .to_string(),
+        );
+    };
+    match app.market_lines.lines(espn, night).await {
+        Ok((read_at, lines)) => Ok((read_at, lines, espn.name(), fell_back)),
+        Err(LinesUnavailable) => Err(format!(
+            "the lines could not be read from {}; the next try is within {} seconds",
+            if fell_back.is_some() {
+                "The Odds API, nor from ESPN's scoreboard"
+            } else {
+                "ESPN's scoreboard"
+            },
+            FAILURE_TTL.as_secs()
+        )),
+    }
+}
+
 /// The market for the night of `t`, the Tonight panel already computed, so a caller that
 /// has it does not compute it again.
 pub async fn market_for(
@@ -218,10 +293,14 @@ pub async fn market_for(
     season: SeasonYear,
     t: &worth::Tonight,
 ) -> Result<Market, SeasonLoadError> {
+    // The credits are read when the market is built, so a refused read shows its count.
     let empty = |note: String| Market {
         season,
         night: t.night,
         read_at: None,
+        source: None,
+        source_note: None,
+        quota: app.odds.as_ref().and_then(|o| o.quota()),
         games: Vec::new(),
         note: Some(note),
     };
@@ -230,17 +309,9 @@ pub async fn market_for(
             "no regular-season game remains, so there are no lines to compare".to_string(),
         ));
     };
-    let Some(source) = app.reports.as_ref() else {
-        return Ok(empty(
-            "the market lines come from ESPN's scoreboard, which is off (GAME_REPORTS_ENABLED=false)"
-                .to_string(),
-        ));
-    };
-    let Ok((read_at, lines)) = app.market_lines.lines(source, night).await else {
-        return Ok(empty(format!(
-            "the lines could not be read from ESPN's scoreboard; the next try is within {} seconds",
-            FAILURE_TTL.as_secs()
-        )));
+    let (read_at, lines, source, source_note) = match read_lines(app, night).await {
+        Ok(read) => read,
+        Err(note) => return Ok(empty(note)),
     };
     let by_name: HashMap<String, String> = app
         .store
@@ -250,11 +321,16 @@ pub async fn market_for(
         .map(|(code, team)| (team.name.trim().to_ascii_lowercase(), code))
         .collect();
     let games = match_lines(&lines, &t.games, &by_name);
-    let note = games.is_empty().then(|| unmatched_note(night, lines.len()));
+    let note = games
+        .is_empty()
+        .then(|| unmatched_note(night, lines.len(), source));
     Ok(Market {
         season,
         night: Some(night),
         read_at: Some(read_at),
+        source: Some(source),
+        source_note,
+        quota: app.odds.as_ref().and_then(|o| o.quota()),
         games,
         note,
     })
@@ -318,6 +394,10 @@ mod tests {
     }
 
     impl MarketSource for Counting {
+        fn name(&self) -> &'static str {
+            "counting"
+        }
+
         async fn lines_on(
             &self,
             _date: NaiveDate,
@@ -372,8 +452,10 @@ mod tests {
     #[test]
     fn a_night_without_matched_lines_says_why() {
         let d = NaiveDate::from_ymd_opt(2026, 11, 1).unwrap();
-        assert!(unmatched_note(d, 0).contains("no lines for 2026-11-01"));
-        assert!(unmatched_note(d, 3).contains("none of the source's 3 lines"));
+        assert!(unmatched_note(d, 0, "espn")
+            .contains("ESPN's scoreboard lists no lines for 2026-11-01"));
+        assert!(unmatched_note(d, 0, "the-odds-api").contains("not priced the games yet"));
+        assert!(unmatched_note(d, 3, "espn").contains("none of the source's 3 lines"));
     }
 
     #[test]

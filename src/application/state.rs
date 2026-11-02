@@ -13,6 +13,7 @@ use uuid::Uuid;
 use crate::adapters::balldontlie::BalldontlieSource;
 use crate::adapters::dataset::HttpDatasetSource;
 use crate::adapters::espn::EspnScoreboard;
+use crate::adapters::odds_api::OddsApi;
 use crate::adapters::openrouter::OpenRouterModel;
 use crate::adapters::postgres::PostgresStore;
 use crate::application::players::PlayerPhase;
@@ -64,8 +65,11 @@ pub struct App {
     pub model: Option<OpenRouterModel>,
     /// Questions answered at the same time; the rest get status 429.
     pub ask_slots: tokio::sync::Semaphore,
-    /// Game report source; `None` when the lookups are turned off.
+    /// Game report source, and the market lines when there is no Odds API key; `None`
+    /// when the lookups are turned off.
     pub reports: Option<EspnScoreboard>,
+    /// The Odds API, the first market source; `None` until a key is configured.
+    pub odds: Option<OddsApi>,
     /// One report lookup at a time; a request that finds it taken answers from the store.
     pub report_slot: tokio::sync::Semaphore,
     /// One backward reading of a title record at a time (seconds of exact brackets); the
@@ -115,9 +119,21 @@ pub struct App {
         RwLock<HashMap<SeasonYear, Arc<crate::domain::full_strength::MissingElo>>>,
     /// The sportsbook lines read per date, kept a while, one read at a time.
     pub(crate) market_lines: super::market::LinesCache,
+    /// What the capture task remembers between runs.
+    pub(crate) tracking: std::sync::Mutex<super::tracking::Progress>,
     /// Counts the cache invalidations, so a load that began before one is not cached after it.
     pub(crate) cache_generation: AtomicU64,
     teams: RwLock<Option<Arc<HashMap<TeamId, Team>>>>,
+}
+
+/// The outbound adapters that need a key or a switch, each `None` when not configured.
+#[derive(Debug, Default)]
+pub struct Outbound {
+    pub results: Option<BalldontlieSource>,
+    pub sync_schedule: Option<SyncSchedule>,
+    pub model: Option<OpenRouterModel>,
+    pub reports: Option<EspnScoreboard>,
+    pub odds: Option<OddsApi>,
 }
 
 impl App {
@@ -125,11 +141,15 @@ impl App {
         config: Config,
         store: PostgresStore,
         source: HttpDatasetSource,
-        results: Option<BalldontlieSource>,
-        sync_schedule: Option<SyncSchedule>,
-        model: Option<OpenRouterModel>,
-        reports: Option<EspnScoreboard>,
+        outbound: Outbound,
     ) -> Self {
+        let Outbound {
+            results,
+            sync_schedule,
+            model,
+            reports,
+            odds,
+        } = outbound;
         Self {
             config,
             store,
@@ -139,6 +159,7 @@ impl App {
             model,
             ask_slots: tokio::sync::Semaphore::new(ASK_SLOTS),
             reports,
+            odds,
             report_slot: tokio::sync::Semaphore::new(1),
             strength_slot: tokio::sync::Semaphore::new(1),
             research_slot: tokio::sync::Semaphore::new(1),
@@ -162,6 +183,7 @@ impl App {
             draft_tables: RwLock::new(HashMap::new()),
             played_absences: RwLock::new(HashMap::new()),
             market_lines: super::market::LinesCache::default(),
+            tracking: std::sync::Mutex::new(super::tracking::Progress::default()),
             cache_generation: AtomicU64::new(0),
             teams: RwLock::new(None),
         }
@@ -247,16 +269,11 @@ impl App {
         Ok(fitted)
     }
 
-    /// Today's date in the configured sync time zone (`RESULTS_SYNC_TIMEZONE`, whether or
-    /// not the daily sync is on): the last day a results sync asks the source for.
+    /// Today's date as the league dates its games (Eastern time, `domain::calendar`): the
+    /// date the night's games are read for and the last day a results sync asks the source
+    /// for. The sync's own clock time keeps its configured zone.
     pub fn today(&self) -> chrono::NaiveDate {
-        let zone: chrono_tz::Tz = self
-            .config
-            .results_sync_timezone
-            .trim()
-            .parse()
-            .unwrap_or(chrono_tz::America::New_York);
-        chrono::Utc::now().with_timezone(&zone).date_naive()
+        crate::domain::calendar::league_date(chrono::Utc::now())
     }
 
     pub fn sync_phase(&self) -> SyncPhase {

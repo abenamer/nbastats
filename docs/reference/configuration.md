@@ -30,15 +30,18 @@ sources:
 | `BALLDONTLIE_REQUESTS_PER_MINUTE` | `5` | Request pacing for the plan's quota: 5 on the free tier, 60 on ALL-STAR, 600 on GOAT (the API's pricing page, read 2026-10-26). |
 | `RESULTS_SYNC_ENABLED` | `true` | Daily sync of the current season (needs the API key). |
 | `RESULTS_SYNC_TIME` | `04:00` | Wall-clock time of the daily sync, `HH:MM`. |
-| `RESULTS_SYNC_TIMEZONE` | `America/New_York` | IANA time zone of the daily sync. Daylight saving time is applied. |
+| `RESULTS_SYNC_TIMEZONE` | `America/New_York` | IANA time zone of the daily sync's clock time. Daylight saving time is applied. The dates the application and its commands read as today, and the games' dates, are the league's (Eastern time) whatever this zone. |
 | `PLAYER_SYNC_ENABLED` | `true` | After the daily results sync, fetch the current season's box scores, today's injury report and the rosters; see [Player data](/concepts/player-data.md). Needs the daily sync. |
 | `PLAYER_BACKFILL_FROM` | none | A season end year (1947 for every season). When set, a background loop backfills the box scores of every season from it to the current one, season by season, until nothing is left. It retries after a failure and resumes after a restart; then the daily sync takes over. Needs the API key. |
 | `OPENROUTER_API_KEY` | none | API key for the [question box](/concepts/question-box.md). When unset, the box is off. |
 | `OPENROUTER_MODEL` | `openai/gpt-4o-mini` | The model the box asks through OpenRouter; it must support tool calling. |
 | `OPENROUTER_BASE_URL` | `https://openrouter.ai/api/v1` | Base URL of the OpenAI-compatible chat API. |
-| `GAME_REPORTS_ENABLED` | `true` | Look up game report links (the AP recaps ESPN hosts) for the games the Records page shows, see [Historical data](/concepts/historical-data.md), and read the night's sportsbook lines for the Tonight panel, see [ADR 0006](/decisions/0006-market-lines-from-espn-scoreboard.md). |
-| `MARKET_TRACKING_ENABLED` | `true` | With the ESPN feed on, save the model's numbers and the sportsbook's lines before each game's start every ten minutes, to score the model against the market; see [Market tracking](/concepts/market-tracking.md). |
+| `GAME_REPORTS_ENABLED` | `true` | Look up game report links (the AP recaps ESPN hosts) for the games the Records page shows, see [Historical data](/concepts/historical-data.md), and read the night's sportsbook lines for the Tonight panel when there is no Odds API key or its read fails, see [ADR 0006](/decisions/0006-market-lines-from-espn-scoreboard.md). |
+| `MARKET_TRACKING_ENABLED` | `true` | With a market source (The Odds API or the ESPN feed), save the model's numbers and the sportsbook's lines before each game's start every ten minutes on the night's date, to score the model against the market; see [Market tracking](/concepts/market-tracking.md). |
 | `ESPN_BASE_URL` | `https://site.api.espn.com` | Base URL of ESPN's scoreboard feed, for the reports and the lines. |
+| `ODDS_API_KEY` | none | API key for The Odds API. When set, the Tonight panel and the market tracking read the chosen sportsbook's lines from it, with ESPN as the fallback; see [ADR 0009](/decisions/0009-market-lines-from-the-odds-api.md). A read costs three credits (one per market); a game day of tracking about 400. |
+| `ODDS_API_BOOKMAKER` | `fanduel` | The sportsbook whose lines The Odds API is asked for, by its key at the service (`fanduel`, `draftkings`, `betmgm`, ...): lowercase letters, digits and underscores. |
+| `ODDS_API_BASE_URL` | `https://api.the-odds-api.com` | Base URL of The Odds API. |
 | `DB_MAX_CONNECTIONS` | `8` | Connection pool size. |
 | `DB_CONNECT_TIMEOUT_SECS` | `120` | How long the start waits for PostgreSQL. |
 | `SIM_THREADS` | number of CPUs | Rayon thread count. |

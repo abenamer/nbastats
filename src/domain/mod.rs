@@ -2,6 +2,7 @@
 //! depends on Axum, SQLx, HTTP or Docker (REAS-ARCH-002).
 pub mod backtesting;
 pub mod bpm;
+pub mod calendar;
 pub mod cba;
 pub mod continuation;
 pub mod cup;

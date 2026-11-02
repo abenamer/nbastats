@@ -45,9 +45,14 @@ pub struct Config {
     /// Look up game report links (the AP recaps ESPN hosts) for the games the pages show.
     pub game_reports_enabled: bool,
     /// Keep a snapshot of the model and the sportsbook lines before each game's start, to
-    /// score the model against the market (needs the ESPN feed on).
+    /// score the model against the market (needs a market source).
     pub market_tracking_enabled: bool,
     pub espn_base_url: String,
+    /// The Odds API key for the market lines; `None` leaves them to ESPN's scoreboard.
+    pub odds_api_key: Option<String>,
+    pub odds_api_base_url: String,
+    /// The sportsbook whose lines The Odds API is asked for, by its key there.
+    pub odds_api_bookmaker: String,
 }
 
 impl Config {
@@ -155,6 +160,20 @@ impl Config {
             .map(|u| u.trim().to_string())
             .filter(|u| !u.is_empty())
             .unwrap_or_else(|| "https://site.api.espn.com".to_string());
+        let odds_api_key = env::var("ODDS_API_KEY")
+            .ok()
+            .map(|k| k.trim().to_string())
+            .filter(|k| !k.is_empty());
+        let odds_api_base_url = env::var("ODDS_API_BASE_URL")
+            .ok()
+            .map(|u| u.trim().to_string())
+            .filter(|u| !u.is_empty())
+            .unwrap_or_else(|| "https://api.the-odds-api.com".to_string());
+        let odds_api_bookmaker = env::var("ODDS_API_BOOKMAKER")
+            .ok()
+            .map(|b| b.trim().to_ascii_lowercase())
+            .filter(|b| !b.is_empty())
+            .unwrap_or_else(|| "fanduel".to_string());
         Ok(Self {
             database_url,
             bind_addr,
@@ -182,6 +201,9 @@ impl Config {
             game_reports_enabled,
             market_tracking_enabled,
             espn_base_url,
+            odds_api_key,
+            odds_api_base_url,
+            odds_api_bookmaker,
         })
     }
 
@@ -253,6 +275,9 @@ mod tests {
             game_reports_enabled: false,
             market_tracking_enabled: false,
             espn_base_url: String::new(),
+            odds_api_key: None,
+            odds_api_base_url: String::new(),
+            odds_api_bookmaker: String::new(),
         }
     }
 
