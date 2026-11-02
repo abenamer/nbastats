@@ -1,10 +1,12 @@
-//! The model against the market, kept and scored. A background task captures, every
-//! [`CAPTURE_EVERY`], the Tonight panel's games that the market source prices and that have
-//! not started: the model's numbers and the sportsbook's lines, with the model's version
-//! (`domain::tracking`). The last capture before a game's start stands for it. The track
+//! The model against the market, kept and scored. A background task captures the Tonight
+//! panel's games that the market source prices and that have not started: the model's
+//! numbers and the sportsbook's lines, with the model's version (`domain::tracking`). It
+//! reads the market once when the night's date comes, to learn the tip-off times, then
+//! once in the last [`READ_LEAD`] before each tip-off, so each game's stored line is
+//! the one just before its start and a night costs a read per tip-off time. The track
 //! record scores each stored game once its result is in, per model version and per month.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::{Arc, PoisonError};
 use std::time::Duration;
 
@@ -21,38 +23,85 @@ use super::scheduler::current_season;
 use super::state::{App, SeasonLoadError};
 use super::worth::{self, Tonight};
 
-/// How often the night's lines are captured; the last capture before a game's start is
-/// at most this old, plus the lines' five minutes in the cache.
+/// How often the task looks whether a read is due.
 pub const CAPTURE_EVERY: Duration = Duration::from_secs(10 * 60);
+/// How far ahead a tip-off is read before: one look plus a minute, so a tip-off that falls
+/// between two looks is read at the earlier one, not after the start. A game's stored
+/// line is at most this old at the tip-off, plus the lines' five minutes in the cache.
+pub const READ_LEAD: Duration = Duration::from_secs(11 * 60);
+/// How long after a read that priced no game of the night the next look comes: the
+/// sportsbook posts its lines hours before a game, so an hourly look finds them in time
+/// without spending a read on every look.
+pub const RETRY_EMPTY_AFTER: Duration = Duration::from_secs(60 * 60);
 /// The most scored games the record lists, latest first.
 pub const MAX_GAMES_LISTED: usize = 300;
 
-/// What the capture task remembers between runs: the night whose games have all started,
-/// so no further read of it can add a snapshot, and the day the credits were last warned
-/// about.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+/// What the capture task remembers between runs: the night it has read, the tip-off
+/// times still to be read before, the ones already served, and the day the credits were
+/// last warned about.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct Progress {
-    pub settled_night: Option<NaiveDate>,
+    pub night: Option<NaiveDate>,
+    /// The distinct future tip-off times of the night's priced games, earliest first.
+    pub pending: Vec<DateTime<Utc>>,
+    /// The tip-off times a read has been made before.
+    pub served: Vec<DateTime<Utc>>,
+    /// When to look again after a read that priced none of the night's games.
+    pub retry_at: Option<DateTime<Utc>>,
     pub warned_on: Option<NaiveDate>,
 }
 
-/// Whether a read shows the night over for the capture: every game of the night has
-/// started, either by its line in the read or, for a game the answer no longer lists (The
-/// Odds API drops a game once it is over), by the start time its stored snapshot recorded,
-/// now past. A game with a line not yet started, or never priced and never stored, keeps
-/// the night open, since a line may still come.
-pub fn night_settled(t: &Tonight, m: &Market, kept: &[Snapshot], now: DateTime<Utc>) -> bool {
-    let listed: HashMap<i64, bool> = m.games.iter().map(|g| (g.game_id, g.started)).collect();
-    let tipped: HashSet<(&str, &str)> = kept
-        .iter()
-        .filter(|s| s.start_time.is_some_and(|start| start <= now))
-        .map(|s| (s.home_code.as_str(), s.away_code.as_str()))
-        .collect();
-    !t.games.is_empty()
-        && t.games.iter().all(|g| match listed.get(&g.game.game_id) {
-            Some(started) => *started,
-            None => tipped.contains(&(g.home_code.as_str(), g.away_code.as_str())),
-        })
+impl Progress {
+    /// Whether a read is due at `now` for `night`: the first read of the night, a pending
+    /// tip-off within [`READ_LEAD`] (the last look before it), or the retry after a read
+    /// that priced nothing. A failed read records nothing, so the next look tries again.
+    pub fn read_due(&self, night: NaiveDate, now: DateTime<Utc>) -> bool {
+        self.night != Some(night)
+            || self
+                .pending
+                .first()
+                .is_some_and(|tip| now + READ_LEAD >= *tip)
+            || self.retry_at.is_some_and(|at| now >= at)
+    }
+
+    /// Mark `night` as the one in hand, forgetting the one before.
+    fn turn_to(&mut self, night: NaiveDate) {
+        if self.night != Some(night) {
+            self.night = Some(night);
+            self.pending.clear();
+            self.served.clear();
+            self.retry_at = None;
+        }
+    }
+
+    /// Record a day with nothing to read (no game, or every game played), so the looks
+    /// that follow cost nothing until the date changes.
+    pub fn nothing_today(&mut self, today: NaiveDate) {
+        self.turn_to(today);
+    }
+
+    /// Record an answered read of `night` at `now`: the tip-offs within [`READ_LEAD`] are
+    /// served by it, and the pending ones are the lines' later start times, each once. A
+    /// read that priced none of the night's games, or priced one without a start time,
+    /// sets the hourly retry as well, so the night is looked at again once the sportsbook
+    /// may have posted its lines or the source its times; a game priced after the last
+    /// read of the night is not stored.
+    pub fn after_read(&mut self, night: NaiveDate, m: &Market, now: DateTime<Utc>) {
+        self.turn_to(night);
+        let untimed = m.games.iter().any(|g| g.start_time.is_none());
+        self.retry_at = (m.games.is_empty() || untimed).then(|| now + RETRY_EMPTY_AFTER);
+        let horizon = now + READ_LEAD;
+        let (served, mut pending): (Vec<_>, Vec<_>) =
+            self.pending.drain(..).partition(|tip| *tip <= horizon);
+        self.served.extend(served);
+        for tip in m.games.iter().filter_map(|g| g.start_time) {
+            if tip > horizon && !self.served.contains(&tip) && !pending.contains(&tip) {
+                pending.push(tip);
+            }
+        }
+        pending.sort();
+        self.pending = pending;
+    }
 }
 
 /// The snapshots of the night of `t` from its market `m`: each game the market prices
@@ -123,47 +172,60 @@ pub fn build_snapshots(
 }
 
 /// Capture the night's games of `season` that the market prices and that have not
-/// started, when the night is today (the league's date) and no read has yet shown every
-/// game started: only the last capture before a game's start stands, and every game of a
-/// date tips off on that date, so a read on an earlier day buys nothing and costs the
-/// source's credits, and a read once the date has passed, or once every game is under way,
-/// finds nothing to keep. Returns how many snapshots were written.
+/// started, when the night is today (the league's date) and a read is due: the first of
+/// the night, which learns the tip-off times, or the last look before a tip-off. Only the
+/// last capture before a game's start stands, and every game of a date tips off on that
+/// date, so any other read buys nothing and costs the source's credits. Returns how many
+/// snapshots were written.
 pub async fn capture(app: &App, season: SeasonYear) -> Result<u64, SeasonLoadError> {
     if !market::has_source(app) {
         return Ok(0);
     }
-    let t = worth::tonight(app, season, None).await?;
     let today = app.today();
-    let settled = app
+    let now = Utc::now();
+    let due = app
         .tracking
         .lock()
         .unwrap_or_else(PoisonError::into_inner)
-        .settled_night;
-    if t.night != Some(today) || settled == t.night {
+        .read_due(today, now);
+    if !due {
+        return Ok(0);
+    }
+    let t = worth::tonight(app, season, None).await?;
+    if t.night != Some(today) {
+        app.tracking
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .nothing_today(today);
         return Ok(0);
     }
     let m = market::market_for(app, season, &t).await?;
-    let kept: Vec<Snapshot> = app
-        .store
-        .snapshots(season)
-        .await?
-        .into_iter()
-        .filter(|s| Some(s.game_date) == t.night)
-        .collect();
+    // A read that got no answer records nothing: the next look tries again, the source's
+    // one-minute failure memory keeping the tries apart.
+    if m.read_at.is_none() {
+        return Ok(0);
+    }
     {
         let mut progress = app.tracking.lock().unwrap_or_else(PoisonError::into_inner);
-        if night_settled(&t, &m, &kept, Utc::now()) {
-            info!(night = %today, "every game of the night has started; no further read until the night changes");
-            progress.settled_night = t.night;
-        }
+        progress.after_read(today, &m, now);
+        info!(
+            night = %today,
+            priced = m.games.len(),
+            tip_offs_ahead = progress.pending.len(),
+            "market read; the next reads come just before each tip-off"
+        );
         if let Some(q) = m.quota {
-            if progress.warned_on != Some(today) && credits_short(&q) {
+            let reads_left_tonight = progress.pending.len() as u64;
+            if reads_left_tonight > 0
+                && progress.warned_on != Some(today)
+                && credits_short(&q, reads_left_tonight)
+            {
                 progress.warned_on = Some(today);
                 warn!(
                     remaining = q.remaining,
                     cost_per_read = q.last_cost,
-                    reads_per_day = reads_per_day(),
-                    "The Odds API credits cover less than a day of captures"
+                    reads_left_tonight,
+                    "The Odds API credits do not cover the rest of the night"
                 );
             }
         }
@@ -175,22 +237,18 @@ pub async fn capture(app: &App, season: SeasonYear) -> Result<u64, SeasonLoadErr
     Ok(app.store.save_snapshots(&snapshots).await?)
 }
 
-/// Reads of the market a day of captures makes.
-fn reads_per_day() -> u64 {
-    (24 * 60 * 60) / CAPTURE_EVERY.as_secs().max(1)
-}
-
-/// Whether The Odds API's remaining credits cover less than a day of captures at the cost
-/// of its last answer.
-pub fn credits_short(q: &crate::adapters::odds_api::Quota) -> bool {
+/// Whether The Odds API's remaining credits cover fewer than `reads` more reads at the
+/// cost of its last answer.
+pub fn credits_short(q: &crate::adapters::odds_api::Quota, reads: u64) -> bool {
     match (q.remaining, q.last_cost) {
-        (Some(remaining), Some(cost)) => remaining < reads_per_day().saturating_mul(cost.max(1)),
+        (Some(remaining), Some(cost)) => remaining < reads.saturating_mul(cost.max(1)),
         _ => false,
     }
 }
 
-/// Background task: capture the current season's night every [`CAPTURE_EVERY`] until
-/// shutdown. Off without a market source or with `MARKET_TRACKING_ENABLED=false`.
+/// Background task: every [`CAPTURE_EVERY`] until shutdown, capture the current season's
+/// night when a read is due. Off without a market source or with
+/// `MARKET_TRACKING_ENABLED=false`.
 pub async fn run(app: Arc<App>) {
     if !market::has_source(&app) || !app.config.market_tracking_enabled {
         return;
@@ -204,17 +262,21 @@ pub async fn run(app: Arc<App>) {
         _ = tokio::time::sleep(Duration::from_secs(30)) => {}
         _ = app.shutdown.cancelled() => return,
     }
+    // Looks come at a fixed period, however long each takes, so they do not drift past a
+    // tip-off; a look that overruns delays the next by the overrun only.
+    let mut looks = tokio::time::interval(CAPTURE_EVERY);
+    looks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     loop {
+        tokio::select! {
+            _ = looks.tick() => {}
+            _ = app.shutdown.cancelled() => break,
+        }
         let season = current_season(app.today());
         match capture(&app, season).await {
             Ok(0) => {}
             Ok(n) => info!(%season, written = n, "market snapshots captured"),
             Err(SeasonLoadError::NoGames(_)) => {}
             Err(e) => warn!(%season, error = %e, "market snapshots not captured"),
-        }
-        tokio::select! {
-            _ = tokio::time::sleep(CAPTURE_EVERY) => {}
-            _ = app.shutdown.cancelled() => break,
         }
     }
     info!("market tracking stopped");
@@ -293,7 +355,7 @@ pub async fn record(app: &App, season: SeasonYear) -> Result<TrackRecord, Season
             games: vec![],
             current_model,
             note: Some(
-                "No snapshot is stored for this season: they are captured before each game's start while the application runs with the ESPN feed on."
+                "No snapshot is stored for this season: they are captured before each game's start while the application runs with a market source."
                     .to_string(),
             ),
         });
@@ -500,49 +562,81 @@ mod tests {
     }
 
     #[test]
-    fn the_night_settles_once_every_game_has_started_by_its_line_or_its_kept_start() {
-        let t = tonight(vec![game(1, 1, 2), game(2, 3, 4)], vec![]);
+    fn the_task_reads_once_when_the_night_comes_and_once_before_each_tip_off() {
         let market = |games: Vec<GameMarket>| Market {
             season: SeasonYear::of(2027),
             night: Some(night()),
-            read_at: Some(at(5_000)),
+            read_at: Some(at(0)),
             source: Some("the-odds-api"),
             source_note: None,
             quota: None,
             games,
             note: None,
         };
-        // Both listed and started: settled. One not yet started: open.
-        let both = market(vec![
-            line(1, Some(at(100)), true),
-            line(2, Some(at(200)), true),
+        let tick = READ_LEAD.as_secs() as i64;
+        let mut p = Progress::default();
+        // A night not yet read is due at once; two games tip at 7,000 and one at 10,000.
+        assert!(p.read_due(night(), at(0)));
+        // A read that priced nothing sets an hourly retry and nothing else.
+        p.after_read(night(), &market(vec![]), at(0));
+        assert!(p.pending.is_empty() && !p.read_due(night(), at(1)));
+        assert!(p.read_due(night(), at(RETRY_EMPTY_AFTER.as_secs() as i64)));
+        let lines = market(vec![
+            line(1, Some(at(7_000)), false),
+            line(2, Some(at(7_000)), false),
+            line(3, Some(at(10_000)), false),
         ]);
-        assert!(night_settled(&t, &both, &[], at(5_000)));
-        let one_open = market(vec![
-            line(1, Some(at(100)), true),
-            line(2, Some(at(9_000)), false),
+        p.after_read(night(), &lines, at(0));
+        assert_eq!(p.pending, vec![at(7_000), at(10_000)]);
+        assert!(p.retry_at.is_none());
+        // Nothing to read until the last tick before 7,000.
+        assert!(!p.read_due(night(), at(7_000 - tick - 1)));
+        assert!(p.read_due(night(), at(7_000 - tick)));
+        // That read serves the first tip-off and keeps the later one; it also learns a tip
+        // the sportsbook priced late (8,000) and ignores a started game.
+        let later = market(vec![
+            line(1, Some(at(7_000)), false),
+            line(3, Some(at(10_000)), false),
+            line(5, Some(at(8_000)), false),
+            line(6, Some(at(100)), true),
         ]);
-        assert!(!night_settled(&t, &one_open, &[], at(5_000)));
-        // Game 1 has left the answer: settled only once a kept snapshot's start has passed.
-        let gone = market(vec![line(2, Some(at(200)), true)]);
-        assert!(!night_settled(&t, &gone, &[], at(5_000)));
-        // Captured at 1,000 for a 4,000 tip: the snapshot the earlier read left.
-        let earlier = Market {
-            read_at: Some(at(1_000)),
-            ..market(vec![line(1, Some(at(4_000)), false)])
+        p.after_read(night(), &later, at(7_000 - tick));
+        assert_eq!(
+            (p.served.clone(), p.pending.clone()),
+            (vec![at(7_000)], vec![at(8_000), at(10_000)])
+        );
+        assert!(!p.read_due(night(), at(7_000)));
+        // Once the last tip-off is served nothing is due until the night changes.
+        p.after_read(night(), &later, at(8_000 - tick));
+        p.after_read(night(), &later, at(10_000 - tick));
+        assert!(p.pending.is_empty());
+        assert!(!p.read_due(night(), at(20_000)));
+        let next = night().succ_opt().unwrap();
+        assert!(p.read_due(next, at(20_000)));
+        p.after_read(
+            next,
+            &market(vec![line(1, Some(at(30_000)), false)]),
+            at(20_000),
+        );
+        assert!(p.served.is_empty() && p.pending == vec![at(30_000)] && p.retry_at.is_none());
+        // A priced game without a start time keeps the hourly look as well as the plan.
+        let untimed = market(vec![line(1, Some(at(30_000)), false), line(2, None, false)]);
+        p.after_read(next, &untimed, at(20_000));
+        let hour = RETRY_EMPTY_AFTER.as_secs() as i64;
+        assert!(p.pending == vec![at(30_000)] && p.retry_at == Some(at(20_000 + hour)));
+        // A day with nothing to read is marked, so the looks that follow are not due.
+        let off = next.succ_opt().unwrap();
+        assert!(p.read_due(off, at(40_000)));
+        p.nothing_today(off);
+        assert!(!p.read_due(off, at(40_000)) && p.pending.is_empty() && p.retry_at.is_none());
+        // The credits: short when fewer than the reads left tonight at the last cost.
+        let q = crate::adapters::odds_api::Quota {
+            remaining: Some(8),
+            used: Some(492),
+            last_cost: Some(3),
+            read_at: at(0),
         };
-        let kept = build_snapshots(SeasonYear::of(2027), &t, &earlier, "m1");
-        assert_eq!(kept.len(), 1);
-        assert!(night_settled(&t, &gone, &kept, at(5_000)));
-        assert!(!night_settled(&t, &gone, &kept, at(3_000)));
-        // An empty night, or an empty answer, never settles.
-        assert!(!night_settled(
-            &tonight(vec![], vec![]),
-            &both,
-            &[],
-            at(5_000)
-        ));
-        assert!(!night_settled(&t, &market(vec![]), &[], at(5_000)));
+        assert!(credits_short(&q, 3) && !credits_short(&q, 2));
     }
 
     #[test]

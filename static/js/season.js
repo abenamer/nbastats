@@ -202,19 +202,24 @@
           const team = `${home ? '@ ' : ''}${teamLink(code, t.season)} ${num(rating, 0)}${rated ? '' : '*'}${penalty ? ` → <span class="bad">${num(playsAt, 0)}</span>` : ''}${home && g.neutral ? ' (neutral)' : ''}`;
           return `<tr><td class="l">${team}</td><td>${esc(teamSpread(margin))}</td><td class="book">${esc(bookSpread)}</td><td>${esc(line(home ? g.home_moneyline_tonight : g.away_moneyline_tonight))}</td><td class="book">${esc(bookLine)}</td><td>${shown(full)}</td><td class="${moved(full, night)}">${shown(night)}</td><td class="book">${Number.isFinite(marketWins) ? `${marketWins}%` : esc(wait)}</td><td>${Number.isFinite(gap) ? `${gap > 0 ? '+' : gap < 0 ? '−' : ''}${Math.abs(gap)}` : esc(wait)}</td></tr>`;
         };
+        // Each column names whose number it is: the model's, or the sportsbook's by its name;
+        // the sportsbook's columns are shaded, head and body.
         const heads = [
           ['Team', `The visitor, then the home team after @: its rating and, when it is missing players, the rating it plays at ${when}; * marks a team without a rating, read at the league mean`],
-          [`Spread ${when}`, 'The model: the points the team gives (−) or gets (+), from the rating gap with the home bonus at 28 Elo a point, as a sportsbook writes it'],
-          [`${book} spread`, 'The sportsbook\'s spread for the team, with the price of the bet in brackets'],
-          [`Moneyline ${when}`, 'The model: fair American odds from the win chance, with no bookmaker margin: the favourite risks the amount shown to win 100, 100 on the underdog wins the amount shown'],
-          [`${book} moneyline`, 'The sportsbook\'s moneyline for the team, its margin included: the favourite must risk more to win 100, and 100 on the underdog wins less, than at a fair line'],
-          ['Wins, full strength', 'The model: the chance the team wins with both teams at full strength'],
-          [`Wins ${when}`, `The model: the chance the team wins at the ratings the teams play at ${when}; red when it fell from full strength, green when it rose`],
-          ['Market wins', 'The chance the sportsbook\'s two moneylines imply for the team once its margin is taken out: each implied chance divided by their sum'],
-          ['Model − market', `The model's chance ${when} less the market's, in percentage points: positive when the model rates the team higher than the sportsbook does`]];
+          ['Model spread', `The model's spread ${when}: the points the team gives (−) or gets (+), from the rating gap with the home bonus at 28 Elo a point, as a sportsbook writes it`],
+          [`${book} spread`, `${book}'s spread for the team, with the price of the bet in brackets`, true],
+          ['Model moneyline', `The model's fair American odds ${when}, from its win chance with no bookmaker margin: the favourite risks the amount shown to win 100, 100 on the underdog wins the amount shown`],
+          [`${book} moneyline`, `${book}'s moneyline for the team, its margin included: the favourite must risk more to win 100, and 100 on the underdog wins less, than at a fair line`, true],
+          ['Model wins, full strength', 'The model: the chance the team wins with both teams at full strength'],
+          [`Model wins ${when}`, `The model: the chance the team wins at the ratings the teams play at ${when}; red when it fell from full strength, green when it rose`],
+          [`${book} wins`, `The chance ${book}'s two moneylines imply for the team once its margin is taken out: each implied chance divided by their sum`, true],
+          [`Model − ${book}`, `The model's chance ${when} less ${book}'s, in percentage points: positive when the model rates the team higher than ${book} does`]];
         document.getElementById('tonightGames').innerHTML = t.games.length
-          ? `<table class="games"><thead><tr>${heads.map(([h, title], i) => `<th class="${i ? '' : 'l'}" title="${esc(title)}">${esc(h)}</th>`).join('')}</tr></thead>${t.games.map(g => `<tbody>${sideRow(g, false)}${sideRow(g, true)}</tbody>`).join('')}</table>`
+          ? `<table class="games"><thead><tr>${heads.map(([h, title, isBook], i) => `<th class="${i ? '' : 'l'}${isBook ? ' book' : ''}" title="${esc(title)}">${esc(h)}</th>`).join('')}</tr></thead>${t.games.map(g => `<tbody>${sideRow(g, false)}${sideRow(g, true)}</tbody>`).join('')}</table>`
           : '';
+        // The same explanations as the headers' tooltips, laid out for a reader who does not hover.
+        document.getElementById('tonightLegend').innerHTML = heads.map(([h, title, isBook]) => `<dt class="${isBook ? 'book' : ''}">${esc(h)}</dt><dd>${esc(title)}</dd>`).join('');
+        document.getElementById('tonightLegendBox').hidden = !t.games.length;
         const marketNote = document.getElementById('tonightMarketNote');
         if (market === undefined) marketNote.textContent = t.games.length ? 'Reading the sportsbook lines…' : '';
         else if (market.note) marketNote.textContent = `Market: ${market.note}.`;
@@ -223,7 +228,7 @@
           const mean = margins.length ? margins.reduce((a, b) => a + b, 0) / margins.length : null;
           const sourceNames = { 'the-odds-api': 'The Odds API', espn: "ESPN's scoreboard" };
           const quota = market.quota && market.quota.remaining != null ? ` The Odds API has ${market.quota.remaining.toLocaleString()} credit${market.quota.remaining === 1 ? '' : 's'} left${market.quota.last_cost ? ` at ${market.quota.last_cost} a read` : ''}.` : '';
-          marketNote.textContent = `Market: ${providers.join(', ')} lines from ${sourceNames[market.source] || market.source || 'the market source'}, read ${new Date(market.read_at).toLocaleTimeString()}, ${lines.length} of ${t.games.length} game${t.games.length === 1 ? '' : 's'}${mean == null ? '' : `; the bookmaker's margin averages ${num(100 * mean, 1)}% and is taken out of Market wins`}.${market.source_note ? ` ${market.source_note}.` : ''} Lines move until tip-off; a line read after the start is not saved.${quota}`;
+          marketNote.textContent = `Market: ${providers.join(', ')} lines from ${sourceNames[market.source] || market.source || 'the market source'}, read ${new Date(market.read_at).toLocaleTimeString()}, ${lines.length} of ${t.games.length} game${t.games.length === 1 ? '' : 's'}${mean == null ? '' : `; the bookmaker's margin averages ${num(100 * mean, 1)}% and is taken out of ${book} wins`}.${market.source_note ? ` ${market.source_note}.` : ''} Lines move until tip-off; a line read after the start is not saved.${quota}`;
         }
       };
       // The lines do not depend on the home bonus: a market read for this season and night in
@@ -247,7 +252,7 @@
         { label: `Elo ${when}`, value: x => num(x.rating_tonight, 0), cls: x => x.penalty ? 'bad' : '', title: `The rating the team plays at ${when}` },
         { label: 'Plays', value: x => x.opponent ? `${x.home ? 'vs' : 'at'} ${x.opponent}` : '', left: true, title: 'Blank for a team not playing, or whose game is already played' },
         { label: 'Who is out', value: x => x.out.map(o => `${o.name} (${num(o.penalty_elo, 0)}, ${statusNames[o.status] || o.status_text.toLowerCase()} to ${o.until})`).join('; '), left: true, title: 'Each absence covering the night: the penalty it carries, the status and the last date it applies' }], t.teams) : '';
-    } catch (e) { note.textContent = `Tonight unavailable: ${e.message}`; document.getElementById('tonightGames').innerHTML = ''; document.getElementById('tonightTeams').innerHTML = ''; document.getElementById('tonightMarketNote').textContent = ''; }
+    } catch (e) { note.textContent = `Tonight unavailable: ${e.message}`; document.getElementById('tonightGames').innerHTML = ''; document.getElementById('tonightTeams').innerHTML = ''; document.getElementById('tonightMarketNote').textContent = ''; document.getElementById('tonightLegendBox').hidden = true; }
   }
   document.getElementById('season').addEventListener('change', loadTonight);
   // Model vs market: the stored snapshots of the season scored against the results.

@@ -1,6 +1,7 @@
 # Bundle update log
 
 ## 2026-11-02
+* **Update**: [Season forecast engine](/concepts/season-engine.md) names the Tonight panel's columns for the model or the sportsbook; the term Market wins becomes Sportsbook wins.
 * **New**: [ADR 0009](/decisions/0009-market-lines-from-the-odds-api.md) records reading the market lines from The Odds API with ESPN as the fallback, and the capture on the night's date only; it amends [ADR 0006](/decisions/0006-market-lines-from-espn-scoreboard.md) and closes a consequence of [ADR 0008](/decisions/0008-track-the-model-against-the-market.md). [Market tracking](/concepts/market-tracking.md), the [Security model](/concepts/security.md), [ADR 0001](/decisions/0001-ports-at-three-boundaries.md), the configuration and API references and the term Market source follow.
 * **New**: [Market tracking](/concepts/market-tracking.md) describes the snapshots, the capture and the scoring; [ADR 0008](/decisions/0008-track-the-model-against-the-market.md) records it and amends [ADR 0006](/decisions/0006-market-lines-from-espn-scoreboard.md); [ADR 0001](/decisions/0001-ports-at-three-boundaries.md) lists the fourteenth port; the schema, API and configuration references, the [Security model](/concepts/security.md) and the terms Lean and Market snapshot follow.
 
