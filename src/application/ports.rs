@@ -110,6 +110,8 @@ pub struct NewGame {
     pub result_source: ResultSource,
     /// The archive's ratings (pre home, pre away, post home, post away) for an archive row.
     pub reference: Option<[f64; 4]>,
+    /// The NBA Cup stage the source labels the game with, kept with the game.
+    pub cup_stage: Option<crate::domain::models::CupStage>,
 }
 
 /// The application's ratings for one stored game, written back after a recompute.
@@ -430,6 +432,8 @@ pub struct ResultRecord {
     pub playoff: bool,
     /// The NBA Cup final, which does not count in the standings.
     pub cup_final: bool,
+    /// The NBA Cup stage as the source labels it, when it does.
+    pub cup_stage: Option<String>,
     pub home_score: Option<i32>,
     pub away_score: Option<i32>,
 }

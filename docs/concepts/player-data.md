@@ -26,7 +26,7 @@ The data comes from the BALLDONTLIE API, the same source as the results sync, th
 
 | Endpoint | Tier | Use |
 |----------|------|-----|
-| `/games` | Free | The results sync: results and schedule, with the Cup stage of a game (`ist_stage`, given from the 2025-26 season on). A stage of `Championship` is the Cup final, which does not count in the standings. Earlier Cup finals are found by the date rule of the derived rebuild. |
+| `/games` | Free | The results sync: results and schedule, with the Cup stage of a game (`ist_stage`, given from the 2025-26 season on), stored with the game; the season engine tells the Cup games by it. A stage of `Championship` is the Cup final, which does not count in the standings. Earlier Cup finals are found by the date rule of the derived rebuild. |
 | `/teams` | Free | The team list, to turn a team identifier into a code. |
 | `/players` | Free | The source's whole player list (every player, active or not): name, position, size, draft, origin, jersey number and current team. Loaded on request. |
 | `/players/active` | ALL-STAR | The current rosters: the active players, each with his team. Refreshed daily. |

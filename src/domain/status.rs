@@ -238,6 +238,7 @@ mod tests {
             ref_away_elo_pre: None,
             ref_home_elo_post: None,
             ref_away_elo_post: None,
+            cup_stage: None,
         }
     }
 

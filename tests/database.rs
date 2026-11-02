@@ -961,6 +961,7 @@ fn record(date: &str, home: &str, away: &str, score: Option<(i32, i32)>) -> Resu
         cup_final: false,
         home_score: score.map(|s| s.0),
         away_score: score.map(|s| s.1),
+        cup_stage: None,
     }
 }
 
@@ -1026,6 +1027,55 @@ async fn cup_final_from_the_source_survives_the_rebuild_and_the_next_sync(pool: 
     );
 }
 
+/// The Cup stage the source labels a game with is stored with the game and read back as
+/// the enum; a later fetch of the same game without the label keeps the stored stage.
+#[sqlx::test(migrations = "./migrations")]
+async fn a_cup_stage_from_the_source_is_stored_and_kept_through_an_unlabelled_fetch(pool: PgPool) {
+    use nba_elo_simulator::application::continuation;
+    use nba_elo_simulator::domain::models::CupStage;
+    let (store, _teams) = common::setup(pool).await;
+    imports::import_bytes(
+        &store,
+        common::FIXTURE.as_bytes(),
+        prov("mini_2016.csv"),
+        false,
+    )
+    .await
+    .unwrap();
+    let s2017 = SeasonYear::of(2017);
+    let mut group_game = record("2016-11-15", "GSW", "SAS", Some((100, 90)));
+    group_game.cup_stage = Some("west group b".to_string());
+    let mut final_game = record("2016-12-17", "GSW", "SAS", None);
+    final_game.cup_final = true;
+    final_game.cup_stage = Some("Championship".to_string());
+    let mut odd = record("2016-12-20", "DAL", "GSW", None);
+    odd.cup_stage = Some("Play-In".to_string());
+    let first = FakeResults::with(vec![group_game, final_game, odd]);
+    continuation::sync_results(&store, &first, s2017, date("2016-12-16"), &|_| {})
+        .await
+        .unwrap();
+    let games = store.season_games(s2017).await.unwrap();
+    assert_eq!(games.len(), 3);
+    assert_eq!(games[0].cup_stage, Some(CupStage::WestGroupB));
+    assert_eq!(
+        (games[1].cup_stage, games[1].game_type),
+        (Some(CupStage::Championship), GameType::CupFinal)
+    );
+    assert_eq!(
+        games[2].cup_stage, None,
+        "an unknown label is stored as none"
+    );
+    // The next fetch brings the final's result without its label: the stage is kept.
+    let next = FakeResults::with(vec![record("2016-12-17", "GSW", "SAS", Some((99, 98)))]);
+    continuation::sync_results(&store, &next, s2017, date("2016-12-18"), &|_| {})
+        .await
+        .unwrap();
+    let games = store.season_games(s2017).await.unwrap();
+    assert!(games[1].is_played());
+    assert_eq!(games[1].cup_stage, Some(CupStage::Championship));
+    assert_eq!(games[0].cup_stage, Some(CupStage::WestGroupB));
+}
+
 /// The application's Elo code re-rates an archive season to the archive's own numbers: the
 /// one-step update from each game's imported pre-game ratings reproduces its post-game
 /// ratings, and the chain from the first ratings reproduces the season-end ratings.
@@ -1072,6 +1122,7 @@ async fn elo_replay_reproduces_the_archive_ratings(pool: PgPool) {
             game_type: g.game_type,
             home_score: g.home_score,
             away_score: g.away_score,
+            cup_stage: g.cup_stage,
         })
         .collect();
     let rated = rate_games(&start, &input).unwrap();

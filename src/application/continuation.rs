@@ -15,8 +15,9 @@ use tracing::info;
 
 use crate::adapters::csv::{self, ResultRow};
 use crate::domain::continuation::{rate_games, ContinuationError, ResultGame};
+use crate::domain::cup;
 use crate::domain::ids::{SeasonYear, TeamId};
-use crate::domain::models::{EloSource, Game, GameType, ResultSource};
+use crate::domain::models::{CupStage, EloSource, Game, GameType, ResultSource};
 
 use super::recompute;
 
@@ -168,6 +169,7 @@ fn resolve_games(
                 },
                 home_score: r.home_score,
                 away_score: r.away_score,
+                cup_stage: r.cup_stage.as_deref().and_then(CupStage::parse),
             }),
             _ => {
                 for c in [&r.home_code, &r.away_code] {
@@ -237,6 +239,7 @@ async fn store_rated<S: GameStore + ImportLog>(
             elo_source: EloSource::Computed,
             result_source,
             reference: None,
+            cup_stage: r.game.cup_stage,
         })
         .collect();
     let result: Result<ImportOutcome, StoreError> = async {
@@ -351,6 +354,7 @@ impl From<&ResultRow> for ResultRecord {
             neutral: r.neutral,
             playoff: r.playoff,
             cup_final: false,
+            cup_stage: None,
             home_score: r.home_score,
             away_score: r.away_score,
         }
@@ -427,6 +431,20 @@ pub async fn sync_results<S: GameStore + ImportLog, R: ResultsSource>(
 /// window runs from the last played game (fetched again, so a late final is caught) to
 /// `today`.
 fn fetch_window(stored: &[Game], today: NaiveDate) -> FetchWindow {
+    // A Cup season stored before the source's Cup labels were read has none: one whole
+    // fetch fills them, after which the daily window carries each Cup game's label on its
+    // day. Archive rows never take the source's label, so they do not count.
+    let mut synced = stored
+        .iter()
+        .filter(|g| g.result_source != ResultSource::Archive)
+        .peekable();
+    let labels_missing = synced
+        .peek()
+        .is_some_and(|g| g.season >= cup::FIRST_LABELLED_SEASON)
+        && synced.all(|g| g.cup_stage.is_none());
+    if labels_missing {
+        return FetchWindow::all();
+    }
     match stored
         .iter()
         .filter(|g| g.is_played())
@@ -496,6 +514,7 @@ pub async fn project_season<S: GameStore + ImportLog>(
             game_type: GameType::Regular,
             home_score: None,
             away_score: None,
+            cup_stage: None,
         })
         .collect();
     let start = start_for(store, season, &[], members_of(&[], &schedule)).await?;
@@ -554,6 +573,7 @@ mod tests {
             ref_away_elo_pre: None,
             ref_home_elo_post: None,
             ref_away_elo_post: None,
+            cup_stage: None,
         }
     }
 
@@ -623,17 +643,44 @@ mod tests {
             game("2026-10-22", 3, 4, None),
         ];
         assert_eq!(fetch_window(&scheduled, today), FetchWindow::all());
-        let played = [
+        let mut played = vec![
             game("2026-10-21", 1, 2, Some((100, 90))),
             game("2026-10-22", 3, 4, Some((99, 98))),
             game("2026-10-24", 1, 3, None),
         ];
+        // A Cup season stored without a single Cup stage label is refilled whole, once;
+        // with one labelled game the window is the usual one.
+        assert_eq!(fetch_window(&played, today), FetchWindow::all());
+        played[2].cup_stage = Some(CupStage::EastGroupA);
         assert_eq!(
             fetch_window(&played, today),
             FetchWindow::between(d("2026-10-22"), today)
         );
+        // Before the labelled seasons an unlabelled store is the normal case.
+        let mut before = played.clone();
+        for g in &mut before {
+            g.season = SeasonYear::of(2025);
+            g.cup_stage = None;
+        }
+        assert_eq!(
+            fetch_window(&before, today),
+            FetchWindow::between(d("2026-10-22"), today)
+        );
+        // Archive rows never carry a label and do not ask for the refill.
+        let mut archived = played.clone();
+        for g in &mut archived {
+            g.result_source = ResultSource::Archive;
+            g.cup_stage = None;
+        }
+        assert_eq!(
+            fetch_window(&archived, today),
+            FetchWindow::between(d("2026-10-22"), today)
+        );
+        archived[2].result_source = ResultSource::Results;
+        assert_eq!(fetch_window(&archived, today), FetchWindow::all());
         // A played game dated after today (a clock behind the results) does not invert the window.
-        let future = [game("2026-10-25", 1, 2, Some((1, 0)))];
+        let mut future = [game("2026-10-25", 1, 2, Some((1, 0)))];
+        future[0].cup_stage = Some(CupStage::Championship);
         assert_eq!(
             fetch_window(&future, today),
             FetchWindow::between(today, today)

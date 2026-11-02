@@ -17,6 +17,9 @@ sources:
   - id: market
     resource: /migrations/0007_market_snapshots.sql
     title: Market snapshots
+  - id: cup-stage
+    resource: /migrations/0008_cup_stage.sql
+    title: Cup stage of a game
 ---
 
 # Reference tables
@@ -31,7 +34,7 @@ sources:
 
 | Table | Key | Content |
 |-------|-----|---------|
-| `games` | (date, home, away, seq) | One row per game: scores, Elo before and after, source forecast, type, Elo source (`imported` or `computed`). |
+| `games` | (date, home, away, seq) | One row per game: scores, Elo before and after, source forecast, type, Elo source (`imported` or `computed`), the NBA Cup stage the results source labels the game with (`cup_stage`, text, from 2025-26; migration `0008`). |
 | `data_imports` | id | Source, file checksum, row counts, status, timestamps. |
 
 # Derived data

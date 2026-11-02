@@ -327,6 +327,12 @@ pub fn parse_games_page(body: &[u8]) -> Result<ParsedPage, SourceError> {
             neutral: false,
             playoff: g.postseason,
             cup_final: is_cup_final(g.ist_stage.as_deref()),
+            cup_stage: g
+                .ist_stage
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string),
             home_score: played.then_some(g.home_team_score),
             away_score: played.then_some(g.visitor_team_score),
         });
@@ -384,14 +390,17 @@ mod tests {
        "home_team":{"id":21,"abbreviation":"OKC"},"visitor_team":{"id":17,"abbreviation":"MIL"}},
       {"id":5,"date":"2025-12-13","season":2025,"status":"Final","postseason":false,"ist_stage":"West Semifinal",
        "home_team_score":105,"visitor_team_score":100,
-       "home_team":{"id":21,"abbreviation":"OKC"},"visitor_team":{"id":24,"abbreviation":"PHX"}}
+       "home_team":{"id":21,"abbreviation":"OKC"},"visitor_team":{"id":24,"abbreviation":"PHX"}},
+      {"id":6,"date":"2025-10-31","season":2025,"status":"Final","postseason":false,"ist_stage":"West Group B",
+       "home_team_score":99,"visitor_team_score":98,
+       "home_team":{"id":24,"abbreviation":"PHX"},"visitor_team":{"id":21,"abbreviation":"OKC"}}
     ],"meta":{"next_cursor":3,"per_page":100}}"#;
 
     #[test]
     fn parses_played_scheduled_and_postseason_games() {
         let page = parse_games_page(PAGE.as_bytes()).unwrap();
         assert_eq!(page.next_cursor, Some(3));
-        assert_eq!(page.records.len(), 5);
+        assert_eq!(page.records.len(), 6);
         let g = &page.records[0];
         assert_eq!(g.date, NaiveDate::from_ymd_opt(2025, 10, 21).unwrap());
         assert_eq!((g.home_code.as_str(), g.away_code.as_str()), ("OKC", "HOU"));
@@ -409,6 +418,10 @@ mod tests {
         assert!(page.records[3].cup_final && !page.records[3].playoff);
         assert!(!page.records[4].cup_final);
         assert!(!g.cup_final);
+        // The Cup stage travels as the source wrote it; a game without one has none.
+        assert_eq!(page.records[5].cup_stage.as_deref(), Some("West Group B"));
+        assert_eq!(page.records[4].cup_stage.as_deref(), Some("West Semifinal"));
+        assert_eq!(g.cup_stage, None);
     }
 
     #[test]

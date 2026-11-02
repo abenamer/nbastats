@@ -247,6 +247,7 @@ async fn store_games<S: GameStore>(
                     home_win_prob: g.home_win_prob,
                     elo_source: EloSource::Imported,
                     result_source: ResultSource::Archive,
+                    cup_stage: None,
                     reference: Some([
                         g.home_elo_pre,
                         g.away_elo_pre,
