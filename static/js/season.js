@@ -221,7 +221,9 @@
         else {
           const margins = lines.map(m => m.book_margin).filter(x => x != null);
           const mean = margins.length ? margins.reduce((a, b) => a + b, 0) / margins.length : null;
-          marketNote.textContent = `Market: ${providers.join(', ')} lines from ESPN's scoreboard, read ${new Date(market.read_at).toLocaleTimeString()}, ${lines.length} of ${t.games.length} game${t.games.length === 1 ? '' : 's'}${mean == null ? '' : `; the bookmaker's margin averages ${num(100 * mean, 1)}% and is taken out of Market wins`}. Lines move until tip-off and leave the feed once a game starts.`;
+          const sourceNames = { 'the-odds-api': 'The Odds API', espn: "ESPN's scoreboard" };
+          const quota = market.quota && market.quota.remaining != null ? ` The Odds API has ${market.quota.remaining.toLocaleString()} credit${market.quota.remaining === 1 ? '' : 's'} left${market.quota.last_cost ? ` at ${market.quota.last_cost} a read` : ''}.` : '';
+          marketNote.textContent = `Market: ${providers.join(', ')} lines from ${sourceNames[market.source] || market.source || 'the market source'}, read ${new Date(market.read_at).toLocaleTimeString()}, ${lines.length} of ${t.games.length} game${t.games.length === 1 ? '' : 's'}${mean == null ? '' : `; the bookmaker's margin averages ${num(100 * mean, 1)}% and is taken out of Market wins`}.${market.source_note ? ` ${market.source_note}.` : ''} Lines move until tip-off; a line read after the start is not saved.${quota}`;
         }
       };
       // The lines do not depend on the home bonus: a market read for this season and night in

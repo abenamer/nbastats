@@ -69,6 +69,7 @@ These are project-specific technical terms. They are not a reproduction of the A
 | Lean | In market tracking, the side whose win chance the model puts above the market's; scored as a one-unit bet at the sportsbook's moneyline. |
 | Lookup | One tool call the language model makes to read the stored data (tool, arguments, rows). It goes through a store port or the application's caches. The question box lists the lookups under each answer. |
 | Market wins | On the Tonight panel, the chance a sportsbook's two moneylines imply for a team once the bookmaker margin is taken out: its implied chance divided by the sum of both. Set beside the model's chance on the night. |
+| Market source | Where the night's sportsbook lines come from: The Odds API with the chosen sportsbook when its key is set, else ESPN's scoreboard, which is also the fallback. Each snapshot records its source. See [ADR 0009](decisions/0009-market-lines-from-the-odds-api.md). |
 | Market snapshot | One game's model numbers and sportsbook lines in the last capture before its start, with the model's version; scored after the result. See [Market tracking](concepts/market-tracking.md). |
 | Matchup (greatest, clanker) | A played game ranked by the combined Elo of the two teams before tip-off: the 20 highest are the greatest matchups; the lowest of each era, per league, is its clanker. |
 | Mean Elo | The mean season-end rating across a league in a season, averaged over a group's seasons. A check that the ratings hold their level between periods. |

@@ -12,13 +12,14 @@ use nba_elo_simulator::adapters::balldontlie::{BalldontlieConfig, BalldontlieSou
 use nba_elo_simulator::adapters::dataset::HttpDatasetSource;
 use nba_elo_simulator::adapters::espn::EspnScoreboard;
 use nba_elo_simulator::adapters::http;
+use nba_elo_simulator::adapters::odds_api::{OddsApi, OddsApiConfig};
 use nba_elo_simulator::adapters::openrouter::{OpenRouterConfig, OpenRouterModel};
 use nba_elo_simulator::adapters::postgres::PostgresStore;
 use nba_elo_simulator::application::jobs;
 use nba_elo_simulator::application::ports::LanguageModel;
 use nba_elo_simulator::application::ports::{GameLog, GameStore, ImportLog, JobStore};
 use nba_elo_simulator::application::scheduler::{self, SyncSchedule};
-use nba_elo_simulator::application::state::App;
+use nba_elo_simulator::application::state::{App, Outbound};
 use nba_elo_simulator::application::{continuation, imports, players, recompute};
 use nba_elo_simulator::config::{Config, APP_VERSION};
 use nba_elo_simulator::domain::ids::SeasonYear;
@@ -190,12 +191,7 @@ async fn main() -> anyhow::Result<()> {
                         .unwrap_or_default()
                 );
             };
-            let zone: chrono_tz::Tz = config
-                .results_sync_timezone
-                .trim()
-                .parse()
-                .unwrap_or(chrono_tz::America::New_York);
-            let today = chrono::Utc::now().with_timezone(&zone).date_naive();
+            let today = nba_elo_simulator::domain::calendar::league_date(chrono::Utc::now());
             let outcome =
                 continuation::sync_results(&store, &results, season, today, &progress).await?;
             println!("{}", serde_json::to_string_pretty(&outcome)?);
@@ -237,12 +233,7 @@ async fn main() -> anyhow::Result<()> {
                         .unwrap_or_default()
                 );
             };
-            let zone: chrono_tz::Tz = config
-                .results_sync_timezone
-                .trim()
-                .parse()
-                .unwrap_or(chrono_tz::America::New_York);
-            let today = chrono::Utc::now().with_timezone(&zone).date_naive();
+            let today = nba_elo_simulator::domain::calendar::league_date(chrono::Utc::now());
             let mut outcome = if every_season {
                 let to = scheduler::current_season(today);
                 players::backfill_all(&store, &results, season, to, &progress).await?
@@ -270,6 +261,13 @@ async fn main() -> anyhow::Result<()> {
     }
 }
 
+/// Whether a base URL carries a key safely: `https`, or plain `http` to this computer.
+fn plain_or_local(url: &str) -> bool {
+    url.starts_with("https://")
+        || url.starts_with("http://127.0.0.1")
+        || url.starts_with("http://localhost")
+}
+
 async fn serve(
     config: Config,
     store: PostgresStore,
@@ -282,6 +280,14 @@ async fn serve(
         Some(EspnScoreboard::new(config.espn_base_url.clone())?)
     } else {
         None
+    };
+    let odds = match &config.odds_api_key {
+        Some(key) => Some(OddsApi::new(OddsApiConfig {
+            api_key: key.clone(),
+            base_url: config.odds_api_base_url.clone(),
+            bookmaker: config.odds_api_bookmaker.clone(),
+        })?),
+        None => None,
     };
     let interrupted = store.mark_running_jobs_interrupted().await?;
     if interrupted > 0 {
@@ -329,13 +335,26 @@ async fn serve(
         config.clone(),
         store.clone(),
         source,
-        results,
-        sync_schedule,
-        model,
-        reports,
+        Outbound {
+            results,
+            sync_schedule,
+            model,
+            reports,
+            odds,
+        },
     ));
     if let Some(r) = &app.reports {
         info!(base_url = r.base_url(), "game report lookups enabled");
+    }
+    if let Some(o) = &app.odds {
+        info!(
+            base_url = o.base_url(),
+            bookmaker = o.bookmaker(),
+            "market lines from The Odds API"
+        );
+        if !plain_or_local(o.base_url()) {
+            warn!("ODDS_API_BASE_URL is not https: the API key travels unencrypted in the query string");
+        }
     }
     if let Some(m) = &app.model {
         info!(
@@ -344,10 +363,7 @@ async fn serve(
             "question box enabled"
         );
         let url = m.base_url();
-        if !url.starts_with("https://")
-            && !url.starts_with("http://127.0.0.1")
-            && !url.starts_with("http://localhost")
-        {
+        if !plain_or_local(url) {
             warn!("OPENROUTER_BASE_URL is not https: the API key and the questions travel unencrypted");
         }
     }

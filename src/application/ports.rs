@@ -704,10 +704,13 @@ pub trait MarketStore: Send + Sync {
 }
 
 /// Where sportsbook lines come from: the night's games as the market prices them. The
-/// concrete adapter is `adapters::espn::EspnScoreboard`, which reads them from the same
+/// concrete adapters are `adapters::odds_api::OddsApi` (The Odds API, the sportsbook of the
+/// configuration) and `adapters::espn::EspnScoreboard`, which reads them from the same
 /// scoreboard as the reports.
 #[allow(async_fn_in_trait)]
 pub trait MarketSource: Send + Sync {
+    /// The source's name as the snapshots record it.
+    fn name(&self) -> &'static str;
     async fn lines_on(&self, date: NaiveDate) -> Result<Vec<MarketLine>, SourceError>;
 }
 

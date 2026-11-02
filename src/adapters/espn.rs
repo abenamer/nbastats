@@ -14,6 +14,8 @@ use crate::application::ports::{
     MarketLine, MarketSource, ReportCandidate, ReportListing, ReportSource, SourceError,
 };
 
+use super::feed::{self, read_body, text};
+
 const MAX_BODY_BYTES: usize = 4 * 1024 * 1024;
 const MAX_TITLE_CHARS: usize = 200;
 
@@ -56,14 +58,6 @@ pub fn acceptable_url(url: &str) -> bool {
     plain && (host == "espn.com" || host.ends_with(".espn.com"))
 }
 
-fn text(v: &Value, key: &str) -> Option<String> {
-    v.get(key)
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(str::to_string)
-}
-
 /// The home and away teams of a competition, each as (abbreviation, display name).
 fn sides(competition: &Value) -> Option<((String, String), (String, String))> {
     let competitors = competition.get("competitors").and_then(Value::as_array)?;
@@ -101,15 +95,14 @@ fn number(v: Option<&Value>, even: f64) -> Option<f64> {
     n.is_finite().then_some(n)
 }
 
-/// A moneyline or a bet's price: EVEN is +100; a value between -100 and +100, or beyond
-/// 100,000 either way, is none.
+/// A moneyline or a bet's price: EVEN is +100; a value outside the usable range is none.
 fn odds_number(v: Option<&Value>) -> Option<f64> {
-    number(v, 100.0).filter(|o| (100.0..=100_000.0).contains(&o.abs()))
+    number(v, 100.0).filter(|o| feed::usable_odds(*o))
 }
 
-/// A spread: PK or EVEN is 0, and one wider than any game's (60 points) is none.
+/// A spread: PK or EVEN is 0, and one wider than any game's is none.
 fn spread_number(v: Option<&Value>) -> Option<f64> {
-    number(v, 0.0).filter(|s| s.abs() <= 60.0)
+    number(v, 0.0).filter(|s| feed::usable_spread(*s))
 }
 
 /// Both sides of a market at one price: `close` (the current line before the game) when
@@ -217,8 +210,7 @@ pub fn parse_lines(bytes: &[u8]) -> Result<Vec<MarketLine>, SourceError> {
                 Some((_, a)) => odds_number(a.get("odds")),
                 None => side_odds("awayTeamOdds", "moneyLine"),
             },
-            // An NBA total lies between 100 and 400 points.
-            total: number(odds.get("overUnder"), 0.0).filter(|t| (100.0..=400.0).contains(t)),
+            total: number(odds.get("overUnder"), 0.0).filter(|t| feed::usable_total(*t)),
         };
         if line.home_spread.is_some() || line.home_moneyline.is_some() {
             out.push(line);
@@ -307,6 +299,10 @@ impl ReportSource for EspnScoreboard {
 }
 
 impl MarketSource for EspnScoreboard {
+    fn name(&self) -> &'static str {
+        "espn"
+    }
+
     async fn lines_on(&self, date: NaiveDate) -> Result<Vec<MarketLine>, SourceError> {
         parse_lines(&self.scoreboard(date).await?)
     }
@@ -328,27 +324,10 @@ impl EspnScoreboard {
             ])
             .send()
             .await
-            .map_err(|e| SourceError::Transport(e.to_string()))?;
-        let status = resp.status();
-        let mut resp = resp;
-        let mut bytes: Vec<u8> = Vec::new();
-        while let Some(chunk) = resp
-            .chunk()
-            .await
-            .map_err(|e| SourceError::Transport(e.to_string()))?
-        {
-            bytes.extend_from_slice(&chunk);
-            if bytes.len() > MAX_BODY_BYTES {
-                return Err(SourceError::InvalidPayload(format!(
-                    "answer longer than {MAX_BODY_BYTES} bytes"
-                )));
-            }
-        }
+            .map_err(|e| SourceError::Transport(e.without_url().to_string()))?;
+        let (status, bytes) = read_body(resp, MAX_BODY_BYTES).await?;
         if !status.is_success() {
-            return Err(SourceError::Rejected {
-                status: status.as_u16(),
-                message: String::from_utf8_lossy(&bytes).chars().take(300).collect(),
-            });
+            return Err(feed::rejected(status, &bytes));
         }
         Ok(bytes)
     }

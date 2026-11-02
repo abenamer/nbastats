@@ -4,11 +4,11 @@
 //! (`domain::tracking`). The last capture before a game's start stands for it. The track
 //! record scores each stored game once its result is in, per model version and per month.
 
-use std::collections::HashMap;
-use std::sync::Arc;
+use std::collections::{HashMap, HashSet};
+use std::sync::{Arc, PoisonError};
 use std::time::Duration;
 
-use chrono::{Datelike, NaiveDate};
+use chrono::{DateTime, Datelike, NaiveDate, Utc};
 use serde::Serialize;
 use tracing::{info, warn};
 
@@ -16,7 +16,7 @@ use crate::domain::ids::{SeasonYear, TeamId};
 use crate::domain::tracking::{self, Group, Outcome, Scored, Snapshot, Summary};
 
 use super::market::{self, Market};
-use super::ports::{GameLog, MarketStore, ReportSource};
+use super::ports::{GameLog, MarketStore};
 use super::scheduler::current_season;
 use super::state::{App, SeasonLoadError};
 use super::worth::{self, Tonight};
@@ -27,17 +27,44 @@ pub const CAPTURE_EVERY: Duration = Duration::from_secs(10 * 60);
 /// The most scored games the record lists, latest first.
 pub const MAX_GAMES_LISTED: usize = 300;
 
+/// What the capture task remembers between runs: the night whose games have all started,
+/// so no further read of it can add a snapshot, and the day the credits were last warned
+/// about.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct Progress {
+    pub settled_night: Option<NaiveDate>,
+    pub warned_on: Option<NaiveDate>,
+}
+
+/// Whether a read shows the night over for the capture: every game of the night has
+/// started, either by its line in the read or, for a game the answer no longer lists (The
+/// Odds API drops a game once it is over), by the start time its stored snapshot recorded,
+/// now past. A game with a line not yet started, or never priced and never stored, keeps
+/// the night open, since a line may still come.
+pub fn night_settled(t: &Tonight, m: &Market, kept: &[Snapshot], now: DateTime<Utc>) -> bool {
+    let listed: HashMap<i64, bool> = m.games.iter().map(|g| (g.game_id, g.started)).collect();
+    let tipped: HashSet<(&str, &str)> = kept
+        .iter()
+        .filter(|s| s.start_time.is_some_and(|start| start <= now))
+        .map(|s| (s.home_code.as_str(), s.away_code.as_str()))
+        .collect();
+    !t.games.is_empty()
+        && t.games.iter().all(|g| match listed.get(&g.game.game_id) {
+            Some(started) => *started,
+            None => tipped.contains(&(g.home_code.as_str(), g.away_code.as_str())),
+        })
+}
+
 /// The snapshots of the night of `t` from its market `m`: each game the market prices
 /// whose line was read before its start and while the source still listed it as not
-/// started. The lines' read time is the capture's.
+/// started. The lines' read time is the capture's, and their source the market's.
 pub fn build_snapshots(
     season: SeasonYear,
     t: &Tonight,
     m: &Market,
-    source: &str,
     model_version: &str,
 ) -> Vec<Snapshot> {
-    let (Some(night), Some(captured_at)) = (t.night, m.read_at) else {
+    let (Some(night), Some(captured_at), Some(source)) = (t.night, m.read_at, m.source) else {
         return Vec::new();
     };
     let stored: HashMap<TeamId, f64> = t
@@ -96,33 +123,76 @@ pub fn build_snapshots(
 }
 
 /// Capture the night's games of `season` that the market prices and that have not
-/// started. Returns how many snapshots were written.
+/// started, when the night is today (the league's date) and no read has yet shown every
+/// game started: only the last capture before a game's start stands, and every game of a
+/// date tips off on that date, so a read on an earlier day buys nothing and costs the
+/// source's credits, and a read once the date has passed, or once every game is under way,
+/// finds nothing to keep. Returns how many snapshots were written.
 pub async fn capture(app: &App, season: SeasonYear) -> Result<u64, SeasonLoadError> {
-    let Some(source) = app.reports.as_ref() else {
+    if !market::has_source(app) {
         return Ok(0);
-    };
+    }
     let t = worth::tonight(app, season, None).await?;
-    if t.night.is_none() {
+    let today = app.today();
+    let settled = app
+        .tracking
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .settled_night;
+    if t.night != Some(today) || settled == t.night {
         return Ok(0);
     }
     let m = market::market_for(app, season, &t).await?;
-    let snapshots = build_snapshots(
-        season,
-        &t,
-        &m,
-        source.name(),
-        &tracking::tonight_model_version(),
-    );
+    let kept: Vec<Snapshot> = app
+        .store
+        .snapshots(season)
+        .await?
+        .into_iter()
+        .filter(|s| Some(s.game_date) == t.night)
+        .collect();
+    {
+        let mut progress = app.tracking.lock().unwrap_or_else(PoisonError::into_inner);
+        if night_settled(&t, &m, &kept, Utc::now()) {
+            info!(night = %today, "every game of the night has started; no further read until the night changes");
+            progress.settled_night = t.night;
+        }
+        if let Some(q) = m.quota {
+            if progress.warned_on != Some(today) && credits_short(&q) {
+                progress.warned_on = Some(today);
+                warn!(
+                    remaining = q.remaining,
+                    cost_per_read = q.last_cost,
+                    reads_per_day = reads_per_day(),
+                    "The Odds API credits cover less than a day of captures"
+                );
+            }
+        }
+    }
+    let snapshots = build_snapshots(season, &t, &m, &tracking::tonight_model_version());
     if snapshots.is_empty() {
         return Ok(0);
     }
     Ok(app.store.save_snapshots(&snapshots).await?)
 }
 
+/// Reads of the market a day of captures makes.
+fn reads_per_day() -> u64 {
+    (24 * 60 * 60) / CAPTURE_EVERY.as_secs().max(1)
+}
+
+/// Whether The Odds API's remaining credits cover less than a day of captures at the cost
+/// of its last answer.
+pub fn credits_short(q: &crate::adapters::odds_api::Quota) -> bool {
+    match (q.remaining, q.last_cost) {
+        (Some(remaining), Some(cost)) => remaining < reads_per_day().saturating_mul(cost.max(1)),
+        _ => false,
+    }
+}
+
 /// Background task: capture the current season's night every [`CAPTURE_EVERY`] until
-/// shutdown. Off without the ESPN feed or with `MARKET_TRACKING_ENABLED=false`.
+/// shutdown. Off without a market source or with `MARKET_TRACKING_ENABLED=false`.
 pub async fn run(app: Arc<App>) {
-    if app.reports.is_none() || !app.config.market_tracking_enabled {
+    if !market::has_source(&app) || !app.config.market_tracking_enabled {
         return;
     }
     info!(
@@ -387,6 +457,9 @@ mod tests {
             season: SeasonYear::of(2027),
             night: Some(night()),
             read_at: Some(read),
+            source: Some("espn"),
+            source_note: None,
+            quota: None,
             games: vec![
                 // Game 1 starts later: kept. Game 2 started per the source; game 3's start
                 // is past at the read; game 4 has no start time and is not started: kept.
@@ -397,7 +470,7 @@ mod tests {
             ],
             note: None,
         };
-        let s = build_snapshots(SeasonYear::of(2027), &t, &m, "espn", "m1");
+        let s = build_snapshots(SeasonYear::of(2027), &t, &m, "m1");
         let ids: Vec<&str> = s.iter().map(|x| x.home_code.as_str()).collect();
         assert_eq!(ids, ["H1", "H7"]);
         let first = &s[0];
@@ -413,12 +486,63 @@ mod tests {
             (first.source.as_str(), first.model_version.as_str()),
             ("espn", "m1")
         );
-        // Without a read time or a night there is nothing to stamp.
+        // Without a read time, a night or a source there is nothing to stamp.
         let unread = Market {
             read_at: None,
             ..m.clone()
         };
-        assert!(build_snapshots(SeasonYear::of(2027), &t, &unread, "espn", "m1").is_empty());
+        assert!(build_snapshots(SeasonYear::of(2027), &t, &unread, "m1").is_empty());
+        let unsourced = Market {
+            source: None,
+            ..m.clone()
+        };
+        assert!(build_snapshots(SeasonYear::of(2027), &t, &unsourced, "m1").is_empty());
+    }
+
+    #[test]
+    fn the_night_settles_once_every_game_has_started_by_its_line_or_its_kept_start() {
+        let t = tonight(vec![game(1, 1, 2), game(2, 3, 4)], vec![]);
+        let market = |games: Vec<GameMarket>| Market {
+            season: SeasonYear::of(2027),
+            night: Some(night()),
+            read_at: Some(at(5_000)),
+            source: Some("the-odds-api"),
+            source_note: None,
+            quota: None,
+            games,
+            note: None,
+        };
+        // Both listed and started: settled. One not yet started: open.
+        let both = market(vec![
+            line(1, Some(at(100)), true),
+            line(2, Some(at(200)), true),
+        ]);
+        assert!(night_settled(&t, &both, &[], at(5_000)));
+        let one_open = market(vec![
+            line(1, Some(at(100)), true),
+            line(2, Some(at(9_000)), false),
+        ]);
+        assert!(!night_settled(&t, &one_open, &[], at(5_000)));
+        // Game 1 has left the answer: settled only once a kept snapshot's start has passed.
+        let gone = market(vec![line(2, Some(at(200)), true)]);
+        assert!(!night_settled(&t, &gone, &[], at(5_000)));
+        // Captured at 1,000 for a 4,000 tip: the snapshot the earlier read left.
+        let earlier = Market {
+            read_at: Some(at(1_000)),
+            ..market(vec![line(1, Some(at(4_000)), false)])
+        };
+        let kept = build_snapshots(SeasonYear::of(2027), &t, &earlier, "m1");
+        assert_eq!(kept.len(), 1);
+        assert!(night_settled(&t, &gone, &kept, at(5_000)));
+        assert!(!night_settled(&t, &gone, &kept, at(3_000)));
+        // An empty night, or an empty answer, never settles.
+        assert!(!night_settled(
+            &tonight(vec![], vec![]),
+            &both,
+            &[],
+            at(5_000)
+        ));
+        assert!(!night_settled(&t, &market(vec![]), &[], at(5_000)));
     }
 
     #[test]
@@ -428,10 +552,13 @@ mod tests {
             season: SeasonYear::of(2027),
             night: Some(night()),
             read_at: Some(at(1)),
+            source: Some("espn"),
+            source_note: None,
+            quota: None,
             games: vec![line(1, None, false)],
             note: None,
         };
-        let base = build_snapshots(SeasonYear::of(2027), &t, &m, "espn", "m1").remove(0);
+        let base = build_snapshots(SeasonYear::of(2027), &t, &m, "m1").remove(0);
         let on = |day: u32, home: &str| Snapshot {
             game_date: NaiveDate::from_ymd_opt(2026, 11, day).unwrap(),
             home_code: home.into(),
