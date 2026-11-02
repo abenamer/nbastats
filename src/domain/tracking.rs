@@ -16,6 +16,7 @@ use chrono::{DateTime, NaiveDate, Utc};
 use serde::Serialize;
 
 use crate::domain::ids::SeasonYear;
+use crate::domain::market;
 
 /// The parts of the model a snapshot's numbers come from, joined: a change to any shows as
 /// a new version in the record.
@@ -80,13 +81,8 @@ pub struct Outcome {
     pub away_score: i32,
 }
 
-/// Which side the model favoured against the market.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Side {
-    Home,
-    Away,
-}
+/// Which side of a game a bet or a lean takes (`domain::market`).
+pub use crate::domain::market::Side;
 
 /// How one bet went.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -117,16 +113,22 @@ pub struct Scored {
     pub spread_side: Option<Side>,
     pub spread_result: Option<Bet>,
     pub spread_units: Option<f64>,
+    /// The bets the edge rule flagged on the stored line, with how each went.
+    pub flagged: Vec<FlaggedBet>,
+}
+
+/// A flagged bet scored: the edge as it stood, how it went, and its units.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+pub struct FlaggedBet {
+    pub edge: market::Edge,
+    pub result: Bet,
+    pub units: f64,
 }
 
 /// The return of a one-unit bet at American `odds` that won: +150 returns 1.5, -150 two
-/// thirds.
+/// thirds. A value no line has pays nothing.
 fn win_units(odds: f64) -> f64 {
-    if odds >= 0.0 {
-        odds / 100.0
-    } else {
-        100.0 / -odds
-    }
+    market::payout(odds).unwrap_or(0.0)
 }
 
 fn units(bet: Bet, odds: f64) -> f64 {
@@ -148,8 +150,9 @@ fn log_loss(p: f64, won: bool) -> f64 {
 }
 
 /// Score one snapshot against its result. A tie, which the sport does not have, scores
-/// nothing.
-pub fn score(snapshot: Snapshot, outcome: Outcome) -> Option<Scored> {
+/// nothing. `sigma` and `min_return` are the edge rule's: the scatter of real margins and
+/// the bar a bet's expected return must clear to be flagged.
+pub fn score(snapshot: Snapshot, outcome: Outcome, sigma: f64, min_return: f64) -> Option<Scored> {
     if outcome.home_score == outcome.away_score {
         return None;
     }
@@ -209,7 +212,58 @@ pub fn score(snapshot: Snapshot, outcome: Outcome) -> Option<Scored> {
         Side::Away => snapshot.away_spread_odds,
     });
     // A spread bet without a price is taken at the usual -110.
-    let spread_units = spread_result.map(|b| units(b, spread_odds.unwrap_or(-110.0)));
+    let spread_units =
+        spread_result.map(|b| units(b, spread_odds.unwrap_or(market::USUAL_SPREAD_PRICE)));
+    // The flagged bets: the edge rule on the stored line, each scored as it was priced.
+    let lines = market::Lines {
+        home_moneyline: snapshot.home_moneyline,
+        away_moneyline: snapshot.away_moneyline,
+        home_spread: snapshot.home_spread,
+        home_spread_odds: snapshot.home_spread_odds,
+        away_spread_odds: snapshot.away_spread_odds,
+    };
+    let flagged = market::edges(
+        snapshot.p_home_model,
+        snapshot.home_margin_model,
+        &lines,
+        sigma,
+        min_return,
+    )
+    .into_iter()
+    .map(|edge| {
+        let home_bet = edge.side == Side::Home;
+        let result = match edge.kind {
+            market::BetKind::Moneyline => {
+                if home_bet == home_won {
+                    Bet::Won
+                } else {
+                    Bet::Lost
+                }
+            }
+            market::BetKind::Spread => {
+                // The home side's line, whichever side the bet is on.
+                let covered = margin
+                    + if home_bet {
+                        edge.line.unwrap_or(0.0)
+                    } else {
+                        -edge.line.unwrap_or(0.0)
+                    };
+                if covered == 0.0 {
+                    Bet::Push
+                } else if (covered > 0.0) == home_bet {
+                    Bet::Won
+                } else {
+                    Bet::Lost
+                }
+            }
+        };
+        FlaggedBet {
+            edge,
+            result,
+            units: units(result, edge.price),
+        }
+    })
+    .collect();
     Some(Scored {
         home_score: outcome.home_score,
         away_score: outcome.away_score,
@@ -222,6 +276,7 @@ pub fn score(snapshot: Snapshot, outcome: Outcome) -> Option<Scored> {
         spread_side,
         spread_result,
         spread_units,
+        flagged,
         snapshot,
     })
 }
@@ -248,6 +303,12 @@ pub struct Summary {
     pub spread_push: u32,
     pub spread_units: f64,
     pub spread_return: f64,
+    /// The bets the edge rule flagged: how many, how they went, and the return per bet.
+    pub flagged_won: u32,
+    pub flagged_lost: u32,
+    pub flagged_push: u32,
+    pub flagged_units: f64,
+    pub flagged_return: f64,
 }
 
 /// Sum the games given. The Brier and log loss means are over the games with a market
@@ -276,6 +337,14 @@ pub fn summarize<'a>(games: impl IntoIterator<Item = &'a Scored>) -> Summary {
             None => {}
         }
         s.spread_units += g.spread_units.unwrap_or(0.0);
+        for f in &g.flagged {
+            match f.result {
+                Bet::Won => s.flagged_won += 1,
+                Bet::Lost => s.flagged_lost += 1,
+                Bet::Push => s.flagged_push += 1,
+            }
+            s.flagged_units += f.units;
+        }
     }
     if s.priced > 0 {
         let n = f64::from(s.priced);
@@ -291,6 +360,10 @@ pub fn summarize<'a>(games: impl IntoIterator<Item = &'a Scored>) -> Summary {
     let spread_bets = s.spread_won + s.spread_lost + s.spread_push;
     if spread_bets > 0 {
         s.spread_return = s.spread_units / f64::from(spread_bets);
+    }
+    let flagged_bets = s.flagged_won + s.flagged_lost + s.flagged_push;
+    if flagged_bets > 0 {
+        s.flagged_return = s.flagged_units / f64::from(flagged_bets);
     }
     s
 }
@@ -365,6 +438,8 @@ mod tests {
                 home_score: 100,
                 away_score: 104,
             },
+            13.0,
+            0.05,
         )
         .unwrap();
         assert!(!s.home_won);
@@ -386,6 +461,8 @@ mod tests {
                 home_score: 110,
                 away_score: 107,
             },
+            13.0,
+            0.05,
         )
         .unwrap();
         assert!((fav.lean_units.unwrap() - 100.0 / 135.0).abs() < 1e-12);
@@ -396,6 +473,8 @@ mod tests {
                 home_score: 110,
                 away_score: 107,
             },
+            13.0,
+            0.05,
         )
         .unwrap();
         assert_eq!(
@@ -409,6 +488,8 @@ mod tests {
                 home_score: 90,
                 away_score: 80,
             },
+            13.0,
+            0.05,
         )
         .unwrap();
         assert_eq!(
@@ -420,9 +501,63 @@ mod tests {
             Outcome {
                 home_score: 90,
                 away_score: 90
-            }
+            },
+            13.0,
+            0.05,
         )
         .is_none());
+    }
+
+    #[test]
+    fn the_flagged_bets_are_scored_as_priced_and_summed() {
+        // The Clippers at +114 with the model at 50%: 0.5 × 1.14 − 0.5 = +0.07 a unit,
+        // above a 5% bar; the model's margin of 0 against -2.5 at -115 for the Clippers:
+        // they cover about 56% of the time, 0.56 × 0.87 − 0.44 = +0.05. Both won by 4.
+        let s = score(
+            snap(0.50, Some(0.55), 0.0, Some(-2.5)),
+            Outcome {
+                home_score: 100,
+                away_score: 104,
+            },
+            13.0,
+            0.05,
+        )
+        .unwrap();
+        let kinds: Vec<_> = s
+            .flagged
+            .iter()
+            .map(|f| (f.edge.side, f.edge.kind, f.result))
+            .collect();
+        assert_eq!(
+            kinds,
+            vec![
+                (Side::Away, market::BetKind::Moneyline, Bet::Won),
+                (Side::Away, market::BetKind::Spread, Bet::Won)
+            ],
+            "{:?}",
+            s.flagged
+        );
+        assert!((s.flagged[0].units - 1.14).abs() < 1e-12);
+        // A bar above both returns flags nothing; the summary counts and averages them.
+        let none = score(
+            snap(0.50, Some(0.55), 0.0, Some(-2.5)),
+            Outcome {
+                home_score: 100,
+                away_score: 104,
+            },
+            13.0,
+            0.5,
+        )
+        .unwrap();
+        assert!(none.flagged.is_empty());
+        let sum = summarize([&s, &none]);
+        assert_eq!(
+            (sum.flagged_won, sum.flagged_lost, sum.flagged_push),
+            (2, 0, 0)
+        );
+        assert!(
+            (sum.flagged_return - sum.flagged_units / 2.0).abs() < 1e-12 && sum.flagged_units > 2.0
+        );
     }
 
     #[test]
@@ -431,9 +566,9 @@ mod tests {
             home_score: 100,
             away_score: 90,
         };
-        let mut a = score(snap(0.7, Some(0.6), 4.0, Some(-2.0)), win).unwrap();
-        let mut b = score(snap(0.4, Some(0.5), -1.0, Some(-2.0)), win).unwrap();
-        let c = score(snap(0.6, None, 2.0, None), win).unwrap();
+        let mut a = score(snap(0.7, Some(0.6), 4.0, Some(-2.0)), win, 13.0, 0.05).unwrap();
+        let mut b = score(snap(0.4, Some(0.5), -1.0, Some(-2.0)), win, 13.0, 0.05).unwrap();
+        let c = score(snap(0.6, None, 2.0, None), win, 13.0, 0.05).unwrap();
         a.snapshot.model_version = "m1".into();
         b.snapshot.model_version = "m2".into();
         let all = [a, b, c];
@@ -460,20 +595,38 @@ mod tests {
             away_score: a,
         };
         // Home -6.5, the model's margin 2: it takes the visitor, who loses by 4 and covers.
-        let away_covers = score(snap(0.6, Some(0.7), 2.0, Some(-6.5)), result(104, 100)).unwrap();
+        let away_covers = score(
+            snap(0.6, Some(0.7), 2.0, Some(-6.5)),
+            result(104, 100),
+            13.0,
+            0.05,
+        )
+        .unwrap();
         assert_eq!(
             (away_covers.spread_side, away_covers.spread_result),
             (Some(Side::Away), Some(Bet::Won))
         );
         // Home +3.5, the model's margin 1: it takes the home side, which loses by 2 and
         // covers; losing by 5 it does not.
-        let home_covers = score(snap(0.5, Some(0.4), 1.0, Some(3.5)), result(98, 100)).unwrap();
+        let home_covers = score(
+            snap(0.5, Some(0.4), 1.0, Some(3.5)),
+            result(98, 100),
+            13.0,
+            0.05,
+        )
+        .unwrap();
         assert_eq!(
             (home_covers.spread_side, home_covers.spread_result),
             (Some(Side::Home), Some(Bet::Won))
         );
         assert!((home_covers.spread_units.unwrap() - 100.0 / 105.0).abs() < 1e-12);
-        let home_fails = score(snap(0.5, Some(0.4), 1.0, Some(3.5)), result(95, 100)).unwrap();
+        let home_fails = score(
+            snap(0.5, Some(0.4), 1.0, Some(3.5)),
+            result(95, 100),
+            13.0,
+            0.05,
+        )
+        .unwrap();
         assert_eq!(home_fails.spread_result, Some(Bet::Lost));
         // Log loss: -ln(0.6) for the model and -ln(0.7) for the market on a home win.
         let s = summarize([&away_covers]);

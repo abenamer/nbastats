@@ -15,6 +15,7 @@ use serde::Serialize;
 use tracing::{info, warn};
 
 use crate::domain::ids::{SeasonYear, TeamId};
+use crate::domain::market as market_domain;
 use crate::domain::tracking::{self, Group, Outcome, Scored, Snapshot, Summary};
 
 use super::market::{self, Market};
@@ -199,7 +200,7 @@ pub async fn capture(app: &App, season: SeasonYear) -> Result<u64, SeasonLoadErr
             .nothing_today(today);
         return Ok(0);
     }
-    let m = market::market_for(app, season, &t).await?;
+    let m = market::market_for(app, season, &t, market_domain::DEFAULT_MIN_RETURN).await?;
     // A read that got no answer records nothing: the next look tries again, the source's
     // one-minute failure memory keeping the tries apart.
     if m.read_at.is_none() {
@@ -286,6 +287,9 @@ pub async fn run(app: Arc<App>) {
 #[derive(Debug, Clone, Serialize)]
 pub struct TrackRecord {
     pub season: SeasonYear,
+    /// The edge rule's inputs the flagged bets were scored with.
+    pub min_return: f64,
+    pub scatter: market::MarginScatter,
     /// Snapshots stored; those scored (the game played); those whose game is still to be
     /// played; and those that match no stored game (a game moved to another date) or whose
     /// stored score is a tie. The last three add up to the first.
@@ -313,6 +317,8 @@ pub type GameKey = (NaiveDate, String, String);
 pub fn match_results(
     snapshots: Vec<Snapshot>,
     games: &HashMap<GameKey, Option<Outcome>>,
+    sigma: f64,
+    min_return: f64,
 ) -> (Vec<Scored>, usize, usize) {
     let (mut pending, mut unmatched) = (0, 0);
     let mut scored: Vec<Scored> = Vec::new();
@@ -320,7 +326,7 @@ pub fn match_results(
         let key = (s.game_date, s.home_code.clone(), s.away_code.clone());
         match games.get(&key) {
             // A tied score, which the sport does not have, is a data error: unmatched.
-            Some(Some(outcome)) => match tracking::score(s, *outcome) {
+            Some(Some(outcome)) => match tracking::score(s, *outcome, sigma, min_return) {
                 Some(x) => scored.push(x),
                 None => unmatched += 1,
             },
@@ -339,12 +345,19 @@ pub fn match_results(
 
 /// The record of `season`: each stored snapshot matched to its game by date and team
 /// codes and scored once the game is played.
-pub async fn record(app: &App, season: SeasonYear) -> Result<TrackRecord, SeasonLoadError> {
+pub async fn record(
+    app: &App,
+    season: SeasonYear,
+    min_return: f64,
+) -> Result<TrackRecord, SeasonLoadError> {
     let snapshots = app.store.snapshots(season).await?;
     let current_model = tracking::tonight_model_version();
+    let scatter = market::margin_scatter(app, season).await?;
     if snapshots.is_empty() {
         return Ok(TrackRecord {
             season,
+            min_return,
+            scatter,
             snapshots: 0,
             scored: 0,
             pending: 0,
@@ -382,7 +395,8 @@ pub async fn record(app: &App, season: SeasonYear) -> Result<TrackRecord, Season
         })
         .collect();
     let total = snapshots.len();
-    let (mut scored, pending, unmatched) = match_results(snapshots, &games);
+    let (mut scored, pending, unmatched) =
+        match_results(snapshots, &games, scatter.sigma, min_return);
     let overall = tracking::summarize(&scored);
     let by_model = tracking::group_by(&scored, |g| g.snapshot.model_version.clone());
     let by_month = tracking::group_by(&scored, |g| month_of(g.snapshot.game_date));
@@ -390,6 +404,8 @@ pub async fn record(app: &App, season: SeasonYear) -> Result<TrackRecord, Season
     scored.truncate(MAX_GAMES_LISTED);
     Ok(TrackRecord {
         season,
+        min_return,
+        scatter,
         snapshots: total,
         scored: n,
         pending,
@@ -499,6 +515,7 @@ mod tests {
             book_margin: Some(0.046),
             start_time: start,
             started,
+            edges: vec![],
         }
     }
 
@@ -522,6 +539,13 @@ mod tests {
             source: Some("espn"),
             source_note: None,
             quota: None,
+            min_return: 0.05,
+            scatter: market::MarginScatter {
+                sigma: 13.0,
+                games: 0,
+                from: None,
+                to: None,
+            },
             games: vec![
                 // Game 1 starts later: kept. Game 2 started per the source; game 3's start
                 // is past at the read; game 4 has no start time and is not started: kept.
@@ -570,6 +594,13 @@ mod tests {
             source: Some("the-odds-api"),
             source_note: None,
             quota: None,
+            min_return: 0.05,
+            scatter: market::MarginScatter {
+                sigma: 13.0,
+                games: 0,
+                from: None,
+                to: None,
+            },
             games,
             note: None,
         };
@@ -649,6 +680,13 @@ mod tests {
             source: Some("espn"),
             source_note: None,
             quota: None,
+            min_return: 0.05,
+            scatter: market::MarginScatter {
+                sigma: 13.0,
+                games: 0,
+                from: None,
+                to: None,
+            },
             games: vec![line(1, None, false)],
             note: None,
         };
@@ -691,6 +729,8 @@ mod tests {
                 on(5, "H1"),
             ],
             &games,
+            13.0,
+            0.05,
         );
         // The tie counts as unmatched, so the three counts add up to the five.
         assert_eq!((scored.len(), pending, unmatched), (2, 1, 2));

@@ -1254,11 +1254,37 @@ pub async fn season_tonight(
 pub async fn season_tonight_market(
     State(app): State<AppState>,
     Path(season): Path<SeasonYear>,
+    Query(q): Query<EdgeQuery>,
 ) -> ApiResult<Value> {
-    let m = crate::application::market::tonight_market(&app, season)
+    let m = crate::application::market::tonight_market(&app, season, chosen_min_return(&q)?)
         .await
         .map_err(season_load_error)?;
     Ok(Json(json!(m)))
+}
+
+/// The bar a bet's expected return must clear to be flagged, as a share of the stake.
+#[derive(Debug, Default, Deserialize)]
+pub struct EdgeQuery {
+    pub min_return: Option<String>,
+}
+
+/// The bar asked for: the default when absent or empty, else a number from 0 (any
+/// positive return) to 1 (a return of the whole stake).
+fn chosen_min_return(q: &EdgeQuery) -> Result<f64, ApiError> {
+    let Some(text) = q
+        .min_return
+        .as_deref()
+        .map(str::trim)
+        .filter(|t| !t.is_empty())
+    else {
+        return Ok(crate::domain::market::DEFAULT_MIN_RETURN);
+    };
+    text.parse::<f64>()
+        .ok()
+        .filter(|r| r.is_finite() && (0.0..=1.0).contains(r))
+        .ok_or_else(|| {
+            ApiError::bad_request("min_return must be a number from 0 to 1, the share of the stake a bet must return on average to be flagged")
+        })
 }
 
 /// The model against the market over a season: each stored snapshot scored once its game
@@ -1266,8 +1292,9 @@ pub async fn season_tonight_market(
 pub async fn season_market_track(
     State(app): State<AppState>,
     Path(season): Path<SeasonYear>,
+    Query(q): Query<EdgeQuery>,
 ) -> ApiResult<Value> {
-    let r = crate::application::tracking::record(&app, season)
+    let r = crate::application::tracking::record(&app, season, chosen_min_return(&q)?)
         .await
         .map_err(season_load_error)?;
     Ok(Json(json!(r)))

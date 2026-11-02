@@ -67,6 +67,9 @@ table.games tbody:hover td { background:#f8fafc; }
    with a tooltip says so with a dotted underline. */
 table.games th[title] { cursor:help; text-decoration:underline dotted #9ca3af; text-underline-offset:3px; }
 table.games th.book { background:#f3f4f6; }
+/* A bet the edge rule flags: the sportsbook's cell it is on. */
+table.games td.pick { background:#ecfdf5; color:#166534; font-weight:600; box-shadow:inset 3px 0 0 var(--good); }
+#tonightPicks ul { margin:.3rem 0 0; padding-left:1.2rem; } #tonightPicks li { margin:.15rem 0; }
 table.games td.book { color:#4b5563; background:#f9fafb; }
 #tonightLegend { margin:.4rem 0 0; } #tonightLegend dt { font-weight:600; } #tonightLegend dt.book { color:#4b5563; } #tonightLegend dd { margin:0; }
 td.good { color:var(--good); font-weight:600; } td.warn { color:var(--warn); } td.bad { color:var(--bad); }

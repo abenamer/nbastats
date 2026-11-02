@@ -1129,7 +1129,7 @@ fn normal_pdf(x: f64) -> f64 {
 
 /// The standard normal distribution function, by Abramowitz and Stegun 7.1.26 (error
 /// below 1.5e-7).
-fn normal_cdf(x: f64) -> f64 {
+pub fn normal_cdf(x: f64) -> f64 {
     let z = x / std::f64::consts::SQRT_2;
     let t = 1.0 / (1.0 + 0.3275911 * z.abs());
     let poly = t

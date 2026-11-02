@@ -65,6 +65,7 @@ This project follows the [REAS engineering standard](https://github.com/abenamer
 * [ADR 0007 — Full-strength rating from a replayed season](decisions/0007-full-strength-rating.md) - Why tonight's absences are priced off a rating whose played games are replayed with each side's absences, instead of off the stored Elo.
 * [ADR 0008 — Track the model against the market](decisions/0008-track-the-model-against-the-market.md) - Why the model's numbers and the sportsbook's lines are stored before tip-off and scored after, amending ADR 0006.
 * [ADR 0009 — Market lines from The Odds API, with ESPN as the fallback](decisions/0009-market-lines-from-the-odds-api.md) - Why one chosen sportsbook's lines come from The Odds API when a key is set, ESPN's scoreboard stays the fallback, and captures run only on the night's date.
+* [ADR 0010 — Flag a bet by its expected return at the posted price](decisions/0010-flag-a-bet-by-its-expected-return.md) - Why the Tonight panel marks a bet when the model's chance at the sportsbook's price returns a chosen share of the stake, with spreads on a measured scatter, and the record scores the flagged bets apart.
 
 # History
 
