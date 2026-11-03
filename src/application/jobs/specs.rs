@@ -312,6 +312,7 @@ impl JobSpec for DynastyJob {
     async fn execute(self, ctx: JobContext) -> Result<DynastyReport, JobError> {
         dynasty::analyze(&ctx.app, &self.0)
             .await
+            .map(|(report, _)| report)
             .map_err(|e| JobError::Execution(e.to_string()))
     }
 }

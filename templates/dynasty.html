@@ -4,7 +4,7 @@
   <label>Franchise <select id="franchise">{% for f in franchises %}<option value="{{ f.key }}" {% if f.key == "GSW" %}selected{% endif %}>{{ f.name }}</option>{% endfor %}</select></label>
   <label>From <select id="from">{% for s in seasons %}<option value="{{ s.season }}" {% if s.season.end_year() == 2015 %}selected{% endif %}>{{ s.label }}</option>{% endfor %}</select></label>
   <label>To <select id="to">{% for s in seasons %}<option value="{{ s.season }}" {% if s.season.end_year() == 2022 %}selected{% endif %}>{{ s.label }}</option>{% endfor %}</select></label>
-  <label>Persistent alpha <input id="alpha" type="number" value="3" min="0" step="0.5"></label>
+  <label>Title tickets (alpha) <input id="alpha" type="number" value="3" min="0" step="0.5" title="A ticket count, not a rating. This franchise holds this many tickets in each season's title lottery and every other franchise holds one. Its chance each season is alpha / (alpha + the other franchises); 1 is the equal lottery."></label>
   <label>Home adv. <input id="adv" type="number" value="100" min="0" max="400" step="5"></label>
   <label>Elo scale <input id="scale" type="number" value="1.0" min="0.1" max="3" step="0.05"></label>
   <label>Concentration K <input id="threshold" type="number" value="4" min="1"></label>
@@ -12,7 +12,13 @@
   <span id="status" class="muted"></span>
   <span class="row"><button data-preset="GSW,2015,2022">Warriors 2015–22</button><button data-preset="MIA,2011,2014">Heat 2011–14</button><button data-preset="CLE,2015,2018">Cavaliers 2015–18</button><button data-preset="LAL,2004,2025">Lakers</button><button data-preset="BOS,2004,2025">Celtics</button><button data-preset="SAS,2004,2025">Spurs</button></span>
 </section>
+<p class="muted small">Alpha is a ticket count, not a rating. In the ticket lottery this franchise holds alpha tickets in each season's title draw and every other franchise holds one. Its chance each season is alpha divided by alpha plus the other franchises. With 29 others, alpha 29 is a coin flip for the title and alpha 1 is the equal lottery. Set alpha to the value that makes the expected titles equal the actual ones, and the run becomes the expected outcome of that lottery; the Alpha Simulator's backward view gives that value for a window. Alpha does not measure the team. The historical Elo column does: the title chance the pre-playoff ratings gave each season through the real bracket. The panel below gives the strength in Elo.</p>
 <section class="cards" id="cards"></section>
+<section class="panel"><h2>How much stronger, in Elo</h2>
+<p class="muted small">For each season the field is every NBA team's pre-playoff Elo. The cards give the franchise's rating against the league mean, against the best other team and against the worst team, averaged over the seasons it was rated in, with the range of its gap above the mean and its rank; the season table has the same per season. The last card reads the titles backwards against the real fields, as the Alpha Simulator does: the Elo above the league mean a team of constant strength needed for the titles to be its expected count, next to what the franchise actually averaged.</p>
+<div class="cards" id="strengthCards"></div>
+<p class="muted small" id="strengthNote"></p>
+</section>
 <section class="panel"><h2>Season by season</h2><div id="seasons" class="table-wrap"></div></section>
 <section class="grid2">
   <div class="panel"><h2>Pre-playoff Elo and title probability</h2><canvas id="eloChart" height="260"></canvas></div>
@@ -20,7 +26,7 @@
 </section>
 <section class="panel">
   <h2>League-wide concentration over the same period</h2>
-  <p class="muted small">Probability that <em>some</em> franchise wins K or more titles: equal-strength lottery (exact), persistent alpha for the selected franchise (exact), and season-varying Elo championship probabilities fed into the lottery engine (50,000 simulated histories). Franchise Elo captures team strength, not the contribution of any single player.</p>
+  <p class="muted small">Probability that <em>some</em> franchise wins K or more titles: equal-strength lottery (exact), the ticket lottery with alpha tickets for the selected franchise and one for every other (exact), and season-varying Elo championship probabilities fed into the lottery engine (50,000 simulated histories). Franchise Elo captures team strength, not the contribution of any single player.</p>
   <div id="concentration" class="kv"></div>
   <canvas id="maxChart" height="220"></canvas>
 </section>

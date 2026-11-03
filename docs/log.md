@@ -1,6 +1,7 @@
 # Bundle update log
 
 ## 2026-11-03
+* **Update**: [Dynasty analysis](/concepts/dynasty-analysis.md) names the persistent alpha a ticket lottery and says what the count means, and gains the section Strength in Elo; the API reference's dynasty row and the term Alpha follow.
 * **New**: [ADR 0013](/decisions/0013-call-the-model-against-the-market-by-the-paired-brier-gap.md) records the paired Brier comparison; [Market tracking](/concepts/market-tracking.md) gains the section Which is more accurate and the Model vs Market page, the [Application overview](/concepts/application.md) the page, the API reference `comparison` and `limit`, and the term Paired comparison.
 
 ## 2026-11-02

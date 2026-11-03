@@ -54,7 +54,7 @@ The first start imports the bundled game log (75,913 games, 1946-47 to 2024-25).
 | Alpha Simulator | Engine A. Editable strengths, seasons, iterations, threshold K, seed, exact validation, saved scenarios. |
 | Playoff Simulator | Engine B. Historical bracket, Elo ratings, exact and Monte Carlo probabilities, actual results. |
 | Season Forecast | Engine C. For every team: play-in, playoffs, second round, conference finals, Finals and title probability from a chosen date. |
-| Dynasty Lab | Expected versus actual titles, significance under equal strength, persistent alpha and historical Elo. |
+| Dynasty Lab | Expected versus actual titles, significance under equal strength, a ticket lottery and historical Elo; the franchise's strength in Elo against the league mean, the best other team and the worst, and the titles read backwards. |
 | Validation | Backtests from 2003-04, calibration plots, Elo against baselines, rolling parameter tuning, assumptions. |
 | Data | Imports, season coverage, refresh and upload, database health, application version. |
 | Jobs | All simulation jobs with status, versions, retry, cancel and delete. |

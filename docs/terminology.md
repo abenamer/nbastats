@@ -16,7 +16,7 @@ These are project-specific technical terms. They are not a reproduction of the A
 
 | Term | Meaning |
 | --- | --- |
-| Alpha | Strength weight of a franchise in Engine A. The title probability is alpha divided by the sum of all alphas. |
+| Alpha | A franchise's ticket count in Engine A's title lottery. The title probability is alpha divided by the sum of all alphas; with every other franchise at 1 it is alpha / (alpha + N − 1). A count of chances, not a measure of the team. The Dynasty Lab labels it Title tickets. |
 | Absence | A game of a player's team between his first and last game for it in the season that he did not play. The unit the worth is measured on; also, in a forecast, a rating penalty for a team over a span of dates, with an optional standard error the engine draws from. |
 | Absence spell | A run of a team's games that a regular player did not play, read from the box scores. Its length, given how long it has lasted, is what the survival curve estimates. |
 | Active player | A player the last roster refresh listed on a team. Stored as the `active` flag with the current team; every other player of the source is inactive. |
