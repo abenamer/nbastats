@@ -120,6 +120,7 @@ pub fn router(app: State) -> Router {
         .route("/alpha", get(pages::alpha))
         .route("/playoffs", get(pages::playoffs))
         .route("/season", get(pages::season))
+        .route("/market", get(pages::market))
         .route("/players", get(pages::players))
         .route("/dynasty", get(pages::dynasty))
         .route("/validation", get(pages::validation))

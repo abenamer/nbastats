@@ -368,12 +368,108 @@ pub fn summarize<'a>(games: impl IntoIterator<Item = &'a Scored>) -> Summary {
     s
 }
 
-/// A summary with the key it groups by: a model version or a month.
+/// Who a paired comparison favours.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Leader {
+    Model,
+    Market,
+}
+
+/// How many standard errors the mean Brier gap must reach before the comparison is
+/// called: the usual two, about one chance in twenty of luck alone.
+pub const DECISIVE_Z: f64 = 2.0;
+/// The fewest games both priced before a lead is called at all: the mean of the gaps is
+/// near enough normal from a few dozen games on, and a lead over fewer is luck's to give.
+pub const MIN_GAMES_TO_CALL: u32 = 30;
+/// Games to tell beyond this many, ten seasons' worth, are reported as none: the gap is
+/// too small for the record to settle.
+pub const MAX_GAMES_TO_TELL: u64 = 12_300;
+/// A mean gap smaller than this is level, as a game's gap is.
+const LEVEL_GAP: f64 = 1e-12;
+
+/// The model against the market on the games both priced, as a paired comparison. Per game
+/// the gap is the market's Brier score less the model's, so a positive gap favours the
+/// model; the mean gap, the standard error of that mean and the mean in standard errors
+/// say whether the two are apart by more than luck gives. The counts say on how many games
+/// each was the closer. The lead is decided at [`DECISIVE_Z`] standard errors from
+/// [`MIN_GAMES_TO_CALL`] games on. `games_to_tell` is how many games, at the observed mean
+/// gap and spread, bring the mean to [`DECISIVE_Z`] standard errors, at least
+/// [`MIN_GAMES_TO_CALL`], none beyond [`MAX_GAMES_TO_TELL`] or when the two are level; so
+/// a lead is decided exactly when the games reach it.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Comparison {
+    pub games: u32,
+    pub model_closer: u32,
+    pub market_closer: u32,
+    pub ties: u32,
+    pub brier_gain: f64,
+    pub brier_gain_se: Option<f64>,
+    pub z: Option<f64>,
+    pub leader: Option<Leader>,
+    pub decided: bool,
+    pub games_to_tell: Option<u64>,
+}
+
+/// Compare the model with the market over the games the market priced; `None` without one.
+pub fn compare<'a>(games: impl IntoIterator<Item = &'a Scored>) -> Option<Comparison> {
+    let gaps: Vec<f64> = games
+        .into_iter()
+        .filter_map(|g| g.brier_market.map(|bm| bm - g.brier_model))
+        .collect();
+    if gaps.is_empty() {
+        return None;
+    }
+    let n = gaps.len();
+    let (mut model_closer, mut market_closer, mut ties) = (0, 0, 0);
+    for &d in &gaps {
+        if d.abs() < 1e-12 {
+            ties += 1;
+        } else if d > 0.0 {
+            model_closer += 1;
+        } else {
+            market_closer += 1;
+        }
+    }
+    let mean = gaps.iter().sum::<f64>() / n as f64;
+    let level = mean.abs() < LEVEL_GAP;
+    let sd = (n >= 2)
+        .then(|| (gaps.iter().map(|d| (d - mean).powi(2)).sum::<f64>() / (n - 1) as f64).sqrt());
+    let se = sd.map(|sd| sd / (n as f64).sqrt());
+    let z = se.filter(|se| *se > 0.0 && !level).map(|se| mean / se);
+    let games_to_tell = sd
+        .filter(|sd| *sd > 0.0 && !level)
+        .map(|sd| (DECISIVE_Z * sd / mean).powi(2).ceil())
+        .filter(|g| *g <= MAX_GAMES_TO_TELL as f64)
+        .map(|g| (g as u64).max(u64::from(MIN_GAMES_TO_CALL)));
+    Some(Comparison {
+        games: n as u32,
+        model_closer,
+        market_closer,
+        ties,
+        brier_gain: mean,
+        brier_gain_se: se,
+        z,
+        leader: if level {
+            None
+        } else if mean > 0.0 {
+            Some(Leader::Model)
+        } else {
+            Some(Leader::Market)
+        },
+        decided: n as u32 >= MIN_GAMES_TO_CALL && z.is_some_and(|z| z.abs() >= DECISIVE_Z),
+        games_to_tell,
+    })
+}
+
+/// A summary with the key it groups by: a model version or a month, and the paired
+/// comparison of its games.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Group {
     pub key: String,
     #[serde(flatten)]
     pub summary: Summary,
+    pub comparison: Option<Comparison>,
 }
 
 /// The scored games grouped by `key`, in key order.
@@ -386,6 +482,7 @@ pub fn group_by(games: &[Scored], key: impl Fn(&Scored) -> String) -> Vec<Group>
         .into_iter()
         .map(|(key, gs)| Group {
             key,
+            comparison: compare(gs.iter().copied()),
             summary: summarize(gs),
         })
         .collect()
@@ -636,5 +733,76 @@ mod tests {
         // The margin version names the Elo a point it was written for.
         let per_point = format!("{}", crate::domain::worth::ELO_PER_POINT as i64);
         assert!(crate::domain::worth::MARGIN_MODEL_VERSION.contains(&per_point));
+    }
+
+    #[test]
+    fn the_paired_comparison_counts_the_closer_side_and_measures_the_gap() {
+        let played = |p_model, p_market, home_won: bool| {
+            score(
+                snap(p_model, Some(p_market), 0.0, None),
+                Outcome {
+                    home_score: if home_won { 100 } else { 90 },
+                    away_score: 95,
+                },
+                13.0,
+                0.05,
+            )
+            .unwrap()
+        };
+        // The market closer twice by a lot, the model closer once by a little.
+        let games = vec![
+            played(0.50, 0.70, true),
+            played(0.50, 0.70, true),
+            played(0.55, 0.50, true),
+        ];
+        let c = compare(&games).unwrap();
+        assert_eq!(
+            (c.games, c.model_closer, c.market_closer, c.ties),
+            (3, 1, 2, 0)
+        );
+        assert_eq!(c.leader, Some(Leader::Market));
+        assert!(c.brier_gain < 0.0);
+        let z = c.z.unwrap();
+        assert!(z < 0.0 && !c.decided, "three games do not decide: z = {z}");
+        assert!(c.games_to_tell.unwrap() > 3);
+        // Two games with a huge lead in standard errors are still too few to call.
+        let two = vec![played(0.50, 0.70, true), played(0.50, 0.72, true)];
+        let c = compare(&two).unwrap();
+        assert!(c.z.unwrap().abs() > DECISIVE_Z && !c.decided, "{c:?}");
+        assert_eq!(c.games_to_tell, Some(u64::from(MIN_GAMES_TO_CALL)));
+        // Gaps that cancel are level: no leader, no lead, nothing to tell; a mean too
+        // small for ten seasons to settle has a leader but nothing to tell.
+        let level = vec![played(0.50, 0.60, true), played(0.60, 0.50, true)];
+        let c = compare(&level).unwrap();
+        assert_eq!((c.leader, c.z, c.games_to_tell), (None, None, None));
+        let tiny = vec![played(0.50, 0.60, true), played(0.60, 0.5001, true)];
+        let c = compare(&tiny).unwrap();
+        assert_eq!(c.leader, Some(Leader::Market));
+        assert!(c.brier_gain.abs() < 1e-3 && c.z.is_some(), "{c:?}");
+        assert_eq!(c.games_to_tell, None, "{c:?}");
+        // The same gap in every game: no spread, so no error and no verdict, but a leader.
+        let same = vec![played(0.50, 0.70, true), played(0.50, 0.70, true)];
+        let c = compare(&same).unwrap();
+        assert_eq!(
+            (c.brier_gain_se, c.z, c.games_to_tell),
+            (Some(0.0), None, None)
+        );
+        assert_eq!(c.leader, Some(Leader::Market));
+        assert!(!c.decided);
+        // Many games with a steady lead decide it; a tie counts as neither.
+        let mut many: Vec<Scored> = (0..40).map(|i| played(0.50, 0.60, i % 4 != 0)).collect();
+        many.push(played(0.60, 0.60, true));
+        let c = compare(&many).unwrap();
+        assert_eq!((c.ties, c.games), (1, 41));
+        assert!(c.games >= MIN_GAMES_TO_CALL);
+        assert!(c.decided && c.leader == Some(Leader::Market), "{c:?}");
+        assert!(c.games_to_tell.unwrap() <= 41);
+        assert_eq!(c.decided, u64::from(c.games) >= c.games_to_tell.unwrap());
+        // Without a priced game there is nothing to compare; a single game has no error.
+        assert!(compare(&[]).is_none());
+        let one = compare(&[played(0.5, 0.7, true)]).unwrap();
+        assert_eq!((one.brier_gain_se, one.z, one.decided), (None, None, false));
+        let g = group_by(&games, |_| "all".to_string());
+        assert_eq!(g[0].comparison.as_ref().unwrap().games, 3);
     }
 }

@@ -68,6 +68,7 @@ This project follows the [REAS engineering standard](https://github.com/abenamer
 * [ADR 0010 — Flag a bet by its expected return at the posted price](decisions/0010-flag-a-bet-by-its-expected-return.md) - Why the Tonight panel marks a bet when the model's chance at the sportsbook's price returns a chosen share of the stake, with spreads on a measured scatter, and the record scores the flagged bets apart.
 * [ADR 0011 — A worth what-if moves the team by the difference](decisions/0011-a-worth-what-if-moves-the-team-by-the-difference.md) - Why a reader's what-if on a player's worth is a rating shift of the difference from the model's estimate plus his absences at the what-if, in the forecast, the Tonight panel and the injury card, without changing the model.
 * [ADR 0012 — Cup games from the source's stage labels](decisions/0012-cup-games-from-the-stage-labels.md) - Why the season engine tells the Cup games by the stage labels the results source puts on each game, with the curated dates kept for the seasons before the labels and as the fallback, and why a stored Cup season without labels is fetched whole once.
+* [ADR 0013 — Call the model against the market by the paired Brier gap](decisions/0013-call-the-model-against-the-market-by-the-paired-brier-gap.md) - Why the Model vs Market page calls the more accurate side by the mean game-by-game Brier gap in standard errors, two as the bar, and tells how many games it takes to reach it.
 
 # History
 
