@@ -226,6 +226,27 @@ pub struct DataPage {
 }
 
 #[derive(Template)]
+#[template(path = "market.html")]
+pub struct MarketPage {
+    pub layout: Layout,
+    pub seasons: Vec<Season>,
+}
+
+/// The model against the market, game by game: the seasons from the first with a
+/// results feed, since no snapshot is stored before it.
+pub async fn market(State(app): State<AppState>) -> Response {
+    let seasons = season_list(&app)
+        .await
+        .into_iter()
+        .filter(|s| s.season >= SeasonYear::FIRST_MODERN)
+        .collect();
+    render(MarketPage {
+        layout: Layout::new("Model vs Market", "market"),
+        seasons,
+    })
+}
+
+#[derive(Template)]
 #[template(path = "players.html")]
 pub struct PlayersPage {
     pub layout: Layout,

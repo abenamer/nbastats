@@ -1364,10 +1364,14 @@ pub async fn season_tonight_market(
     Query(q): Query<EdgeQuery>,
 ) -> ApiResult<Value> {
     let what_ifs = chosen_what_ifs(&app, season, q.worth.as_deref()).await?;
-    let m =
-        crate::application::market::tonight_market(&app, season, chosen_min_return(&q)?, &what_ifs)
-            .await
-            .map_err(season_load_error)?;
+    let m = crate::application::market::tonight_market(
+        &app,
+        season,
+        chosen_min_return(q.min_return.as_deref())?,
+        &what_ifs,
+    )
+    .await
+    .map_err(season_load_error)?;
     Ok(Json(json!(m)))
 }
 
@@ -1379,15 +1383,36 @@ pub struct EdgeQuery {
     pub worth: Option<String>,
 }
 
+/// The track record's query: the bar, the ignored what-ifs, and how many scored games to
+/// list.
+#[derive(Debug, Default, Deserialize)]
+pub struct TrackQuery {
+    pub min_return: Option<String>,
+    pub worth: Option<String>,
+    pub limit: Option<String>,
+}
+
+/// How many scored games the record lists: the default when absent or empty, else a whole
+/// number from 1 to the most the record serves.
+fn chosen_limit(text: Option<&str>) -> Result<usize, ApiError> {
+    use crate::application::tracking::{MAX_GAMES_LIMIT, MAX_GAMES_LISTED};
+    let Some(text) = text.map(str::trim).filter(|t| !t.is_empty()) else {
+        return Ok(MAX_GAMES_LISTED);
+    };
+    text.parse::<usize>()
+        .ok()
+        .filter(|n| text.bytes().all(|b| b.is_ascii_digit()) && (1..=MAX_GAMES_LIMIT).contains(n))
+        .ok_or_else(|| {
+            ApiError::bad_request(format!(
+                "limit must be a whole number from 1 to {MAX_GAMES_LIMIT}, the scored games to list"
+            ))
+        })
+}
+
 /// The bar asked for: the default when absent or empty, else a number from 0 (any
 /// positive return) to 1 (a return of the whole stake).
-fn chosen_min_return(q: &EdgeQuery) -> Result<f64, ApiError> {
-    let Some(text) = q
-        .min_return
-        .as_deref()
-        .map(str::trim)
-        .filter(|t| !t.is_empty())
-    else {
+fn chosen_min_return(min_return: Option<&str>) -> Result<f64, ApiError> {
+    let Some(text) = min_return.map(str::trim).filter(|t| !t.is_empty()) else {
         return Ok(crate::domain::market::DEFAULT_MIN_RETURN);
     };
     text.parse::<f64>()
@@ -1399,15 +1424,20 @@ fn chosen_min_return(q: &EdgeQuery) -> Result<f64, ApiError> {
 }
 
 /// The model against the market over a season: each stored snapshot scored once its game
-/// is played, overall, per model version and per month.
+/// is played, overall, per model version and per month, with the paired comparison.
 pub async fn season_market_track(
     State(app): State<AppState>,
     Path(season): Path<SeasonYear>,
-    Query(q): Query<EdgeQuery>,
+    Query(q): Query<TrackQuery>,
 ) -> ApiResult<Value> {
-    let r = crate::application::tracking::record(&app, season, chosen_min_return(&q)?)
-        .await
-        .map_err(season_load_error)?;
+    let r = crate::application::tracking::record(
+        &app,
+        season,
+        chosen_min_return(q.min_return.as_deref())?,
+        chosen_limit(q.limit.as_deref())?,
+    )
+    .await
+    .map_err(season_load_error)?;
     Ok(Json(json!(r)))
 }
 
@@ -2067,6 +2097,18 @@ mod tests {
         list.iter()
             .map(|(k, v)| (k.to_string(), v.to_string()))
             .collect()
+    }
+
+    #[test]
+    fn the_listed_games_limit_defaults_and_is_bounded() {
+        use crate::application::tracking::{MAX_GAMES_LIMIT, MAX_GAMES_LISTED};
+        assert_eq!(chosen_limit(None).unwrap(), MAX_GAMES_LISTED);
+        assert_eq!(chosen_limit(Some("  ")).unwrap(), MAX_GAMES_LISTED);
+        assert_eq!(chosen_limit(Some("1")).unwrap(), 1);
+        assert_eq!(chosen_limit(Some("2000")).unwrap(), MAX_GAMES_LIMIT);
+        for bad in ["0", "2001", "-1", "+5", "ten", "1.5"] {
+            assert!(chosen_limit(Some(bad)).is_err(), "{bad}");
+        }
     }
 
     #[test]

@@ -6,3 +6,7 @@
 
 # research papers are linked, not stored
 research/papers/*.pdf
+
+# Local compose overrides (host networking on a developer machine, published ports)
+compose.override.yaml
+docker-compose.override.yml

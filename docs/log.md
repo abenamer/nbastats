@@ -1,5 +1,8 @@
 # Bundle update log
 
+## 2026-11-03
+* **New**: [ADR 0013](/decisions/0013-call-the-model-against-the-market-by-the-paired-brier-gap.md) records the paired Brier comparison; [Market tracking](/concepts/market-tracking.md) gains the section Which is more accurate and the Model vs Market page, the [Application overview](/concepts/application.md) the page, the API reference `comparison` and `limit`, and the term Paired comparison.
+
 ## 2026-11-02
 * **New**: [ADR 0012](/decisions/0012-cup-games-from-the-stage-labels.md) records telling the Cup games by the source's stage labels; the [NBA Cup forecast](/concepts/nba-cup.md) Data section, [Elo continuation](/concepts/elo-continuation.md), [Player data](/concepts/player-data.md), the import runbook, the schema reference and the term Cup stage follow.
 * **New**: [ADR 0011](/decisions/0011-a-worth-what-if-moves-the-team-by-the-difference.md) records the worth what-if; the [Season forecast engine](/concepts/season-engine.md) describes it, the API reference gives `worth_overrides` and `worth`, and the term Worth what-if is added.

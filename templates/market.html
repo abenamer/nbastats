@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block content %}
+<p class="lead">Every game the sportsbook priced and the model forecast, with the result, and which of the two has been the more accurate. Before each tip-off the application saves the model's chance and spread and the sportsbook's moneylines and spread (the last save before the start, close to the closing line); once the game is played both are scored against the result. Nothing here changes the model: it is the record the model's disagreements with the market have to earn.</p>
+<section class="controls">
+  <label>Season <select id="season">{% for s in seasons %}<option value="{{ s.season }}">{{ s.label }}</option>{% endfor %}</select></label>
+  <label>Flag a bet at <input id="minret" type="number" value="5" min="0" max="100" step="1" style="min-width:4rem;width:4.5rem" title="The bar of the edge rule the flagged bets are scored at, as a share of the stake: the model's chance of winning times the payout at the sportsbook's price, less the chance of losing. The price carries the bookmaker's margin, so the bar is above it."> % of the stake</label>
+  <span id="status" class="muted"></span>
+</section>
+<section class="panel"><h2>Which is more accurate</h2>
+<p class="muted small">Each game is scored twice: the model's chance that the home team wins, and the sportsbook's (its two moneylines with the bookmaker's margin taken out), each against what happened. The score is the Brier score, the squared gap between the chance and the result (1 for a home win, 0 for a loss), so a 70% chance scores 0.09 when the home team wins and 0.49 when it loses; lower is better. The two are compared game by game: the gap is the sportsbook's score less the model's, so the side with the lower mean score is the closer. The gap in standard errors says whether the lead is more than luck gives: under two, the two are not yet apart; two and over, about one chance in twenty that luck alone did it. A lead is called from thirty games both priced on, since fewer cannot carry the test. At the gap and spread seen so far, the page says how many games it takes to reach two. Log loss, minus the log of the chance given to what happened, is shown beside it and punishes a confident miss harder.</p>
+<p class="small" id="verdict"></p>
+<div class="cards" id="cards"></div>
+<p class="muted small" id="note"></p>
+<div id="summary" class="table-wrap"></div>
+</section>
+<section class="panel"><h2>Every scored game</h2>
+<p class="muted small">Latest first. Home wins is each side's chance that the home team wins; Closer names the side whose chance was nearer the result. The spreads are the home team's as a sportsbook writes them: − is the points it gives, + the points it gets; the model's is its expected margin on the night, 28 Elo to a point. Margin is the final margin by the home team. Lean is the side whose chance the model put above the sportsbook's, with how a one-unit bet on it at the sportsbook's moneyline went; Flagged the bets the edge rule marked on the stored line at the bar above, each at its price. Each row names the model version that priced it.</p>
+<div id="games" class="table-wrap"></div>
+</section>
+{% endblock %}
+{% block scripts %}<script src="/static/js/market.js?v={{ layout.assets }}" defer></script>{% endblock %}

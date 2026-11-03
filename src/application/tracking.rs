@@ -16,7 +16,7 @@ use tracing::{info, warn};
 
 use crate::domain::ids::{SeasonYear, TeamId};
 use crate::domain::market as market_domain;
-use crate::domain::tracking::{self, Group, Outcome, Scored, Snapshot, Summary};
+use crate::domain::tracking::{self, Comparison, Group, Outcome, Scored, Snapshot, Summary};
 
 use super::market::{self, Market};
 use super::ports::{GameLog, MarketStore};
@@ -34,8 +34,10 @@ pub const READ_LEAD: Duration = Duration::from_secs(11 * 60);
 /// sportsbook posts its lines hours before a game, so an hourly look finds them in time
 /// without spending a read on every look.
 pub const RETRY_EMPTY_AFTER: Duration = Duration::from_secs(60 * 60);
-/// The most scored games the record lists, latest first.
+/// The most scored games the record lists by default, latest first, and the most a request
+/// may ask for (a season has about 1,230 games).
 pub const MAX_GAMES_LISTED: usize = 300;
+pub const MAX_GAMES_LIMIT: usize = 2000;
 
 /// What the capture task remembers between runs: the night it has read, the tip-off
 /// times still to be read before, the ones already served, and the day the credits were
@@ -298,9 +300,12 @@ pub struct TrackRecord {
     pub pending: usize,
     pub unmatched: usize,
     pub overall: Summary,
+    /// The model against the market on the games both priced; none without one.
+    pub comparison: Option<Comparison>,
     pub by_model: Vec<Group>,
     pub by_month: Vec<Group>,
-    /// The scored games, latest first, at most [`MAX_GAMES_LISTED`].
+    /// The scored games, latest first, at most the limit asked for ([`MAX_GAMES_LISTED`]
+    /// by default).
     pub games: Vec<Scored>,
     /// The model version capturing now, so a reader can tell the current row.
     pub current_model: String,
@@ -349,6 +354,7 @@ pub async fn record(
     app: &App,
     season: SeasonYear,
     min_return: f64,
+    limit: usize,
 ) -> Result<TrackRecord, SeasonLoadError> {
     let snapshots = app.store.snapshots(season).await?;
     let current_model = tracking::tonight_model_version();
@@ -363,6 +369,7 @@ pub async fn record(
             pending: 0,
             unmatched: 0,
             overall: Summary::default(),
+            comparison: None,
             by_model: vec![],
             by_month: vec![],
             games: vec![],
@@ -398,10 +405,11 @@ pub async fn record(
     let (mut scored, pending, unmatched) =
         match_results(snapshots, &games, scatter.sigma, min_return);
     let overall = tracking::summarize(&scored);
+    let comparison = tracking::compare(&scored);
     let by_model = tracking::group_by(&scored, |g| g.snapshot.model_version.clone());
     let by_month = tracking::group_by(&scored, |g| month_of(g.snapshot.game_date));
     let n = scored.len();
-    scored.truncate(MAX_GAMES_LISTED);
+    scored.truncate(limit);
     Ok(TrackRecord {
         season,
         min_return,
@@ -411,6 +419,7 @@ pub async fn record(
         pending,
         unmatched,
         overall,
+        comparison,
         by_model,
         by_month,
         games: scored,
