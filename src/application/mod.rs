@@ -23,3 +23,4 @@ pub mod strength;
 pub mod tracking;
 pub mod update;
 pub mod worth;
+pub mod yaxel;
