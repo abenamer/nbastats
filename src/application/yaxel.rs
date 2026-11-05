@@ -2,7 +2,7 @@
 //! the box scores and the worths the players entered the season with, and scores the
 //! emergence rule with `domain::yaxel`. Read-only: nothing here touches a rating or a page.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 
 use chrono::{Duration, NaiveDate};
@@ -52,6 +52,7 @@ pub async fn backtest(
     to: SeasonYear,
     grid: &Grid,
     through_game: u32,
+    new_minutes: f64,
     progress: &(dyn Fn(&str) + Sync),
 ) -> Result<Backtest, SeasonLoadError> {
     let mut samples = Vec::new();
@@ -60,9 +61,14 @@ pub async fn backtest(
         match season_sample(app, season, grid).await? {
             Ok(sample) => {
                 progress(&format!(
-                    "{}: {} games sampled",
+                    "{}: {} games sampled{}",
                     season.label(),
-                    sample.games.len()
+                    sample.games.len(),
+                    if sample.new_known {
+                        ""
+                    } else {
+                        "; new players not told, no earlier season of box scores to price from"
+                    }
                 ));
                 samples.push(sample);
             }
@@ -72,7 +78,7 @@ pub async fn backtest(
             }
         }
     }
-    let report = yaxel::backtest(&samples, grid, through_game);
+    let report = yaxel::backtest(&samples, grid, through_game, new_minutes);
     let note = report.is_none().then(|| {
         format!(
             "{} season(s) sampled; the backtest needs two.",
@@ -167,6 +173,10 @@ async fn season_sample(
             "no earlier season to price the players from".to_string()
         ));
     }
+    // Without a season of box scores among the ones the players are priced from, nobody
+    // has an earlier line, so every player drafted within five years, or without a draft
+    // year, would look new: the season cannot tell its new players.
+    let new_known = !box_tables.is_empty();
     let pricer = Pricer::load(app, season, tables, box_tables, &ids).await?;
     let priors: HashMap<PlayerId, f64> = ids
         .iter()
@@ -175,10 +185,16 @@ async fn season_sample(
             (id, estimate.map_or(0.0, |e| e.elo))
         })
         .collect();
+    // The players new to the league this season; one without a record counts as new.
+    let new_players: HashSet<PlayerId> = ids
+        .iter()
+        .copied()
+        .filter(|id| pricer.is_new(*id, pricer.players.get(id)))
+        .collect();
     let calibration = pricer.calibration.clone();
     let home_advantage = app.home_advantage(season).await?.regular;
     let grid = grid.clone();
-    let sample = tokio::task::spawn_blocking(move || {
+    let mut sample = tokio::task::spawn_blocking(move || {
         build_season(
             season,
             home_advantage,
@@ -186,6 +202,7 @@ async fn season_sample(
             &lines,
             &listed,
             &priors,
+            &new_players,
             calibration.as_ref(),
             &grid,
         )
@@ -196,12 +213,14 @@ async fn season_sample(
             "the sample did not build: {e}"
         )))
     })?;
+    sample.new_known = new_known;
     Ok(Ok(sample))
 }
 
 /// The games of a season sampled: per date, the floors of the teams playing are the players
-/// who played in each team's previous game, each with the worth he entered the season with
-/// and his box worth over the window before the date.
+/// who played in each team's previous game, each with the worth he entered the season with,
+/// his box worth over the window before the date, whether he is new to the league and his
+/// minutes in that previous game.
 #[allow(clippy::too_many_arguments)]
 fn build_season(
     season: SeasonYear,
@@ -210,6 +229,7 @@ fn build_season(
     lines: &[BoxLine],
     listed: &HashMap<PlayerId, f64>,
     priors: &HashMap<PlayerId, f64>,
+    new_players: &HashSet<PlayerId>,
     calibration: Option<&BoxCalibration>,
     grid: &Grid,
 ) -> SeasonSample {
@@ -221,18 +241,23 @@ fn build_season(
     for g in games {
         by_date.entry(g.game_date).or_default().push(g);
     }
-    let played = |game: &Game, team: TeamId| -> Vec<PlayerId> {
+    // The players who played for a team in a game, with their minutes.
+    let played = |game: &Game, team: TeamId| -> Vec<(PlayerId, f64)> {
         by_game
             .get(&game.id)
             .map(|ls| {
                 ls.iter()
-                    .filter(|l| l.team_id == team && l.seconds.is_some_and(|s| s > 0))
-                    .map(|l| l.player_id)
+                    .filter(|l| l.team_id == team)
+                    .filter_map(|l| {
+                        l.seconds
+                            .filter(|s| *s > 0)
+                            .map(|s| (l.player_id, f64::from(s) / 60.0))
+                    })
                     .collect()
             })
             .unwrap_or_default()
     };
-    let mut last_floor: HashMap<TeamId, Vec<PlayerId>> = HashMap::new();
+    let mut last_floor: HashMap<TeamId, Vec<(PlayerId, f64)>> = HashMap::new();
     let mut game_no: HashMap<TeamId, u32> = HashMap::new();
     let mut out = Vec::with_capacity(games.len());
     for (&date, todays) in &by_date {
@@ -262,7 +287,7 @@ fn build_season(
                 .map(|players| {
                     players
                         .iter()
-                        .map(|&p| Floor {
+                        .map(|&(p, last_minutes)| Floor {
                             prior_elo: priors.get(&p).copied().unwrap_or(0.0),
                             recent: table
                                 .bpm_available
@@ -271,6 +296,8 @@ fn build_season(
                                 .map(|(box_elo, minutes)| {
                                     (calibration.map_or(box_elo, |c| c.prior(box_elo).0), minutes)
                                 }),
+                            new: new_players.contains(&p),
+                            last_minutes,
                         })
                         .collect()
                 })
@@ -305,6 +332,7 @@ fn build_season(
         season,
         home_advantage,
         games: out,
+        new_known: true,
     }
 }
 
@@ -326,9 +354,96 @@ fn scored_cells(s: Option<&yaxel::Scored>) -> String {
     }
 }
 
-/// The backtest as a Markdown report: what was run, each fold's choice and its test
-/// score, every test season, and the test seasons pooled. The gain is in thousandths of
-/// Brier score per game, positive when YAXEL is the closer.
+fn cut_cells(c: &yaxel::Cut) -> String {
+    let f4 = |x: Option<f64>| x.map_or("–".to_string(), |v| format!("{v:.4}"));
+    format!(
+        "{} | {} | {} | {} | {} | {} | {} | {}",
+        c.games,
+        if c.of == 0 {
+            "–".to_string()
+        } else {
+            format!("{:.0}%", 100.0 * f64::from(c.games) / f64::from(c.of))
+        },
+        f4(c.brier_new),
+        f4(c.brier_rest),
+        c.team_games,
+        c.bias.map_or("–".to_string(), |b| signed(100.0 * b, 1)),
+        c.bias_elo().map_or("–".to_string(), |e| signed(e, 0)),
+        c.bias_z.map_or("–".to_string(), |z| format!("{z:.1}"))
+    )
+}
+
+/// The cut's eight cells: their heads, their rule, and the cells of a season that cannot
+/// tell its new players.
+const CUT_HEADER: &str =
+    "| Games with | Share | Brier (new) | Brier (rest) | Team-games | Bias (pts) | ≈ Elo | z |";
+const CUT_RULE: &str = "|---|---|---|---|---|---|---|---|";
+const NOT_TOLD: &str = "not told | – | – | – | – | – | – | –";
+
+/// One grid run rendered: the folds, the test seasons and the pooled scores.
+fn render_run(out: &mut String, r: &yaxel::Run, through_game: u32) {
+    let early_cells = |e: Option<&yaxel::Scored>| {
+        format!(
+            "{} | {}",
+            e.map_or("0".to_string(), |e| e.games.to_string()),
+            e.map_or("– | –".to_string(), |e| format!(
+                "{} | {}",
+                signed(e.gain * 1000.0, 2),
+                e.z.map_or("–".to_string(), |z| format!("{z:.1}"))
+            ))
+        )
+    };
+    out.push_str("### Folds\n\n| Fold | Chosen window | Prior minutes | Damping | Train gain | Test games | Brier base | Brier YAXEL | Test gain | z | Early games | Early gain | Early z |\n|---|---|---|---|---|---|---|---|---|---|---|---|---|\n");
+    for (i, f) in r.folds.iter().enumerate() {
+        out.push_str(&format!(
+            "| {} | {} | {} | {} | {} | {} | {} |\n",
+            i + 1,
+            f.chosen.window_days,
+            f.chosen.prior_minutes,
+            f.chosen.damping,
+            signed(f.train.gain * 1000.0, 2),
+            scored_cells(f.test.as_ref()),
+            early_cells(f.test_early.as_ref())
+        ));
+    }
+    out.push_str("\n### Seasons (each under its fold's parameters)\n\n| Season | Window | Prior minutes | Damping | Games | Brier base | Brier YAXEL | Gain | z | Early games | Early gain | Early z | New-player games | Gain | z |\n|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|\n");
+    for l in &r.per_season {
+        out.push_str(&format!(
+            "| {} | {} | {} | {} | {} | {} | {} |\n",
+            l.season.label(),
+            l.params.window_days,
+            l.params.prior_minutes,
+            l.params.damping,
+            scored_cells(Some(&l.all)),
+            early_cells(l.early.as_ref()),
+            early_cells(l.new_floor.as_ref())
+        ));
+    }
+    out.push_str("\n### Pooled test seasons\n\n| Cut | Games | Brier base | Brier YAXEL | Gain | z |\n|---|---|---|---|---|---|\n");
+    for (label, scored) in [
+        ("All games", r.pooled.as_ref()),
+        (
+            &*format!("Early season (through game {through_game})"),
+            r.pooled_early.as_ref(),
+        ),
+        (
+            "Games with a new player on a floor",
+            r.pooled_new_floor.as_ref(),
+        ),
+        (
+            "Early season, with a new player on a floor",
+            r.pooled_new_floor_early.as_ref(),
+        ),
+    ] {
+        out.push_str(&format!("| {label} | {} |\n", scored_cells(scored)));
+    }
+}
+
+/// The backtest as a Markdown report: what was run; the new players' mark on Elo's own
+/// forecasts, season by season; then the grid run with the term on every player and again
+/// on the new players alone, each with its folds, its test seasons and the test seasons
+/// pooled. The gain is in thousandths of Brier score per game, positive when YAXEL is the
+/// closer.
 pub fn render(b: &Backtest) -> String {
     let mut out = String::new();
     out.push_str(&format!(
@@ -347,13 +462,14 @@ pub fn render(b: &Backtest) -> String {
         return out;
     };
     out.push_str(&format!(
-        "Model {}. Seasons sampled: {}. Grid: windows {:?} days, prior minutes {:?}, dampings {:?}. Early season: neither team past game {}.\n\n",
+        "Model {}. Seasons sampled: {}. Grid: windows {:?} days, prior minutes {:?}, dampings {:?}. Early season: neither team past game {}. New player: no record in a stored season before the one played, at least {} minutes in his team's previous game.\n\n",
         r.model,
         r.seasons.len(),
         r.grid.window_days,
         r.grid.prior_minutes,
         r.grid.dampings,
-        r.through_game
+        r.through_game,
+        r.new_players.minutes
     ));
     if !b.skipped.is_empty() {
         out.push_str("Skipped: ");
@@ -366,51 +482,72 @@ pub fn render(b: &Backtest) -> String {
         );
         out.push_str(".\n\n");
     }
-    out.push_str("## Folds\n\n| Fold | Chosen window | Prior minutes | Damping | Train gain | Test games | Brier base | Brier YAXEL | Test gain | z | Early games | Early gain | Early z |\n|---|---|---|---|---|---|---|---|---|---|---|---|---|\n");
-    for (i, f) in r.folds.iter().enumerate() {
-        let early = f.test_early.as_ref();
+    let n = &r.new_players;
+    out.push_str("## New players on Elo's own forecasts\n\nNo rule applied. Games with a new player on a floor, their share of the season, Elo's Brier score on them and on the rest; then the team-games with a new player on one floor only (a game with one on both says nothing about the bias), the bias (those teams' results less Elo's chance, in points of win chance, positive when they beat the rating), the same as Elo at even odds, and the bias in standard errors.\n\n");
+    let cut_table = |out: &mut String, first: &str, rows: &[(String, u32, Option<&yaxel::Cut>)]| {
         out.push_str(&format!(
-            "| {} | {} | {} | {} | {} | {} | {} | {} |\n",
-            i + 1,
-            f.chosen.window_days,
-            f.chosen.prior_minutes,
-            f.chosen.damping,
-            signed(f.train.gain * 1000.0, 2),
-            scored_cells(f.test.as_ref()),
-            early.map_or("0".to_string(), |e| e.games.to_string()),
-            early.map_or("– | –".to_string(), |e| format!(
-                "{} | {}",
-                signed(e.gain * 1000.0, 2),
-                e.z.map_or("–".to_string(), |z| format!("{z:.1}"))
-            ))
+            "| {first} | Games {CUT_HEADER}\n|---|---{CUT_RULE}\n"
         ));
-    }
-    out.push_str("\n## Seasons (each under its fold's parameters)\n\n| Season | Window | Prior minutes | Damping | Games | Brier base | Brier YAXEL | Gain | z | Early games | Early gain | Early z |\n|---|---|---|---|---|---|---|---|---|---|---|---|\n");
-    for l in &r.per_season {
-        let early = l.early.as_ref();
-        out.push_str(&format!(
-            "| {} | {} | {} | {} | {} | {} | {} |\n",
-            l.season.label(),
-            l.params.window_days,
-            l.params.prior_minutes,
-            l.params.damping,
-            scored_cells(Some(&l.all)),
-            early.map_or("0".to_string(), |e| e.games.to_string()),
-            early.map_or("– | –".to_string(), |e| format!(
-                "{} | {}",
-                signed(e.gain * 1000.0, 2),
-                e.z.map_or("–".to_string(), |z| format!("{z:.1}"))
-            ))
-        ));
-    }
-    out.push_str("\n## Pooled test seasons\n\n| Games | Brier base | Brier YAXEL | Gain | z |\n|---|---|---|---|---|\n");
-    out.push_str(&format!("| {} |\n", scored_cells(r.pooled.as_ref())));
+        for (label, games, c) in rows {
+            out.push_str(&format!(
+                "| {label} | {games} | {} |\n",
+                c.map_or_else(|| NOT_TOLD.to_string(), cut_cells)
+            ));
+        }
+    };
+    cut_table(
+        &mut out,
+        "Season",
+        &n.per_season
+            .iter()
+            .map(|l| (l.season.label(), l.games, l.all.as_ref()))
+            .collect::<Vec<_>>(),
+    );
     out.push_str(&format!(
-        "\nEarly season (through game {}):\n\n| Games | Brier base | Brier YAXEL | Gain | z |\n|---|---|---|---|---|\n| {} |\n",
-        r.through_game,
-        scored_cells(r.pooled_early.as_ref())
+        "\nEarly season (through game {}):\n\n",
+        r.through_game
     ));
-    out.push_str("\nGain is base Brier less YAXEL Brier, in thousandths per game; z is the gain in standard errors over the games. A gain over two standard errors on the pooled test seasons, and on the early season, is the bar for taking the rule to the live page.\n");
+    cut_table(
+        &mut out,
+        "Season",
+        &n.per_season
+            .iter()
+            .map(|l| (l.season.label(), l.early_games, l.early.as_ref()))
+            .collect::<Vec<_>>(),
+    );
+    out.push_str("\nPooled over the seasons that can tell a new player:\n\n");
+    cut_table(
+        &mut out,
+        "Cut",
+        &[
+            ("All games".to_string(), n.pooled.of, Some(&n.pooled)),
+            (
+                "Early season".to_string(),
+                n.pooled_early.of,
+                Some(&n.pooled_early),
+            ),
+        ],
+    );
+    if !n.not_told.is_empty() {
+        out.push_str(&format!(
+            "\nNew players cannot be told in {}: no earlier season of box scores among the ones the players are priced from, so every player drafted within five years, or without a draft year, would look new. No game of the season counts as one with a new player on a floor, and the season is left out of the pooled cut and of the run on the new players alone.\n",
+            n.not_told
+                .iter()
+                .map(|s| s.label())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
+    out.push_str("\n## The term on every player\n\n");
+    render_run(&mut out, &r.all, r.through_game);
+    out.push_str("\n## The term on the new players alone\n\n");
+    match &r.new {
+        Some(run) => render_run(&mut out, run, r.through_game),
+        None => out.push_str(
+            "Not run: fewer than two sampled seasons can tell a new player (an earlier season of box scores is needed).\n",
+        ),
+    }
+    out.push_str("\nGain is base Brier less YAXEL Brier, in thousandths per game; z is the gain in standard errors over the games. A gain over two standard errors on the pooled test seasons, and on the early season, is the bar for taking a rule to the live page; for the term on the new players alone, the games with a new player on a floor are where it can act, and its gain there says whether it does. A bias of the new players' teams over two standard errors, with no gain from either term, says the rating is slow on them and the term as built is not the fix.\n");
     out
 }
 
@@ -494,6 +631,7 @@ mod tests {
             prior_minutes: vec![250.0],
             dampings: vec![1.0],
         };
+        let new_players: HashSet<PlayerId> = [PlayerId::new(22)].into_iter().collect();
         let s = build_season(
             SeasonYear::of(2027),
             41.0,
@@ -501,6 +639,7 @@ mod tests {
             &lines,
             &HashMap::new(),
             &priors,
+            &new_players,
             None,
             &grid,
         );
@@ -529,7 +668,12 @@ mod tests {
         for f in home.iter().chain(away) {
             let (_, minutes) = f.recent.expect("the previous game is in the window");
             assert!(minutes > 25.0 && minutes < 36.0, "{minutes}");
+            // The minutes of the previous game are the window's: one game played.
+            assert!((f.last_minutes - minutes).abs() < 1e-9, "{f:?}");
         }
+        // Player 22 is the new one, on team 2's floor; nobody else is.
+        assert_eq!(home.iter().filter(|f| f.new).count(), 1);
+        assert!(away.iter().all(|f| !f.new));
         assert!(!second.home_won);
         // The third game, eight days on: the 7-day window holds no game, the 28-day window
         // holds both; player 12 sat the second game, so he is off team 1's floor.

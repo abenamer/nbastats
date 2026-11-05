@@ -1,6 +1,7 @@
 # Bundle update log
 
 ## 2026-11-05
+* **Update**: [ADR 0014](/decisions/0014-yaxel-an-emergence-term-backtested-before-it-is-used.md) adds the test of the premise (the new-player cut and the term on the new players alone) with a table for its runs; [YAXEL](/concepts/yaxel.md) gains the section New players; the runbook [Run the YAXEL backtest](/runbooks/yaxel-backtest.md) reads the new sections; the term New player is added.
 * **New**: [ADR 0017](/decisions/0017-a-what-if-page-runs-counterfactuals-through-the-season-engine.md) records the What if page; the [Season forecast engine](/concepts/season-engine.md) gains the section Counterfactuals; the [Application overview](/concepts/application.md), the [API reference](/reference/api.md) and the terms What if and Barred team follow.
 * **New**: [ADR 0016](/decisions/0016-track-the-title-chances-against-the-sportsbooks-futures.md) records the title futures; [Market tracking](/concepts/market-tracking.md) gains the section Title futures; the [API reference](/reference/api.md), the [Security model](/concepts/security.md) and the terms Title futures and Fair field follow.
 * **Update**: [ADR 0014](/decisions/0014-yaxel-an-emergence-term-backtested-before-it-is-used.md) gains the section Runs, with the first backtest run (development data, two seasons, bar not cleared) and then the deciding run over the maintainer's full history (17 seasons, 20,348 games, bar not cleared: the live term stays off).

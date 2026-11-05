@@ -86,6 +86,10 @@ enum Command {
         /// The early-season cut: games in which neither team has played more than this many
         #[arg(long, default_value_t = 30)]
         through: u32,
+        /// The new-player cut: a player with no record in a stored season before this one
+        /// counts when he played at least this many minutes in his team's previous game
+        #[arg(long, default_value_t = 24.0)]
+        new_minutes: f64,
         /// Also write the full report as JSON to this path
         #[arg(long)]
         json: Option<std::path::PathBuf>,
@@ -287,6 +291,7 @@ async fn main() -> anyhow::Result<()> {
             from,
             to,
             through,
+            new_minutes,
             json,
         } => {
             use nba_elo_simulator::application::state::{App, Outbound};
@@ -294,6 +299,10 @@ async fn main() -> anyhow::Result<()> {
             let from = SeasonYear::try_new(from)?;
             let to = SeasonYear::try_new(to)?;
             anyhow::ensure!(from <= to, "--from must not be after --to");
+            anyhow::ensure!(
+                new_minutes.is_finite() && (0.0..=48.0).contains(&new_minutes),
+                "--new-minutes must be between 0 and 48"
+            );
             let app = App::new(
                 config,
                 store,
@@ -309,7 +318,8 @@ async fn main() -> anyhow::Result<()> {
             );
             let grid = nba_elo_simulator::domain::yaxel::Grid::default();
             let progress = |line: &str| eprintln!("{line}");
-            let answer = yaxel::backtest(&app, from, to, &grid, through, &progress).await?;
+            let answer =
+                yaxel::backtest(&app, from, to, &grid, through, new_minutes, &progress).await?;
             if let Some(path) = json {
                 std::fs::write(&path, serde_json::to_string_pretty(&answer)?)?;
                 eprintln!("report written to {}", path.display());
