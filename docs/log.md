@@ -1,6 +1,7 @@
 # Bundle update log
 
 ## 2026-11-05
+* **Update**: [ADR 0014](/decisions/0014-yaxel-an-emergence-term-backtested-before-it-is-used.md) gains the section Runs, with the first backtest run (development data, two seasons, bar not cleared) and the deciding run still the maintainer's.
 * **Update**: [Security model](/concepts/security.md) describes the loopback default of `APP_BIND`, the guard on cross-site reads, the redacted `Debug` output and the BALLDONTLIE client's redirect policy; the [Configuration](/reference/configuration.md) reference follows.
 * **New**: [ADR 0015](/decisions/0015-mint-and-rotate-the-question-box-key-from-a-management-key.md) records the key rotation; [Question box](/concepts/question-box.md) gains the section Key rotation; the [Configuration](/reference/configuration.md) and [API](/reference/api.md) references, the [Security model](/concepts/security.md) and the terms Management key and Key rotation follow.
 * **Update**: [Application overview](/concepts/application.md) lists the Tonight and Injury card pages and the Season menu; [Season forecast engine](/concepts/season-engine.md), [Market tracking](/concepts/market-tracking.md), [Player worth](/concepts/player-worth.md) and the [Security model](/concepts/security.md) say Tonight page where they said Tonight panel; the terms Tonight and Season menu are added, Injury card names its page, and the API reference lists every page. [Market tracking](/concepts/market-tracking.md) describes the version tags of the Model vs Market page.

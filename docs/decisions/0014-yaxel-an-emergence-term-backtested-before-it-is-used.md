@@ -33,3 +33,12 @@ The papers in the project's research say what to expect ([ADR 0008](0008-track-t
 * Raising K, or updating the rating from the box-score margin as well as the real one, was rejected: the maintainer asked that the rating stay what it is, and the record judges it.
 * Projecting minutes was rejected: minutes at the top of a rotation are the predictable ones and carry the value, and the floor of the previous game with the minutes played needs no forecast.
 * Choosing the parameters on the seasons they are scored on was rejected, which is why there are two folds; choosing them by hand was rejected, which is why there is a grid.
+
+## Runs
+
+| Run | Seasons | Fold parameters (window, prior minutes, damping) | Pooled games | Pooled gain | z | Early games | Early gain | z | Bar |
+|---|---|---|---|---|---|---|---|---|---|
+| 2026-11-05, development data | 2014-15 (1,230 games) and 2015-16 (728 games, a partial season) | fold 1: 7 days, 500, 0.25; fold 2: 7 days, 100, 0.25 | 1,958 | −1.08 | −1.3 | 879 | −2.28 | −1.7 | not cleared |
+
+The first run is a stand-in, not the deciding one: two seasons only, the second a partial season, and no season before 2014-15 with box scores, so the players entered that season priced at a draft bracket or at a results-only worth rather than at their box worth, which inflates the surprises the rule sums. The folds chose the same window and damping and different prior minutes, and each fold's gain reversed the other's (+1.07 at z 2.3 on 2014-15, −4.70 at z −2.3 on 2015-16), so on this data the rule is not stable. The deciding run is the maintainer's over the full box-score history (`docker compose exec nba-app nba-elo-simulator yaxel-backtest --from 2010 --to 2026`), to be recorded here; until it clears the bar, nothing on a page changes.
+
