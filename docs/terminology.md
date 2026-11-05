@@ -16,7 +16,7 @@ These are project-specific technical terms. They are not a reproduction of the A
 
 | Term | Meaning |
 | --- | --- |
-| Alpha | Strength weight of a franchise in Engine A. The title probability is alpha divided by the sum of all alphas. |
+| Alpha | A franchise's ticket count in Engine A's title lottery. The title probability is alpha divided by the sum of all alphas; with every other franchise at 1 it is alpha / (alpha + N − 1). A count of chances, not a measure of the team. The Dynasty Lab labels it Title tickets. |
 | Absence | A game of a player's team between his first and last game for it in the season that he did not play. The unit the worth is measured on; also, in a forecast, a rating penalty for a team over a span of dates, with an optional standard error the engine draws from. |
 | Absence spell | A run of a team's games that a regular player did not play, read from the box scores. Its length, given how long it has lasted, is what the survival curve estimates. |
 | Active player | A player the last roster refresh listed on a team. Stored as the `active` flag with the current team; every other player of the source is inactive. |
@@ -115,4 +115,5 @@ These are project-specific technical terms. They are not a reproduction of the A
 | Themed era | A curated span of NBA/BAA seasons named for how the game was played or followed (the Reddit NBA era, the three-point dominance era); a season belongs to every theme active in it. |
 | VORP | Value Over Replacement Player: BPM above the replacement level of -2.0 points per 100 possessions, times the player's share of the floor, times his team's games over 82. Times 2.7 it is wins over replacement. |
 | Title HHI | The Herfindahl-Hirschman index of a group's titles: the sum of each champion's squared share. 1.0 when one franchise won every title; lower when the titles spread out. |
+| YAXEL | The emergence term: a shift to a team's rating from the surprises of the players on its floor, each his recent box worth shrunk toward the worth he entered the season with by his minutes, less that worth, summed and damped. Named for the rookie whose first weeks the market priced and the rating did not. Backtested before use; see [YAXEL](/concepts/yaxel.md). |
 | Worth what-if | A reader's own worth for a player, typed from −400 to 400 Elo or read from his last 1 to 82 games through the box-score conversion: his team's rating moves by the difference from the model's estimate and his absences are priced at it, in the forecast, the Tonight panel and the injury card, without changing the model. See [ADR 0011](decisions/0011-a-worth-what-if-moves-the-team-by-the-difference.md). |

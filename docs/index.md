@@ -36,6 +36,7 @@ This project follows the [REAS engineering standard](https://github.com/abenamer
 * [Parity profile](concepts/parity.md) - How the Records page measures, season by season, how far the champion, the finalists, the final four and the playoff field stood above their league, in Elo points and in standard deviations.
 * [Question box](concepts/question-box.md) - How the dashboard answers a question from the stored data through a language model with read-only tools, and what it refuses.
 * [Market tracking](concepts/market-tracking.md) - How each game's model numbers and sportsbook lines are saved before tip-off and scored after the result, per model version.
+* [YAXEL, the emergence term](concepts/yaxel.md) - How a player's recent box scores could move his team's rating before the results do, and how the rule is backtested before it is used.
 
 # Runbooks
 
@@ -45,6 +46,7 @@ This project follows the [REAS engineering standard](https://github.com/abenamer
 * [Back up and restore](runbooks/backup-restore.md) - Create, list, restore and verify database backups.
 * [Verify persistence](runbooks/verify-persistence.md) - Run the automated persistence test.
 * [Import and refresh data](runbooks/import-data.md) - Load a CSV file or download the latest game log.
+* [Run the YAXEL backtest](runbooks/yaxel-backtest.md) - Score the emergence term over the stored seasons from the command line and read the report.
 * [Develop and test](runbooks/develop.md) - Build, run and test outside Docker.
 
 # Reference
@@ -69,6 +71,7 @@ This project follows the [REAS engineering standard](https://github.com/abenamer
 * [ADR 0011 — A worth what-if moves the team by the difference](decisions/0011-a-worth-what-if-moves-the-team-by-the-difference.md) - Why a reader's what-if on a player's worth is a rating shift of the difference from the model's estimate plus his absences at the what-if, in the forecast, the Tonight panel and the injury card, without changing the model.
 * [ADR 0012 — Cup games from the source's stage labels](decisions/0012-cup-games-from-the-stage-labels.md) - Why the season engine tells the Cup games by the stage labels the results source puts on each game, with the curated dates kept for the seasons before the labels and as the fallback, and why a stored Cup season without labels is fetched whole once.
 * [ADR 0013 — Call the model against the market by the paired Brier gap](decisions/0013-call-the-model-against-the-market-by-the-paired-brier-gap.md) - Why the Model vs Market page calls the more accurate side by the mean game-by-game Brier gap in standard errors, two as the bar, and tells how many games it takes to reach it.
+* [ADR 0014 — YAXEL, an emergence term backtested before it is used](decisions/0014-yaxel-an-emergence-term-backtested-before-it-is-used.md) - Why a player's recent box scores, against the worth he entered the season with, could move his team's rating, and why the rule is backtested from the command line before it touches a page.
 
 # History
 

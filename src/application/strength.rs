@@ -6,7 +6,7 @@
 //! `domain::simulation::exact` and `domain::strength`, and runs the exact brackets on a
 //! blocking thread under one slot, because a long window costs seconds of CPU.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::domain::elo;
 use crate::domain::ids::SeasonYear;
@@ -44,7 +44,7 @@ pub enum StrengthError {
 }
 
 /// What the franchise actually did over the window, for the comparison on the page.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Actual {
     pub franchise: Option<String>,
     /// Seasons of the window with a field.
@@ -57,7 +57,7 @@ pub struct Actual {
     pub best_mean_gap: Option<f64>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Answer {
     pub alpha: Strength,
     /// `None` when no season of the window has a field.
@@ -118,12 +118,9 @@ fn mean_of(values: &[f64]) -> Option<f64> {
     (!values.is_empty()).then(|| values.iter().sum::<f64>() / values.len() as f64)
 }
 
-/// Validate the record and read it. A franchise key must name a franchise in the store.
-pub async fn read_record<S: AnalysisStore>(
-    store: &S,
-    slot: &tokio::sync::Semaphore,
-    record: Record,
-) -> Result<Answer, StrengthError> {
+/// Check the record's shape: the window in order and at most [`MAX_WINDOW`] seasons, the
+/// titles between one and the seasons. The seasons of the window.
+pub fn check(record: &Record) -> Result<usize, StrengthError> {
     if record.from > record.to {
         return Err(StrengthError::Invalid("from must not be after to".into()));
     }
@@ -139,33 +136,49 @@ pub async fn read_record<S: AnalysisStore>(
             "titles must be between 1 and the number of seasons in the window".into(),
         ));
     }
-    let _slot = slot.try_acquire().map_err(|_| StrengthError::Busy)?;
-    let stats = store.team_season_stats().await?;
+    Ok(seasons)
+}
+
+/// Read a checked record from the team-seasons: the brackets of every field of the window.
+/// A franchise key must name a franchise among them. Blocking for a few seconds on a long
+/// window, so the callers run it off the request thread.
+pub fn read_from(stats: &[TeamSeasonStat], record: &Record) -> Result<Answer, StrengthError> {
+    let seasons = check(record)?;
     if let Some(key) = record.franchise.as_deref() {
         if !stats.iter().any(|s| s.franchise_key == key) {
             return Err(StrengthError::Invalid(format!("unknown franchise {key:?}")));
         }
     }
-    let titles = record.titles;
-    tokio::task::spawn_blocking(move || {
-        let w = window(&stats, &record);
-        let alpha = exact::strength_for_titles(w.franchises.max(2), seasons, titles)
-            .ok_or_else(|| StrengthError::Invalid("no strength for these inputs".into()))?;
-        let elo = elo_strength(&alpha, &w.fields, elo::DEFAULT_HOME_ADVANTAGE);
-        Ok(Answer {
-            alpha,
-            elo,
-            actual: Actual {
-                franchise: record.franchise,
-                seasons_with_field: w.fields.len(),
-                seasons_with_rating: w.own_gaps.len(),
-                mean_gap: mean_of(&w.own_gaps),
-                best_mean_gap: mean_of(&w.best_gaps),
-            },
-        })
+    let w = window(stats, record);
+    let alpha = exact::strength_for_titles(w.franchises.max(2), seasons, record.titles)
+        .ok_or_else(|| StrengthError::Invalid("no strength for these inputs".into()))?;
+    let elo = elo_strength(&alpha, &w.fields, elo::DEFAULT_HOME_ADVANTAGE);
+    Ok(Answer {
+        alpha,
+        elo,
+        actual: Actual {
+            franchise: record.franchise.clone(),
+            seasons_with_field: w.fields.len(),
+            seasons_with_rating: w.own_gaps.len(),
+            mean_gap: mean_of(&w.own_gaps),
+            best_mean_gap: mean_of(&w.best_gaps),
+        },
     })
-    .await
-    .map_err(|e| StrengthError::Invalid(format!("the reading did not finish: {e}")))?
+}
+
+/// Validate the record and read it: one record at a time, a second asked for while one is
+/// read answers busy. A franchise key must name a franchise in the store.
+pub async fn read_record<S: AnalysisStore>(
+    store: &S,
+    slot: &tokio::sync::Semaphore,
+    record: Record,
+) -> Result<Answer, StrengthError> {
+    check(&record)?;
+    let _slot = slot.try_acquire().map_err(|_| StrengthError::Busy)?;
+    let stats = store.team_season_stats().await?;
+    tokio::task::spawn_blocking(move || read_from(&stats, &record))
+        .await
+        .map_err(|e| StrengthError::Invalid(format!("the reading did not finish: {e}")))?
 }
 
 #[cfg(test)]

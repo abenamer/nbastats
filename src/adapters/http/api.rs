@@ -696,11 +696,14 @@ pub async fn dynasty(
     if q.threshold == 0 || q.threshold > 100 {
         return Err(ApiError::bad_request("threshold must be 1-100"));
     }
-    let report = dynasty::analyze(&app, &req).await?;
+    let (report, stats) = dynasty::analyze(&app, &req).await?;
     let concentration = dynasty::concentration(&app, &req, q.threshold).await?;
+    let (implied, implied_note) = dynasty::implied(&app, &req, report.actual_titles, stats).await;
     Ok(Json(json!(dynasty::DynastyResponse {
         report,
-        concentration
+        concentration,
+        implied,
+        implied_note,
     })))
 }
 

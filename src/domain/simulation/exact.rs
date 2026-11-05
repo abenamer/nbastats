@@ -74,7 +74,7 @@ pub fn max_titles_distribution(probs: &[f64], seasons: usize) -> Vec<f64> {
 
 /// How strong a franchise had to be to win `titles` of `seasons` titles among `franchises`
 /// franchises with every other one at alpha 1: the record read backwards.
-#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Strength {
     pub franchises: usize,
     pub seasons: usize,

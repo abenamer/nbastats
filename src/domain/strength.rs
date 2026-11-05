@@ -13,7 +13,7 @@
 //! probabilities give the title chance. The chance rises with the gap, so bisection inverts
 //! it. Everything here is exact; nothing is simulated.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::domain::elo;
 use crate::domain::ids::{SeasonYear, TeamId};
@@ -40,7 +40,7 @@ pub struct Field {
 }
 
 /// A rating gap above the league mean, read three ways.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct EloReading {
     /// Elo points above the league mean.
     pub gap: f64,
@@ -59,7 +59,7 @@ pub struct EloReading {
 }
 
 /// The record read into ratings against the fields of the window.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct EloStrength {
     pub seasons: Vec<SeasonYear>,
     pub league_mean: f64,

@@ -5,14 +5,20 @@ use serde::{Deserialize, Serialize};
 use crate::domain::ids::SeasonYear;
 use crate::domain::models::PlayoffResult;
 use crate::domain::playoffs::bracket::ModelSpec;
+use crate::domain::records::{League, TeamSeasonStat};
 use crate::domain::simulation::alpha::{self, AlphaParams};
-use crate::domain::simulation::dynasty::{compare, DynastyReport, DynastySeason, MODEL_VERSION};
+use crate::domain::simulation::dynasty::{
+    compare, strength_seasons, strength_summary, DynastyReport, DynastySeason, FieldRow,
+    MODEL_VERSION,
+};
 use crate::domain::simulation::exact;
 use crate::domain::simulation::progress::Silent;
 use crate::domain::validation::{invalid, ValidationError};
 
 use super::ports::{AnalysisStore, GameLog, StoreError};
 use super::state::{App, SeasonLoadError};
+use super::strength::{self, Answer, Record, StrengthError};
+use tracing::error;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DynastyRequest {
@@ -77,9 +83,100 @@ pub struct DynastyResponse {
     #[serde(flatten)]
     pub report: DynastyReport,
     pub concentration: Option<ConcentrationComparison>,
+    /// The titles read backwards against the real fields, as the Alpha Simulator reads
+    /// them; `None` with `implied_note` saying why.
+    pub implied: Option<Answer>,
+    pub implied_note: Option<String>,
 }
 
-pub async fn analyze(app: &App, req: &DynastyRequest) -> Result<DynastyReport, DynastyError> {
+/// The rated NBA team-seasons of the window as the strength reading takes them.
+fn field_rows<'a>(stats: &'a [TeamSeasonStat], req: &DynastyRequest) -> Vec<FieldRow<'a>> {
+    stats
+        .iter()
+        .filter(|s| {
+            s.season >= req.from_season
+                && s.season <= req.to_season
+                && League::of_code(&s.code) == League::Nba
+        })
+        .filter_map(|s| {
+            s.elo_pre_playoffs.map(|elo| FieldRow {
+                season: s.season,
+                franchise_key: &s.franchise_key,
+                code: &s.code,
+                elo,
+            })
+        })
+        .collect()
+}
+
+/// How long the page's reading waits for the one strength reader before answering busy:
+/// a reading takes seconds, so a queue of a few is served and a stuck one is not waited on.
+const READER_WAIT: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// Read the window's titles backwards from the team-seasons the report was built from:
+/// the strength a team needed for them against the real fields. The reading waits its
+/// turn for the one reader, up to [`READER_WAIT`], rather than answering busy at once, as
+/// the page cannot retry. None with a note when there is no title, the window is too long,
+/// the franchise has no rated season, the reader stays busy, or the reading failed.
+pub async fn implied(
+    app: &App,
+    req: &DynastyRequest,
+    titles: usize,
+    stats: Vec<TeamSeasonStat>,
+) -> (Option<Answer>, Option<String>) {
+    if titles == 0 {
+        return (
+            None,
+            Some("No title in the window, so there is nothing to read backwards.".to_string()),
+        );
+    }
+    let record = Record {
+        franchise: Some(req.franchise.clone()),
+        from: req.from_season,
+        to: req.to_season,
+        titles,
+    };
+    if let Err(e) = strength::check(&record) {
+        return (None, Some(e.to_string()));
+    }
+    if !stats.iter().any(|s| s.franchise_key == req.franchise) {
+        return (
+            None,
+            Some("The franchise has no rated season in the store.".to_string()),
+        );
+    }
+    let Ok(Ok(_slot)) = tokio::time::timeout(READER_WAIT, app.strength_slot.acquire()).await else {
+        return (
+            None,
+            Some("The strength reader is busy with other records; run the analysis again in a moment.".to_string()),
+        );
+    };
+    let read = tokio::task::spawn_blocking(move || strength::read_from(&stats, &record)).await;
+    match read {
+        Ok(Ok(answer)) => (Some(answer), None),
+        Ok(Err(StrengthError::Invalid(m))) => (None, Some(m)),
+        Ok(Err(e)) => {
+            error!(error = %e, "the dynasty strength reading failed");
+            (
+                None,
+                Some("The strength reading is not available right now.".to_string()),
+            )
+        }
+        Err(e) => {
+            error!(error = %e, "the dynasty strength reading did not finish");
+            (
+                None,
+                Some("The strength reading is not available right now.".to_string()),
+            )
+        }
+    }
+}
+
+/// The report and the team-seasons it read the strength from, for the implied reading.
+pub async fn analyze(
+    app: &App,
+    req: &DynastyRequest,
+) -> Result<(DynastyReport, Vec<TeamSeasonStat>), DynastyError> {
     let franchise = app
         .store
         .franchise_by_key(&req.franchise)
@@ -132,7 +229,15 @@ pub async fn analyze(app: &App, req: &DynastyRequest) -> Result<DynastyReport, D
     }
     let actual_titles = seasons.iter().filter(|s| s.champion).count();
     let comparisons = compare(&seasons, actual_titles);
-    Ok(DynastyReport {
+    let stats = app.store.team_season_stats().await?;
+    let strength = strength_seasons(
+        &franchise.key,
+        req.from_season,
+        req.to_season,
+        &field_rows(&stats, req),
+    );
+    let strength_summary = strength_summary(&strength);
+    let report = DynastyReport {
         model_version: MODEL_VERSION.to_string(),
         franchise_key: franchise.key,
         franchise_name: franchise.name,
@@ -142,7 +247,10 @@ pub async fn analyze(app: &App, req: &DynastyRequest) -> Result<DynastyReport, D
         seasons,
         actual_titles,
         comparisons,
-    })
+        strength,
+        strength_summary,
+    };
+    Ok((report, stats))
 }
 
 /// Compare league-wide title concentration under equal strength, a persistent alpha for the

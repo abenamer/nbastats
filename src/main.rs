@@ -74,6 +74,22 @@ enum Command {
         #[arg(long)]
         every_season: bool,
     },
+    /// Backtest YAXEL, the emergence term, over the stored seasons and print the report
+    /// (read-only: no rating or page changes)
+    YaxelBacktest {
+        /// First season end year, for example 2010 for 2009-10
+        #[arg(long)]
+        from: i32,
+        /// Last season end year
+        #[arg(long)]
+        to: i32,
+        /// The early-season cut: games in which neither team has played more than this many
+        #[arg(long, default_value_t = 30)]
+        through: u32,
+        /// Also write the full report as JSON to this path
+        #[arg(long)]
+        json: Option<std::path::PathBuf>,
+    },
     /// Container health check: GET /healthz on the bound address (exit 0 when healthy)
     Healthcheck,
 }
@@ -254,6 +270,39 @@ async fn main() -> anyhow::Result<()> {
                     Some(players::refresh_active_players(&store, &results, &progress).await?);
             }
             println!("{}", serde_json::to_string_pretty(&outcome)?);
+            Ok(())
+        }
+        Command::YaxelBacktest {
+            from,
+            to,
+            through,
+            json,
+        } => {
+            use nba_elo_simulator::application::state::{App, Outbound};
+            use nba_elo_simulator::application::yaxel;
+            let from = SeasonYear::try_new(from)?;
+            let to = SeasonYear::try_new(to)?;
+            anyhow::ensure!(from <= to, "--from must not be after --to");
+            let app = App::new(
+                config,
+                store,
+                source,
+                Outbound {
+                    results: None,
+                    sync_schedule: None,
+                    model: None,
+                    reports: None,
+                    odds: None,
+                },
+            );
+            let grid = nba_elo_simulator::domain::yaxel::Grid::default();
+            let progress = |line: &str| eprintln!("{line}");
+            let answer = yaxel::backtest(&app, from, to, &grid, through, &progress).await?;
+            if let Some(path) = json {
+                std::fs::write(&path, serde_json::to_string_pretty(&answer)?)?;
+                eprintln!("report written to {}", path.display());
+            }
+            println!("{}", yaxel::render(&answer));
             Ok(())
         }
         Command::Serve => serve(config, store, source, results, model).await,
