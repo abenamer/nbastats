@@ -1,6 +1,7 @@
 # Bundle update log
 
 ## 2026-11-05
+* **New**: [ADR 0017](/decisions/0017-a-what-if-page-runs-counterfactuals-through-the-season-engine.md) records the What if page; the [Season forecast engine](/concepts/season-engine.md) gains the section Counterfactuals; the [Application overview](/concepts/application.md), the [API reference](/reference/api.md) and the terms What if and Barred team follow.
 * **New**: [ADR 0016](/decisions/0016-track-the-title-chances-against-the-sportsbooks-futures.md) records the title futures; [Market tracking](/concepts/market-tracking.md) gains the section Title futures; the [API reference](/reference/api.md), the [Security model](/concepts/security.md) and the terms Title futures and Fair field follow.
 * **Update**: [ADR 0014](/decisions/0014-yaxel-an-emergence-term-backtested-before-it-is-used.md) gains the section Runs, with the first backtest run (development data, two seasons, bar not cleared) and the deciding run still the maintainer's.
 * **Update**: [Security model](/concepts/security.md) describes the loopback default of `APP_BIND`, the guard on cross-site reads, the redacted `Debug` output and the BALLDONTLIE client's redirect policy; the [Configuration](/reference/configuration.md) reference follows.

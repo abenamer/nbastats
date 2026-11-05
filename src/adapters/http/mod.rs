@@ -123,6 +123,7 @@ pub fn router(app: State) -> Router {
         .route("/season", get(pages::season))
         .route("/season/tonight", get(pages::tonight))
         .route("/season/injuries", get(pages::injuries))
+        .route("/season/whatif", get(pages::whatif))
         .route("/market", get(pages::market))
         .route("/players", get(pages::players))
         .route("/dynasty", get(pages::dynasty))

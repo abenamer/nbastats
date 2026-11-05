@@ -3,7 +3,7 @@
 // charts). The night's games are on the Tonight page and a team's report on the Injury
 // card page; the shared pieces are in seasonkit.js.
 (async () => {
-  const { pct, num, esc, runJob, table, setStatus, chart, RESULT, getJSON, labelOf, bracketHtml, knockoutHtml, teamLink, homeBonusNote, playerSearch, whatIfControl } = NBA;
+  const { pct, num, esc, runJob, table, setStatus, chart, RESULT, getJSON, labelOf, bracketHtml, knockoutHtml, teamLink, homeBonusNote, playerSearch, whatIfControl, absenceControl } = NBA;
   // A probability cell shaded by its value; the text stays readable on every shade.
   const shade = p => p == null ? '' : `<span class="heat" style="background:rgba(37,99,235,${(0.08 + 0.72 * p).toFixed(2)});color:${p > 0.5 ? '#fff' : 'inherit'}">${pct(p, 0)}</span>`;
   const heatmap = (teams, pick, n, head) => {
@@ -70,51 +70,11 @@
   defaultDate();
   homeBonusNote(seasonSelect, document.getElementById('radv'), document.getElementById('advNote'));
 
-  // Players out: absences the user adds, priced with the player's worth; and the what-ifs
-  // on players' worth, both inputs of the run.
-  const absences = [];
+  // Players out and the what-ifs on players' worth, both inputs of the run.
   const whoStatus = document.getElementById('whoStatus');
   const search = playerSearch(document.getElementById('whoOptions'), whoStatus);
   const whatIfs = whatIfControl(search, () => {});
-  const seasonSpan = () => { const s = parseInt(seasonSelect.value); return [`${s - 1}-10-01`, `${s}-06-30`]; };
-  function renderAbsences() {
-    document.getElementById('absences').innerHTML = absences.map((a, i) =>
-      `<li>${esc(a.name)} (${esc(a.team_code)}) out ${esc(a.from)} to ${esc(a.to)}: −${num(a.elo, 0)} Elo${a.se_elo ? ` ± ${num(a.se_elo, 0)}` : ''} from the ${esc(a.source)} <button type="button" data-remove="${i}" class="small">remove</button></li>`).join('');
-  }
-  document.getElementById('absences').addEventListener('click', e => {
-    const b = e.target.closest('button[data-remove]'); if (!b) return;
-    absences.splice(Number(b.dataset.remove), 1); renderAbsences();
-  });
-  document.getElementById('whoName').addEventListener('input', search.onInput);
-  document.getElementById('whoAdd').addEventListener('click', async () => {
-    const name = document.getElementById('whoName').value.trim();
-    const player = search.found().get(name);
-    if (!player) { setStatus(whoStatus, 'Pick a player from the list first.', true); return; }
-    const season = parseInt(seasonSelect.value);
-    const [start, end] = seasonSpan();
-    const asOf = document.getElementById('preseason').checked ? '' : document.getElementById('asOf').value;
-    const from = document.getElementById('whoFrom').value || asOf || start;
-    const to = document.getElementById('whoTo').value || end;
-    if (to < from) { setStatus(whoStatus, 'The span ends before it starts.', true); return; }
-    const want = document.getElementById('whoEstimate').value;
-    setStatus(whoStatus, 'pricing…');
-    try {
-      const w = await getJSON(`/api/players/${player.id}/worth`);
-      const worth = w.seasons.find(s => s.season === season) || null;
-      const box = (w.box_seasons || []).filter(b => b.season === season).map(b => b.row).sort((a, b) => b.minutes - a.minutes)[0] || null;
-      let pick = null;
-      if (want === 'worth' || (want === 'auto' && worth)) pick = worth ? { elo: worth.worth_elo, se_elo: worth.se_elo, team_id: worth.teams[worth.teams.length - 1], source: 'missed games' } : null;
-      else if (box) pick = { elo: box.worth_elo, se_elo: 0, team_id: box.team_id, source: 'box score' };
-      if (!pick) { setStatus(whoStatus, `No ${want === 'box' ? 'box-score' : want === 'worth' ? 'with/without' : ''} estimate for ${name} in ${labelOf(season)}.`, true); return; }
-      if (pick.elo <= 0) { setStatus(whoStatus, `${name}'s estimate is ${num(pick.elo, 0)} Elo: an absence that costs nothing is not added.`, true); return; }
-      const teamCode = (w.teams || {})[String(pick.team_id)] || player.team_code || `team ${pick.team_id}`;
-      const entry = { name, player_id: player.id, team_id: pick.team_id, team_code: teamCode, from, to, elo: Math.min(pick.elo, 400), se_elo: Math.min(pick.se_elo, 400), source: pick.source };
-      // One span per player: a second Add replaces the first entry.
-      const existing = absences.findIndex(a => a.player_id === player.id);
-      if (existing >= 0) { absences[existing] = entry; setStatus(whoStatus, `${name} replaced.`); } else { absences.push(entry); setStatus(whoStatus, ''); }
-      renderAbsences();
-    } catch (err) { setStatus(whoStatus, err.message, true); }
-  });
+  const absences = absenceControl(seasonSelect, search, () => document.getElementById('preseason').checked ? '' : document.getElementById('asOf').value);
   document.getElementById('run').addEventListener('click', async () => {
     const btn = document.getElementById('run'); btn.disabled = true;
     const pk = document.getElementById('pk').value; const radv = document.getElementById('radv').value;
@@ -122,7 +82,7 @@
       home_advantage: parseFloat(document.getElementById('adv').value), regular_home_advantage: radv === '' ? null : parseFloat(radv), regular_season_k: parseFloat(document.getElementById('k').value), playoff_k: pk === '' ? null : parseFloat(pk), playoff_scale: 1.0 };
     if (!document.getElementById('preseason').checked && document.getElementById('asOf').value) p.as_of = document.getElementById('asOf').value;
     if (document.getElementById('injuries').checked) p.use_injury_report = true;
-    if (absences.length) p.absences = absences.map(a => ({ team_id: a.team_id, from: a.from, to: a.to, elo: a.elo, se_elo: a.se_elo, player_id: a.player_id }));
+    if (absences.entries.length) p.absences = absences.params();
     if (whatIfs.entries.length) p.worth_overrides = whatIfs.overrides();
     if (document.getElementById('sampleWorth').checked) p.sample_worth = true;
     if (document.getElementById('holdAbsences').checked) p.hold_absences = true;

@@ -115,6 +115,10 @@ pub async fn model_chances(
         playoff_k: None,
         playoff_scale: 1.0,
         absences: a.absences,
+        rating_overrides: Vec::new(),
+        excluded_teams: Vec::new(),
+        qualification: None,
+        first_round_games: None,
     };
     app_worth::fix_penalties(&mut params.absences);
     let games = data.games.clone();

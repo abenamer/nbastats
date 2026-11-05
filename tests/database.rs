@@ -233,6 +233,10 @@ async fn forecasts_never_use_future_information(pool: PgPool) {
         playoff_k: None,
         playoff_scale: 1.0,
         absences: vec![],
+        rating_overrides: Vec::new(),
+        excluded_teams: Vec::new(),
+        qualification: None,
+        first_round_games: None,
     };
     let full = season::run(&params, &games, &by_id, &Silent).unwrap();
     // The projected bracket: sixteen distinct teams, seeds 1 to 8 per conference, exact
@@ -784,6 +788,10 @@ async fn computed_elo_continues_from_the_previous_season(pool: PgPool) {
         playoff_k: None,
         playoff_scale: 1.0,
         absences: vec![],
+        rating_overrides: Vec::new(),
+        excluded_teams: Vec::new(),
+        qualification: None,
+        first_round_games: None,
     };
     let forecast = season::run(&params, &games, &by_id, &Silent).unwrap();
     assert_eq!(forecast.games_remaining, 1230);

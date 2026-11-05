@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block content %}
+<p class="lead">A real season run again with something changed: a team's rating set by hand, a team taken out of the playoffs or replaced by an expansion team, the playoff format of another era, players out, or a player worth more or less than the model says. The season engine runs the plain season and the changed one from the same date with the same seed, and the table shows what moved. The plain forecast is on the <a href="/season">Forecast</a> page.</p>
+<section class="controls">
+  <label>Season <select id="season">{% for s in seasons %}<option value="{{ s.season }}">{{ s.label }}</option>{% endfor %}</select></label>
+  <label>As of date <input id="asOf" type="date"></label>
+  <label><input id="preseason" type="checkbox" checked> Preseason (before any game)</label>
+  <label>Iterations <input id="iterations" type="number" value="5000" min="500" step="500" title="Simulated seasons of each run; the plain and the changed run take the same count and seed"></label>
+  <label>Seed <input id="seed" type="number" value="11"></label>
+  <label title="Price the latest injury report into both runs"><input id="injuries" type="checkbox"> Use the injury report</label>
+  <label>Qualification <select id="qualification" title="The season's own rule, the top eight of each conference, or the play-in of 2020-21 on"><option value="">season's own</option><option value="Top8">top 8</option><option value="PlayIn">play-in</option></select></label>
+  <label>First round <select id="firstRound" title="The season's own length, best of five (before 2002-03) or best of seven"><option value="">season's own</option><option value="5">best of 5</option><option value="7">best of 7</option></select></label>
+  <button id="load" type="button" class="primary">Load the season</button>
+  <button id="run" type="button" class="primary" disabled>Run the what-if</button>
+  <span id="status" class="muted"></span>
+</section>
+{% include "partials/playersout.html" %}
+{% include "partials/whatif.html" %}
+<p class="muted small" id="advNote"></p>
+<section class="panel"><h2>Teams</h2>
+<p class="muted small">Load the season to run the plain forecast and list the teams at their ratings on the cutoff date. Set a rating to replace a team's own (800 to 2,500 Elo; the shifts of the injury report and the what-ifs are applied first, then the rating set here replaces the result). Bar a team from the postseason: it plays its games as scheduled and is ordered last in its conference, so the next team takes its place. Remove sets both: an expansion team at 1,300 Elo, barred from the playoffs. At most ten teams barred, and a conference must keep enough teams for its qualification rule.</p>
+<div id="teams" class="table-wrap"></div>
+</section>
+<section class="panel"><h2>What moved</h2>
+<p class="muted small" id="note"></p>
+<div id="results" class="table-wrap"></div>
+</section>
+<section class="panel"><h2>Projected bracket of the what-if</h2>
+<p class="small" id="bracketNote"></p>
+<div id="projected" class="bracket"></div></section>
+{% endblock %}
+{% block scripts %}<script src="/static/js/seasonkit.js?v={{ layout.assets }}" defer></script><script src="/static/js/whatif.js?v={{ layout.assets }}" defer></script>{% endblock %}

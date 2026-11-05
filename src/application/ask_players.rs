@@ -450,6 +450,10 @@ impl PlayerLookups for App {
             playoff_k: None,
             playoff_scale: 1.0,
             absences: a.absences.clone(),
+            rating_overrides: Vec::new(),
+            excluded_teams: Vec::new(),
+            qualification: None,
+            first_round_games: None,
         };
         app_worth::fix_penalties(&mut params.absences);
         // From the full-strength ratings, so the report's absences are not counted twice.
