@@ -9,7 +9,9 @@
     const s = await getJSON('/api/ask/status');
     if (!s.enabled) {
       input.disabled = true; button.disabled = true;
-      hint.textContent = 'Not enabled: set OPENROUTER_API_KEY in .env (and OPENROUTER_MODEL to choose the model) to turn the question box on.';
+      hint.textContent = s.awaiting_key
+        ? `The question box's key is being minted from the management key${s.key_rotation && s.key_rotation.last_error ? `; the last attempt failed (${s.key_rotation.last_error})` : ''}. Reload in a moment.`
+        : 'Not enabled: set OPENROUTER_API_KEY, or a management key in OPENROUTER_MANAGEMENT_KEY, in .env (and OPENROUTER_MODEL to choose the model) to turn the question box on.';
       return;
     }
     input.maxLength = s.max_question_chars;

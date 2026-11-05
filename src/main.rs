@@ -13,7 +13,7 @@ use nba_elo_simulator::adapters::dataset::HttpDatasetSource;
 use nba_elo_simulator::adapters::espn::EspnScoreboard;
 use nba_elo_simulator::adapters::http;
 use nba_elo_simulator::adapters::odds_api::{OddsApi, OddsApiConfig};
-use nba_elo_simulator::adapters::openrouter::{OpenRouterConfig, OpenRouterModel};
+use nba_elo_simulator::adapters::openrouter::{OpenRouterConfig, OpenRouterKeys, OpenRouterModel};
 use nba_elo_simulator::adapters::postgres::PostgresStore;
 use nba_elo_simulator::application::jobs;
 use nba_elo_simulator::application::ports::LanguageModel;
@@ -157,13 +157,24 @@ async fn main() -> anyhow::Result<()> {
         })?),
         None => None,
     };
-    let model = match &config.openrouter_api_key {
-        Some(key) => Some(OpenRouterModel::new(OpenRouterConfig {
-            api_key: key.clone(),
-            base_url: config.openrouter_base_url.clone(),
-            model: config.openrouter_model.clone(),
-        })?),
+    // The question box runs on the configured key, on a key the management key mints, or
+    // on both: the configured key answers until the first minted one is installed.
+    let keys = match &config.openrouter_management_key {
+        Some(key) => Some(OpenRouterKeys::new(
+            key.clone(),
+            config.openrouter_base_url.clone(),
+        )?),
         None => None,
+    };
+    let model_config = OpenRouterConfig {
+        api_key: config.openrouter_api_key.clone().unwrap_or_default(),
+        base_url: config.openrouter_base_url.clone(),
+        model: config.openrouter_model.clone(),
+    };
+    let model = match (&config.openrouter_api_key, &keys) {
+        (Some(_), _) => Some(OpenRouterModel::new(model_config)?),
+        (None, Some(_)) => Some(OpenRouterModel::awaiting_key(model_config)?),
+        (None, None) => None,
     };
 
     match cli.command.unwrap_or(Command::Serve) {
@@ -291,6 +302,7 @@ async fn main() -> anyhow::Result<()> {
                     results: None,
                     sync_schedule: None,
                     model: None,
+                    keys: None,
                     reports: None,
                     odds: None,
                 },
@@ -305,7 +317,7 @@ async fn main() -> anyhow::Result<()> {
             println!("{}", yaxel::render(&answer));
             Ok(())
         }
-        Command::Serve => serve(config, store, source, results, model).await,
+        Command::Serve => serve(config, store, source, results, model, keys).await,
         Command::Healthcheck => unreachable!("handled before connecting"),
     }
 }
@@ -323,6 +335,7 @@ async fn serve(
     source: HttpDatasetSource,
     results: Option<BalldontlieSource>,
     model: Option<OpenRouterModel>,
+    keys: Option<OpenRouterKeys>,
 ) -> anyhow::Result<()> {
     std::fs::create_dir_all(&config.data_dir)?;
     let reports = if config.game_reports_enabled {
@@ -388,6 +401,7 @@ async fn serve(
             results,
             sync_schedule,
             model,
+            keys,
             reports,
             odds,
         },
@@ -416,9 +430,18 @@ async fn serve(
             warn!("OPENROUTER_BASE_URL is not https: the API key and the questions travel unencrypted");
         }
     }
+    if app.keys.is_some() {
+        info!(
+            every_hours = config.openrouter_key_rotation_hours,
+            limit_credits = config.openrouter_key_limit,
+            key_name = %config.openrouter_key_name,
+            "question box key rotation on: the key is minted at start and replaced on the schedule and on a rejection"
+        );
+    }
     let runner = tokio::spawn(jobs::runner(app.clone()));
     let sync = tokio::spawn(scheduler::run(app.clone()));
     let tracking = tokio::spawn(nba_elo_simulator::application::tracking::run(app.clone()));
+    let mut rotation = tokio::spawn(nba_elo_simulator::application::keys::run(app.clone()));
     let backfill = match (config.player_backfill_from, app.results.is_some()) {
         (Some(from), true) => {
             info!(%from, "box-score backfill of every season scheduled (PLAYER_BACKFILL_FROM)");
@@ -450,6 +473,18 @@ async fn serve(
     let _ = tokio::time::timeout(std::time::Duration::from_secs(10), runner).await;
     sync.abort();
     tracking.abort();
+    // The rotation loop ends on the shutdown signal; a minting in flight is given a moment to
+    // finish, so the key it mints is known to the stop and deleted. A loop still busy is
+    // stopped, and its end awaited, before the keys are deleted, so the two never run at
+    // once; a key minted after that is retired at the next start.
+    if tokio::time::timeout(std::time::Duration::from_secs(5), &mut rotation)
+        .await
+        .is_err()
+    {
+        rotation.abort();
+        let _ = (&mut rotation).await;
+    }
+    nba_elo_simulator::application::keys::stop(&app).await;
     if let Some(b) = backfill {
         b.abort();
     }

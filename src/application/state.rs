@@ -14,7 +14,7 @@ use crate::adapters::balldontlie::BalldontlieSource;
 use crate::adapters::dataset::HttpDatasetSource;
 use crate::adapters::espn::EspnScoreboard;
 use crate::adapters::odds_api::OddsApi;
-use crate::adapters::openrouter::OpenRouterModel;
+use crate::adapters::openrouter::{OpenRouterKeys, OpenRouterModel};
 use crate::adapters::postgres::PostgresStore;
 use crate::application::players::PlayerPhase;
 use crate::application::results_sync::SyncPhase;
@@ -61,8 +61,14 @@ pub struct App {
     pub results: Option<BalldontlieSource>,
     /// Daily sync schedule; `None` when disabled or when there is no results source.
     pub sync_schedule: Option<SyncSchedule>,
-    /// Language model for the question box; `None` until an OpenRouter key is configured.
+    /// Language model for the question box; `None` until an OpenRouter key is configured or
+    /// a management key mints one.
     pub model: Option<OpenRouterModel>,
+    /// The service's key management, for the key rotation; `None` until a management key is
+    /// configured.
+    pub keys: Option<OpenRouterKeys>,
+    /// What the key rotation remembers: when the key was minted, the keys to retire.
+    pub key_rotation: super::keys::Rotation,
     /// Questions answered at the same time; the rest get status 429.
     pub ask_slots: tokio::sync::Semaphore,
     /// Game report source, and the market lines when there is no Odds API key; `None`
@@ -132,6 +138,7 @@ pub struct Outbound {
     pub results: Option<BalldontlieSource>,
     pub sync_schedule: Option<SyncSchedule>,
     pub model: Option<OpenRouterModel>,
+    pub keys: Option<OpenRouterKeys>,
     pub reports: Option<EspnScoreboard>,
     pub odds: Option<OddsApi>,
 }
@@ -147,6 +154,7 @@ impl App {
             results,
             sync_schedule,
             model,
+            keys,
             reports,
             odds,
         } = outbound;
@@ -157,6 +165,8 @@ impl App {
             results,
             sync_schedule,
             model,
+            keys,
+            key_rotation: super::keys::Rotation::default(),
             ask_slots: tokio::sync::Semaphore::new(ASK_SLOTS),
             reports,
             odds,

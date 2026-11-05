@@ -37,8 +37,20 @@ pub struct Config {
     /// Backfill the box scores of every season from this one on, in the background, until
     /// no played date is unfetched; `None` turns the loop off.
     pub player_backfill_from: Option<SeasonYear>,
-    /// OpenRouter API key for the question box; `None` disables it.
+    /// OpenRouter API key for the question box; `None` disables it, unless a management key
+    /// mints one.
     pub openrouter_api_key: Option<String>,
+    /// OpenRouter management key (a provisioning key in the service's older words): the
+    /// application mints its own completion key with it and rotates it; `None` turns the
+    /// rotation off.
+    pub openrouter_management_key: Option<String>,
+    /// Spending limit, in credits, put on each minted key; `None` for no limit.
+    pub openrouter_key_limit: Option<f64>,
+    /// Hours between two scheduled rotations.
+    pub openrouter_key_rotation_hours: u32,
+    /// The name prefix of the keys the application mints, by which it tells its own keys at
+    /// the account from the others; two instances sharing a management key need two.
+    pub openrouter_key_name: String,
     pub openrouter_base_url: String,
     /// The OpenRouter model identifier the question box asks (must support tool calling).
     pub openrouter_model: String,
@@ -139,6 +151,54 @@ impl Config {
             .ok()
             .map(|k| k.trim().to_string())
             .filter(|k| !k.is_empty());
+        let openrouter_management_key = env::var("OPENROUTER_MANAGEMENT_KEY")
+            .ok()
+            .map(|k| k.trim().to_string())
+            .filter(|k| !k.is_empty());
+        let openrouter_key_limit = env::var("OPENROUTER_KEY_LIMIT")
+            .ok()
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty())
+            .map(|v| {
+                v.parse::<f64>()
+                    .ok()
+                    .filter(|l| l.is_finite() && *l > 0.0)
+                    .ok_or_else(|| {
+                        anyhow::anyhow!("OPENROUTER_KEY_LIMIT must be a positive number of credits, for example 5")
+                    })
+            })
+            .transpose()?;
+        let openrouter_key_rotation_hours = env::var("OPENROUTER_KEY_ROTATION_HOURS")
+            .ok()
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty())
+            .map(|v| {
+                v.parse::<u32>()
+                    .ok()
+                    .filter(|h| {
+                        (crate::domain::keys::MIN_INTERVAL_HOURS
+                            ..=crate::domain::keys::MAX_INTERVAL_HOURS)
+                            .contains(h)
+                    })
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "OPENROUTER_KEY_ROTATION_HOURS must be a whole number of hours from {} to {}",
+                            crate::domain::keys::MIN_INTERVAL_HOURS,
+                            crate::domain::keys::MAX_INTERVAL_HOURS
+                        )
+                    })
+            })
+            .transpose()?
+            .unwrap_or(crate::domain::keys::DEFAULT_INTERVAL_HOURS);
+        let openrouter_key_name = match env::var("OPENROUTER_KEY_NAME") {
+            Ok(v) if !v.trim().is_empty() => crate::domain::keys::prefix(&v).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "OPENROUTER_KEY_NAME must be printable text with no space, at most {} characters",
+                    crate::domain::keys::MAX_PREFIX_CHARS
+                )
+            })?,
+            _ => crate::domain::keys::DEFAULT_NAME_PREFIX.to_string(),
+        };
         let openrouter_base_url = env::var("OPENROUTER_BASE_URL")
             .ok()
             .map(|u| u.trim().to_string())
@@ -196,6 +256,10 @@ impl Config {
             player_sync_enabled,
             player_backfill_from,
             openrouter_api_key,
+            openrouter_management_key,
+            openrouter_key_limit,
+            openrouter_key_rotation_hours,
+            openrouter_key_name,
             openrouter_base_url,
             openrouter_model,
             game_reports_enabled,
@@ -270,6 +334,10 @@ mod tests {
             player_sync_enabled: false,
             player_backfill_from: None,
             openrouter_api_key: None,
+            openrouter_management_key: None,
+            openrouter_key_limit: None,
+            openrouter_key_rotation_hours: 24,
+            openrouter_key_name: "nba-elo-simulator".to_string(),
             openrouter_base_url: String::new(),
             openrouter_model: String::new(),
             game_reports_enabled: false,

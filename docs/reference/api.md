@@ -25,8 +25,8 @@ sources:
 
 | Method and path | Function |
 |-----------------|----------|
-| `GET /api/ask/status` | `enabled`, the configured `model` and `max_question_chars`. |
-| `POST /api/ask` | JSON body `{"question": "..."}` (at most 500 characters, body limit 16 KB). Answers from the stored data through the language model's fourteen read-only tools; see [Question box](/concepts/question-box.md). The answer carries: `answer`, `declined` (true when the question is outside the data; `answer` is then the fixed sentence), `steps` (each lookup with tool, arguments and a row count), `model`, `rounds`, `input_tokens`, `output_tokens`. Status 503 when `OPENROUTER_API_KEY` is not set, 429 when two questions are already running, 502 when the model service fails or does not answer in 75 seconds. See the [question box](/concepts/question-box.md). |
+| `GET /api/ask/status` | `enabled` (a model with a key in hand), `awaiting_key` (a management key is set and the first minted key is not in yet), the configured `model`, `max_question_chars` and `key_rotation` (`enabled`, `interval_hours`, `rotations`, `rotated_at`, `next_rotation`, `retiring`, `last_error`; times and counts only, never a key or a hash; see [Question box](/concepts/question-box.md), Key rotation). |
+| `POST /api/ask` | JSON body `{"question": "..."}` (at most 500 characters, body limit 16 KB). Answers from the stored data through the language model's fourteen read-only tools; see [Question box](/concepts/question-box.md). The answer carries: `answer`, `declined` (true when the question is outside the data; `answer` is then the fixed sentence), `steps` (each lookup with tool, arguments and a row count), `model`, `rounds`, `input_tokens`, `output_tokens`. Status 503 when no key is set or the first minted key is not in yet, 429 when two questions are already running, 502 when the model service fails or does not answer in 75 seconds. See the [question box](/concepts/question-box.md). |
 
 # Data
 

@@ -1982,10 +1982,16 @@ pub async fn game_reports(
 // ---------------------------------------------------------------------------------------
 
 pub async fn ask_status(State(app): State<AppState>) -> ApiResult<Value> {
+    let policy = crate::domain::keys::Policy::hours(app.config.openrouter_key_rotation_hours);
+    // Enabled once a key is in hand: the configured one, or the first minted one.
+    let enabled = app.model.as_ref().is_some_and(|m| m.has_key());
     Ok(Json(json!({
-        "enabled": app.model.is_some(),
+        "enabled": enabled,
+        "awaiting_key": app.model.is_some() && !enabled,
         "model": app.model.as_ref().map(|m| m.model_name()),
         "max_question_chars": ask::MAX_QUESTION_CHARS,
+        // Times and counts only: no key, no hash.
+        "key_rotation": app.key_rotation.status(app.keys.is_some(), policy),
     })))
 }
 
@@ -2021,7 +2027,16 @@ pub async fn ask(State(app): State<AppState>, Json(body): Json<AskBody>) -> ApiR
         regular_home_advantage,
     )
     .await
-    .map_err(ask_error)?;
+    .map_err(|e| {
+        // The service refused the key (401; a 403 is its moderation refusing the question):
+        // a fresh one is minted, once per cooldown, when a management key is configured.
+        if let AskError::Model(ModelError::Rejected { status: 401, .. }) = &e {
+            if app.keys.is_some() && app.key_rotation.rejected(chrono::Utc::now()) {
+                tracing::info!("the question box's key was refused; a fresh one is being minted");
+            }
+        }
+        ask_error(e)
+    })?;
     Ok(Json(answer))
 }
 
