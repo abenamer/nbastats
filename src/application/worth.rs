@@ -556,6 +556,21 @@ impl Pricer {
             .and_then(|(_, t)| app_rookie::season_box(t, player))
     }
 
+    /// Whether a player is new to the league: no line in any stored season before this
+    /// one, whatever his draft year, so a first-year player, one who lost his first season,
+    /// or an arrival from abroad. A draft older than five years before the season is no
+    /// new player's: a gap in the stored box scores must not turn a veteran into one.
+    /// A player without a record has no draft to bar him; his lines decide.
+    pub fn is_new(&self, player_id: PlayerId, player: Option<&Player>) -> bool {
+        !self
+            .first_seasons
+            .get(&player_id)
+            .is_some_and(|s| *s < self.season)
+            && player
+                .and_then(|p| p.draft_year)
+                .is_none_or(|y| y >= i32::from(self.season) - ROOKIE_DRAFT_YEARS)
+    }
+
     /// The estimate a player is priced with, and the bracket of the prior when one priced
     /// it. `player` is his record, when known, to tell a rookie.
     pub fn estimate(
@@ -573,18 +588,7 @@ impl Pricer {
         let Some(p) = player else {
             return (found, None);
         };
-        // A rookie is a player with no line in any stored season before this one,
-        // whatever his draft year: a first-year player, one who lost his first season,
-        // or an arrival from abroad. His bracket is his draft's.
-        // A draft older than five years before the season is no rookie's: a gap in the
-        // stored box scores must not turn a veteran into one.
-        let rookie = !self
-            .first_seasons
-            .get(&player_id)
-            .is_some_and(|s| *s < season)
-            && p.draft_year
-                .is_none_or(|y| y >= i32::from(season) - ROOKIE_DRAFT_YEARS);
-        if !rookie {
+        if !self.is_new(player_id, Some(p)) {
             return (found, None);
         }
         let Some(prior) = self
