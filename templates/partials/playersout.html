@@ -1,0 +1,9 @@
+<section class="controls" id="playersOut">
+  <label>Player out <input id="whoName" list="whoOptions" placeholder="type a name" autocomplete="off" style="width:14rem" title="A player whose worth comes off his team's rating for the span; the search needs two letters"></label>
+  <label>From <input id="whoFrom" type="date"></label>
+  <label>To <input id="whoTo" type="date"></label>
+  <label>Estimate <select id="whoEstimate" title="Worth: from the games his team played without him, with its error. Box: from his box score, without an error. Auto: the worth when he has one, else the box"><option value="auto">Auto</option><option value="worth">Worth (missed games)</option><option value="box">Box score</option></select></label>
+  <button id="whoAdd" type="button">Add</button>
+  <span id="whoStatus" class="muted small"></span>
+</section>
+<ul id="absences" class="small" style="margin:0 0 .5rem 0;padding-left:1.2rem"></ul>

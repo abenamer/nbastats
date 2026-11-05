@@ -9,6 +9,7 @@ pub mod cup;
 pub mod elo;
 pub mod eras;
 pub mod full_strength;
+pub mod futures;
 pub mod ids;
 pub mod keys;
 pub mod market;

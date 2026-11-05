@@ -281,6 +281,14 @@ pub async fn run(app: Arc<App>) {
             Err(SeasonLoadError::NoGames(_)) => {}
             Err(e) => warn!(%season, error = %e, "market snapshots not captured"),
         }
+        // The title futures, once a day, from The Odds API alone.
+        if let Some(odds) = &app.odds {
+            match super::futures::capture(&app, odds, season).await {
+                Ok(_) => {}
+                Err(super::futures::CaptureError::Season(SeasonLoadError::NoGames(_))) => {}
+                Err(e) => warn!(%season, error = %e, "title futures not captured"),
+            }
+        }
     }
     info!("market tracking stopped");
 }

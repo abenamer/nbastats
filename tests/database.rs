@@ -233,6 +233,10 @@ async fn forecasts_never_use_future_information(pool: PgPool) {
         playoff_k: None,
         playoff_scale: 1.0,
         absences: vec![],
+        rating_overrides: Vec::new(),
+        excluded_teams: Vec::new(),
+        qualification: None,
+        first_round_games: None,
     };
     let full = season::run(&params, &games, &by_id, &Silent).unwrap();
     // The projected bracket: sixteen distinct teams, seeds 1 to 8 per conference, exact
@@ -784,6 +788,10 @@ async fn computed_elo_continues_from_the_previous_season(pool: PgPool) {
         playoff_k: None,
         playoff_scale: 1.0,
         absences: vec![],
+        rating_overrides: Vec::new(),
+        excluded_teams: Vec::new(),
+        qualification: None,
+        first_round_games: None,
     };
     let forecast = season::run(&params, &games, &by_id, &Silent).unwrap();
     assert_eq!(forecast.games_remaining, 1230);
@@ -1329,6 +1337,94 @@ async fn question_box_tools_read_the_store(pool: PgPool) {
 
 /// Market snapshots are kept by date and team codes; a later capture replaces an earlier one
 /// only while the game has not started.
+#[sqlx::test(migrations = "./migrations")]
+async fn futures_snapshots_keep_the_latest_capture_of_a_day(pool: PgPool) {
+    use chrono::{DateTime, Datelike, Duration, Utc};
+    use nba_elo_simulator::application::ports::MarketStore;
+    use nba_elo_simulator::domain::futures::FuturesSnapshot;
+    let (store, _teams) = common::setup(pool).await;
+    let t0 = DateTime::<Utc>::from_timestamp(1_800_000_000, 0).unwrap();
+    let row = |day: u32, code: &str, captured: DateTime<Utc>, p_model: f64| FuturesSnapshot {
+        season: SeasonYear::of(2027),
+        snapshot_date: NaiveDate::from_ymd_opt(2026, 11, day).unwrap(),
+        team_code: code.into(),
+        captured_at: captured,
+        provider: "FanDuel".into(),
+        source: "the-odds-api".into(),
+        price: 300.0,
+        p_market: 0.2,
+        book_margin: 0.35,
+        p_model,
+        p_model_se: 0.01,
+        model_version: "elo-season-1.6 test".into(),
+        app_version: "0.1.0".into(),
+    };
+    let written = store
+        .save_futures(&[row(1, "OKC", t0, 0.30), row(1, "BOS", t0, 0.20)])
+        .await
+        .unwrap();
+    assert_eq!(written, 2);
+    // A later capture of the same day replaces; an earlier one does not.
+    assert_eq!(
+        store
+            .save_futures(&[row(1, "OKC", t0 + Duration::hours(1), 0.31)])
+            .await
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        store
+            .save_futures(&[row(1, "OKC", t0 - Duration::hours(1), 0.10)])
+            .await
+            .unwrap(),
+        0
+    );
+    // The day's field is replaced whole: a later field without BOS drops BOS, and a later
+    // field without OKC drops OKC; an older capture drops nothing.
+    store
+        .save_futures(&[row(1, "OKC", t0 + Duration::hours(2), 0.31)])
+        .await
+        .unwrap();
+    assert_eq!(store.futures(SeasonYear::of(2027)).await.unwrap().len(), 1);
+    store
+        .save_futures(&[row(1, "BOS", t0 + Duration::hours(3), 0.20)])
+        .await
+        .unwrap();
+    assert_eq!(store.futures(SeasonYear::of(2027)).await.unwrap().len(), 1);
+    store
+        .save_futures(&[
+            row(1, "OKC", t0 + Duration::hours(4), 0.31),
+            row(1, "BOS", t0 + Duration::hours(4), 0.20),
+        ])
+        .await
+        .unwrap();
+    store
+        .save_futures(&[row(1, "OKC", t0 - Duration::hours(1), 0.10)])
+        .await
+        .unwrap();
+    assert_eq!(store.futures(SeasonYear::of(2027)).await.unwrap().len(), 2);
+    // Another day adds rows; another season is kept apart.
+    store
+        .save_futures(&[row(2, "OKC", t0 + Duration::days(1), 0.32)])
+        .await
+        .unwrap();
+    let mut other = row(1, "OKC", t0, 0.5);
+    other.season = SeasonYear::of(2026);
+    store.save_futures(&[other]).await.unwrap();
+    let rows = store.futures(SeasonYear::of(2027)).await.unwrap();
+    let keys: Vec<(u32, &str, f64)> = rows
+        .iter()
+        .map(|r| (r.snapshot_date.day(), r.team_code.as_str(), r.p_model))
+        .collect();
+    assert_eq!(
+        keys,
+        vec![(1, "BOS", 0.20), (1, "OKC", 0.31), (2, "OKC", 0.32)]
+    );
+    assert_eq!(rows[1].captured_at, t0 + Duration::hours(4));
+    assert_eq!(rows[1].provider, "FanDuel");
+    assert_eq!(store.futures(SeasonYear::of(2026)).await.unwrap().len(), 1);
+}
+
 #[sqlx::test(migrations = "./migrations")]
 async fn market_snapshots_keep_the_last_capture_before_the_start(pool: PgPool) {
     use chrono::{DateTime, Duration, Utc};

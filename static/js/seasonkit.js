@@ -12,6 +12,8 @@
   const query = (...parts) => { const q = parts.filter(Boolean).join('&'); return q ? `?${q}` : ''; };
   // The regular-season home-court bonus is fitted per season; the field shows the fit as its
   // placeholder and a typed value replaces it. Playoff games keep the archive's 100.
+  // The home-court note of a season; `radv` is the bonus input whose placeholder takes the
+  // fitted value, or null on a page without one.
   function homeBonusNote(seasonSelect, radv, note) {
     let request = 0;
     const show = async () => {
@@ -19,8 +21,8 @@
       const mine = ++request;
       const h = await getJSON(`/api/seasons/${season}/home-advantage`).catch(() => null);
       if (mine !== request) return;
-      if (!h) { radv.placeholder = '100'; note.textContent = ''; return; }
-      radv.placeholder = num(h.regular, 0);
+      if (!h) { if (radv) radv.placeholder = '100'; note.textContent = ''; return; }
+      if (radv) radv.placeholder = num(h.regular, 0);
       note.textContent = h.fitted_from
         ? `Regular-season home-court bonus for ${labelOf(season)}: ${num(h.regular, 0)} Elo, fitted on ${h.games.toLocaleString()} regular-season games of ${labelOf(h.fitted_from[0])} to ${labelOf(h.fitted_from[1])}. Playoff games use ${num(h.playoff, 0)}.`
         : `Regular-season home-court bonus for ${labelOf(season)}: ${num(h.regular, 0)} Elo (the default; fewer than 2,000 earlier regular-season games are stored). Playoff games use ${num(h.playoff, 0)}.`;
@@ -85,5 +87,54 @@
     });
     return { entries, param, overrides };
   }
-  Object.assign(NBA, { sourceName, whatIfSentence, bonusText, teamLink, query, homeBonusNote, playerSearch, whatIfControl });
+  // The players-out control (#whoName, #whoFrom, #whoTo, #whoEstimate, #whoAdd, #whoStatus,
+  // #absences): absences the reader adds, each priced from the player's worth of the season,
+  // one span per player. `cutoff()` gives the default start of a span (the as-of date, or
+  // nothing for the preseason).
+  function absenceControl(seasonSelect, search, cutoff) {
+    const absences = [];
+    const whoStatus = document.getElementById('whoStatus');
+    const list = document.getElementById('absences');
+    const seasonSpan = () => { const s = parseInt(seasonSelect.value); return [`${s - 1}-10-01`, `${s}-06-30`]; };
+    const render = () => {
+      list.innerHTML = absences.map((a, i) =>
+        `<li>${esc(a.name)} (${esc(a.team_code)}) out ${esc(a.from)} to ${esc(a.to)}: −${num(a.elo, 0)} Elo${a.se_elo ? ` ± ${num(a.se_elo, 0)}` : ''} from the ${esc(a.source)} <button type="button" data-remove="${i}" class="small">remove</button></li>`).join('');
+    };
+    list.addEventListener('click', e => {
+      const b = e.target.closest('button[data-remove]'); if (!b) return;
+      absences.splice(Number(b.dataset.remove), 1); render();
+    });
+    document.getElementById('whoName').addEventListener('input', search.onInput);
+    document.getElementById('whoAdd').addEventListener('click', async () => {
+      const name = document.getElementById('whoName').value.trim();
+      const player = search.found().get(name);
+      if (!player) { setStatus(whoStatus, 'Pick a player from the list first.', true); return; }
+      const season = parseInt(seasonSelect.value);
+      const [start, end] = seasonSpan();
+      const from = document.getElementById('whoFrom').value || cutoff() || start;
+      const to = document.getElementById('whoTo').value || end;
+      if (to < from) { setStatus(whoStatus, 'The span ends before it starts.', true); return; }
+      const want = document.getElementById('whoEstimate').value;
+      setStatus(whoStatus, 'pricing…');
+      try {
+        const w = await getJSON(`/api/players/${player.id}/worth`);
+        const worth = w.seasons.find(s => s.season === season) || null;
+        const box = (w.box_seasons || []).filter(b => b.season === season).map(b => b.row).sort((a, b) => b.minutes - a.minutes)[0] || null;
+        let pick = null;
+        if (want === 'worth' || (want === 'auto' && worth)) pick = worth ? { elo: worth.worth_elo, se_elo: worth.se_elo, team_id: worth.teams[worth.teams.length - 1], source: 'missed games' } : null;
+        else if (box) pick = { elo: box.worth_elo, se_elo: 0, team_id: box.team_id, source: 'box score' };
+        if (!pick) { setStatus(whoStatus, `No ${want === 'box' ? 'box-score' : want === 'worth' ? 'with/without' : ''} estimate for ${name} in ${labelOf(season)}.`, true); return; }
+        if (pick.elo <= 0) { setStatus(whoStatus, `${name}'s estimate is ${num(pick.elo, 0)} Elo: an absence that costs nothing is not added.`, true); return; }
+        const teamCode = (w.teams || {})[String(pick.team_id)] || player.team_code || `team ${pick.team_id}`;
+        const entry = { name, player_id: player.id, team_id: pick.team_id, team_code: teamCode, from, to, elo: Math.min(pick.elo, 400), se_elo: Math.min(pick.se_elo, 400), source: pick.source };
+        // One span per player: a second Add replaces the first entry.
+        const existing = absences.findIndex(a => a.player_id === player.id);
+        if (existing >= 0) { absences[existing] = entry; setStatus(whoStatus, `${name} replaced.`); } else { absences.push(entry); setStatus(whoStatus, ''); }
+        render();
+      } catch (err) { setStatus(whoStatus, err.message, true); }
+    });
+    const params = () => absences.map(a => ({ team_id: a.team_id, from: a.from, to: a.to, elo: a.elo, se_elo: a.se_elo, player_id: a.player_id }));
+    return { entries: absences, params };
+  }
+  Object.assign(NBA, { sourceName, whatIfSentence, bonusText, teamLink, query, homeBonusNote, playerSearch, whatIfControl, absenceControl });
 })();

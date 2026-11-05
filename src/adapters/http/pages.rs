@@ -161,6 +161,25 @@ pub async fn playoffs(State(app): State<AppState>) -> Response {
 }
 
 #[derive(Template)]
+#[template(path = "whatif.html")]
+pub struct WhatIfPage {
+    pub layout: Layout,
+    pub seasons: Vec<Season>,
+}
+
+pub async fn whatif(State(app): State<AppState>) -> Response {
+    let seasons = season_list(&app)
+        .await
+        .into_iter()
+        .filter(|s| s.season >= SeasonYear::FIRST_MODERN)
+        .collect();
+    render(WhatIfPage {
+        layout: Layout::new("What if", "whatif"),
+        seasons,
+    })
+}
+
+#[derive(Template)]
 #[template(path = "season.html")]
 pub struct SeasonPage {
     pub layout: Layout,

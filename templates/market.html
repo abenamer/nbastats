@@ -18,5 +18,11 @@
 <div id="games" class="table-wrap"></div>
 <p class="muted small" id="versions"></p>
 </section>
+<section class="panel"><h2>Title futures</h2>
+<p class="muted small">Once a day while the regular season runs, the application reads the sportsbook's outright prices on the title through The Odds API (one credit a day) and forecasts the season from that day with the injury report, so the model has a title chance of the same day; both are saved per team. The sportsbook's chance is its price with the field's margin taken out, every price scaled by the same factor so the field's chances add up to one; the margin, usually a third or more on futures, is shown. The gap is the model's chance less the sportsbook's, in percentage points. Once the season is decided each saved day is scored against the champion: the squared error summed over the teams (the Brier score of the field) and minus the log of the chance given to the champion, for the model and the sportsbook; lower is better, and the days say which was the closer and how often. The playoffs are not captured: the season engine forecasts from before them.</p>
+<p class="muted small" id="futuresNote"></p>
+<div class="cards" id="futuresCards"></div>
+<div id="futuresField" class="table-wrap"></div>
+</section>
 {% endblock %}
 {% block scripts %}<script src="/static/js/market.js?v={{ layout.assets }}" defer></script>{% endblock %}

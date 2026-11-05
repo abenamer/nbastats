@@ -56,6 +56,39 @@ pub fn without_margin(home_odds: f64, away_odds: f64) -> Option<FairChances> {
     })
 }
 
+/// A field of outright prices read as chances without the bookmaker's margin: the title
+/// futures of every team.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FairField {
+    /// One chance per price given, in the same order, adding up to 1.
+    pub chances: Vec<f64>,
+    /// The implied chances' excess over 100%: 0.35 for a 35% margin, usual on futures.
+    pub margin: f64,
+}
+
+/// The chances a field of American prices implies, each scaled by the same factor so they
+/// add up to 1 (the proportional rule, as for a game's two moneylines). None when fewer
+/// than two prices are given or any is not a valid line. The rule leaves the long shots
+/// a little high, since a bookmaker's margin sits mostly on them; it is kept for being
+/// the one rule used throughout, and the margin is reported beside the chances.
+pub fn fair_field(prices: &[f64]) -> Option<FairField> {
+    if prices.len() < 2 {
+        return None;
+    }
+    let implied: Vec<f64> = prices
+        .iter()
+        .map(|p| implied_probability(*p))
+        .collect::<Option<_>>()?;
+    let total: f64 = implied.iter().sum();
+    if total <= 0.0 || !total.is_finite() {
+        return None;
+    }
+    Some(FairField {
+        chances: implied.iter().map(|p| p / total).collect(),
+        margin: total - 1.0,
+    })
+}
+
 /// Which side of a game a bet or a lean takes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -232,6 +265,22 @@ pub fn edges(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_field_of_prices_gives_chances_that_add_up_to_one_with_the_margin_beside() {
+        // +300, +400, +900 and +1900: 25% + 20% + 10% + 5% = 60%, no margin to take out.
+        let f = fair_field(&[300.0, 400.0, 900.0, 1900.0]).unwrap();
+        assert!((f.chances.iter().sum::<f64>() - 1.0).abs() < 1e-12);
+        assert!((f.chances[0] - 0.25 / 0.6).abs() < 1e-12);
+        assert!((f.margin - (0.6 - 1.0)).abs() < 1e-12);
+        // A real field carries a margin: -110 and +100 twice imply 52.4% and 50% twice.
+        let f = fair_field(&[-110.0, 100.0, 100.0]).unwrap();
+        assert!(f.margin > 0.5 && f.margin < 0.53);
+        assert!(f.chances[0] > f.chances[1] && f.chances[1] == f.chances[2]);
+        assert_eq!(fair_field(&[300.0]), None, "one price is no field");
+        assert_eq!(fair_field(&[300.0, 50.0]), None, "+50 is no line");
+        assert_eq!(fair_field(&[]), None);
+    }
 
     #[test]
     fn a_bet_returns_its_chance_times_the_payout_less_the_chance_of_losing() {

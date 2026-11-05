@@ -753,6 +753,35 @@ pub trait MarketStore: Send + Sync {
         &self,
         season: SeasonYear,
     ) -> StoreResult<Vec<crate::domain::tracking::Snapshot>>;
+    /// Keep each day's title futures, replacing a stored row for the same day and team only
+    /// when it was captured later, and dropping the day's older rows of teams the new field
+    /// no longer lists. Returns how many rows were written.
+    async fn save_futures(
+        &self,
+        snapshots: &[crate::domain::futures::FuturesSnapshot],
+    ) -> StoreResult<u64>;
+    /// Every title futures row of a season, by day and team.
+    async fn futures(
+        &self,
+        season: SeasonYear,
+    ) -> StoreResult<Vec<crate::domain::futures::FuturesSnapshot>>;
+}
+
+/// One team's outright price on the title, as the sportsbook names the team.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FuturePrice {
+    pub name: String,
+    /// The American price.
+    pub price: f64,
+}
+
+/// Where the title futures come from: the sportsbook's outright prices on every team. The
+/// concrete adapter is `adapters::odds_api::OddsApi`; ESPN's scoreboard carries none.
+#[allow(async_fn_in_trait)]
+pub trait FuturesSource: Send + Sync {
+    fn name(&self) -> &'static str;
+    /// The sportsbook's name and its price on each team, as it lists them now.
+    async fn title_futures(&self) -> Result<(String, Vec<FuturePrice>), SourceError>;
 }
 
 /// Where sportsbook lines come from: the night's games as the market prices them. The

@@ -79,7 +79,39 @@ pub struct SeasonParams {
     /// what the forecast priced. The engine reads nothing from them.
     #[serde(default)]
     pub worth_overrides: Vec<worth::WorthOverride>,
+    /// Counterfactuals of the What if page: each listed team's rating at the cutoff set to
+    /// `elo`, in place of its own (after the shifts).
+    #[serde(default)]
+    pub rating_overrides: Vec<RatingOverride>,
+    /// Teams barred from the postseason: they play their regular-season games as scheduled
+    /// and are ordered last in their conference, so the next team takes their place.
+    #[serde(default)]
+    pub excluded_teams: Vec<TeamId>,
+    /// The qualification rule in place of the season's own: the top eight, or the play-in.
+    #[serde(default)]
+    pub qualification: Option<Qualification>,
+    /// The first round's length in place of the season's own: best of five or seven.
+    #[serde(default)]
+    pub first_round_games: Option<u8>,
 }
+
+/// A team's rating at the cutoff set by hand, for a counterfactual.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct RatingOverride {
+    pub team_id: TeamId,
+    pub elo: f64,
+}
+
+/// The range a rating may be set to, the same as the playoff simulator's.
+pub const MIN_RATING_OVERRIDE: f64 = 800.0;
+pub const MAX_RATING_OVERRIDE: f64 = 2500.0;
+/// At most this many ratings set: twice a season's teams, so a list longer than that is a
+/// mistake and not a what-if.
+pub const MAX_RATING_OVERRIDES: usize = 64;
+/// At most this many teams barred from the postseason: a longer list is a mistake and not
+/// a what-if. The conference check at the run (`SeasonError::TooFewTeams`) is the guard
+/// that keeps enough teams for the qualification rule.
+pub const MAX_EXCLUDED: usize = 10;
 
 fn default_home_adv() -> f64 {
     elo::DEFAULT_HOME_ADVANTAGE
@@ -197,6 +229,46 @@ impl SeasonParams {
                 );
             }
         }
+        {
+            let mut teams: Vec<TeamId> = self.rating_overrides.iter().map(|o| o.team_id).collect();
+            teams.sort_unstable();
+            teams.dedup();
+            if teams.len() != self.rating_overrides.len()
+                || teams.len() > MAX_RATING_OVERRIDES
+                || self.rating_overrides.iter().any(|o| {
+                    !o.elo.is_finite()
+                        || !(MIN_RATING_OVERRIDE..=MAX_RATING_OVERRIDE).contains(&o.elo)
+                })
+            {
+                return invalid(
+                    "rating_overrides",
+                    format!(
+                        "at most {MAX_RATING_OVERRIDES} ratings set, one per team, each between {MIN_RATING_OVERRIDE} and {MAX_RATING_OVERRIDE} Elo"
+                    ),
+                );
+            }
+            let mut excluded = self.excluded_teams.clone();
+            excluded.sort_unstable();
+            excluded.dedup();
+            if excluded.len() != self.excluded_teams.len() || excluded.len() > MAX_EXCLUDED {
+                return invalid(
+                    "excluded_teams",
+                    format!("at most {MAX_EXCLUDED} teams barred from the postseason, each once"),
+                );
+            }
+            if matches!(self.qualification, Some(Qualification::Bubble2020)) {
+                return invalid(
+                    "qualification",
+                    "the qualification rule to set is the top eight or the play-in",
+                );
+            }
+            if self.first_round_games.is_some_and(|g| g != 5 && g != 7) {
+                return invalid(
+                    "first_round_games",
+                    "the first round is best of five or seven",
+                );
+            }
+        }
         // Two absences of one player that overlap would stack his penalty.
         for (i, a) in self.absences.iter().enumerate() {
             let Some(p) = a.player_id else { continue };
@@ -248,6 +320,9 @@ pub struct TeamForecast {
     pub seed_distribution: Vec<f64>,
     pub actual_result: Option<PlayoffResult>,
     pub actual_seed: Option<u8>,
+    /// Barred from the postseason by the parameters.
+    #[serde(default)]
+    pub excluded: bool,
 }
 
 /// A first-round series of the projected bracket.
@@ -436,12 +511,34 @@ pub struct SeasonForecast {
     pub elapsed_ms: u128,
 }
 
+/// Seed a conference order whose barred teams are at the end: the kept teams take the seeds
+/// of the season's rule (a division winner protected to a top seed in the seasons through
+/// 2015), and the barred follow in their place, so a barred team never takes a protected
+/// seed even when its whole division is barred.
+fn seed_kept(
+    season: SeasonYear,
+    ordered: Vec<Standing<Ti>>,
+    excluded: &[bool],
+) -> Vec<Standing<Ti>> {
+    let kept = ordered.iter().take_while(|s| !excluded[s.team_id]).count();
+    if kept == ordered.len() {
+        return seeding::seed_order(season, &ordered);
+    }
+    let mut seeded = seeding::seed_order(season, &ordered[..kept]);
+    seeded.extend_from_slice(&ordered[kept..]);
+    seeded
+}
+
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum SeasonError {
     #[error("season has no games")]
     NoGames,
     #[error("season {0} has no conference alignment data (supported from 2002-03)")]
     NoAlignment(SeasonYear),
+    #[error("a conference needs {0} teams in the postseason; too many are barred")]
+    TooFewTeams(usize),
+    #[error("{0} is not in the season")]
+    UnknownTeam(TeamId),
 }
 
 // ---------------------------------------------------------------------------------------
@@ -925,6 +1022,8 @@ struct Setup {
     /// The absences with a standard error, in the order of `params.absences`.
     sampled: Vec<SampledAbsence>,
     played_play_in: Vec<PlayedPlayIn>,
+    /// Per team: barred from the postseason.
+    excluded: Vec<bool>,
     qualification: Qualification,
     format: PlayoffFormat,
     cup: Option<CupSetup>,
@@ -1110,8 +1209,41 @@ impl Setup {
                 elo[i] += shift.elo;
             }
         }
+        // The counterfactuals: a rating set by hand replaces the team's own, and a team
+        // that is not in the season is refused, so the stored parameters count what applied.
+        for o in &params.rating_overrides {
+            let &i = idx
+                .get(&o.team_id)
+                .ok_or(SeasonError::UnknownTeam(o.team_id))?;
+            elo[i] = o.elo;
+        }
+        if let Some(&t) = params.excluded_teams.iter().find(|t| !idx.contains_key(t)) {
+            return Err(SeasonError::UnknownTeam(t));
+        }
+        let excluded: Vec<bool> = ids
+            .iter()
+            .map(|t| params.excluded_teams.contains(t))
+            .collect();
+        let qualification = params
+            .qualification
+            .unwrap_or_else(|| seeding::qualification(params.season));
+        let needed = match qualification {
+            Qualification::Top8 => 8,
+            Qualification::Bubble2020 | Qualification::PlayIn => 10,
+        };
+        for conf in [Conference::East, Conference::West] {
+            let left = (0..n)
+                .filter(|&i| conf_of[i] == conf && !excluded[i])
+                .count();
+            if left < needed {
+                return Err(SeasonError::TooFewTeams(needed));
+            }
+        }
         let mut format = PlayoffFormat::for_season(params.season);
         format.neutral_site |= params.season.end_year() == 2020;
+        if let Some(g) = params.first_round_games {
+            format.first_round_games = g;
+        }
         Ok(Setup {
             n,
             codes: ids.iter().map(|t| teams[t].code.clone()).collect(),
@@ -1132,7 +1264,8 @@ impl Setup {
             remaining,
             sampled,
             played_play_in,
-            qualification: seeding::qualification(params.season),
+            excluded,
+            qualification,
             format,
             cup,
             cup_note,
@@ -1157,7 +1290,15 @@ impl Setup {
                 div_losses: st.records[i][3],
             })
             .collect();
-        order_with_tiebreaks(rows, |a, b| st.h2h[a * n + b], |t| st.keys[t])
+        let ordered = order_with_tiebreaks(rows, |a, b| st.h2h[a * n + b], |t| st.keys[t]);
+        if !self.excluded.iter().any(|&e| e) {
+            return ordered;
+        }
+        // A team barred from the postseason keeps its record and goes to the end of the
+        // order, in its place among the barred, so the next team takes its seed.
+        let (kept, barred): (Vec<_>, Vec<_>) =
+            ordered.into_iter().partition(|s| !self.excluded[s.team_id]);
+        kept.into_iter().chain(barred).collect()
     }
 
     /// Resolve a play-in game: the historical result if it was played before the cutoff,
@@ -1851,7 +1992,7 @@ fn run_once<P: Progress + ?Sized>(
                 let mut ok = true;
                 for conf in [Conference::East, Conference::West] {
                     let ordered = setup.order_conference(conf, &st);
-                    let seeded = seeding::seed_order(params.season, &ordered);
+                    let seeded = seed_kept(params.season, ordered, &setup.excluded);
                     for (pos, s) in seeded.iter().enumerate().take(16) {
                         let i = s.team_id;
                         acc.positions[i][pos] += 1;
@@ -2046,6 +2187,7 @@ fn run_once<P: Progress + ?Sized>(
                 seed_distribution: acc.seeds[i].iter().map(|&c| c as f64 / it).collect(),
                 actual_result: actual_results.get(&setup.ids[i]).copied(),
                 actual_seed: actual_seed.get(&setup.ids[i]).copied(),
+                excluded: setup.excluded[i],
             }
         })
         .collect();
@@ -2363,6 +2505,10 @@ mod tests {
             playoff_k: None,
             playoff_scale: 1.0,
             absences: vec![],
+            rating_overrides: Vec::new(),
+            excluded_teams: Vec::new(),
+            qualification: None,
+            first_round_games: None,
         }
     }
 
@@ -2417,6 +2563,137 @@ mod tests {
         params.absences[0].to = params.absences[0].from;
         params.absences[0].se_elo = 1000.0;
         assert!(params.validate(10_000).is_err());
+    }
+
+    #[test]
+    fn a_what_if_sets_a_rating_bars_a_team_and_changes_the_format() {
+        use crate::domain::simulation::progress::Silent;
+        let (teams, games) = cup_season(2024, false, false);
+        let mut params = cup_params(2024, "2023-11-01");
+        params.iterations = 2000;
+        let base = run(&params, &games, &teams, &Silent).unwrap();
+        let team = base.teams[0].team_id;
+        let base_wins = base.teams[0].expected_wins;
+        // The rating set to 1200: the team's own is replaced, whatever its shift.
+        params.rating_overrides = vec![RatingOverride {
+            team_id: team,
+            elo: 1200.0,
+        }];
+        params.rating_shifts = vec![crate::domain::full_strength::RatingShift {
+            team_id: team,
+            elo: 100.0,
+        }];
+        let weak = run(&params, &games, &teams, &Silent).unwrap();
+        let row = weak.teams.iter().find(|t| t.team_id == team).unwrap();
+        assert_eq!(row.elo_as_of, 1200.0);
+        assert!(row.expected_wins < base_wins * 0.8);
+        assert!(!row.excluded);
+        params.rating_overrides.clear();
+        params.rating_shifts.clear();
+        // Barred from the postseason: the record stays, the playoffs go, the others gain.
+        params.excluded_teams = vec![team];
+        let barred = run(&params, &games, &teams, &Silent).unwrap();
+        let row = barred.teams.iter().find(|t| t.team_id == team).unwrap();
+        assert!(row.excluded);
+        assert_eq!(row.p_playoffs, 0.0);
+        assert_eq!(row.p_play_in, 0.0);
+        assert_eq!(row.p_champion, 0.0);
+        assert!((row.expected_wins - base_wins).abs() < base_wins * 0.1);
+        let others: f64 = barred
+            .teams
+            .iter()
+            .filter(|t| t.team_id != team)
+            .map(|t| t.p_playoffs)
+            .sum();
+        let before: f64 = base
+            .teams
+            .iter()
+            .filter(|t| t.team_id != team)
+            .map(|t| t.p_playoffs)
+            .sum();
+        assert!(others > before);
+        // The team is last in its conference's order.
+        let conf_size = barred
+            .teams
+            .iter()
+            .filter(|t| t.conference == row.conference)
+            .count();
+        assert!(row.position_distribution[conf_size - 1] > 0.99);
+        // Too many barred teams in a conference is an error, not a crash.
+        let conf = row.conference;
+        params.excluded_teams = base
+            .teams
+            .iter()
+            .filter(|t| t.conference == conf)
+            .take(7)
+            .map(|t| t.team_id)
+            .collect();
+        assert!(matches!(
+            run(&params, &games, &teams, &Silent),
+            Err(SeasonError::TooFewTeams(10))
+        ));
+        // A team that is not in the season is refused, not ignored.
+        params.excluded_teams = vec![TeamId::new(999)];
+        assert!(matches!(
+            run(&params, &games, &teams, &Silent),
+            Err(SeasonError::UnknownTeam(_))
+        ));
+        params.excluded_teams.clear();
+        params.rating_overrides = vec![RatingOverride {
+            team_id: TeamId::new(999),
+            elo: 1500.0,
+        }];
+        assert!(matches!(
+            run(&params, &games, &teams, &Silent),
+            Err(SeasonError::UnknownTeam(_))
+        ));
+        params.rating_overrides.clear();
+        // The format: the top eight in place of the play-in, and a best-of-five first round.
+        params.qualification = Some(Qualification::Top8);
+        params.first_round_games = Some(5);
+        let top8 = run(&params, &games, &teams, &Silent).unwrap();
+        assert_eq!(top8.qualification, Qualification::Top8);
+        assert!(top8.teams.iter().all(|t| t.p_play_in == 0.0));
+        assert_eq!(
+            top8.projected_bracket
+                .map(|b| b.bracket.format.first_round_games),
+            Some(5)
+        );
+        // Validation.
+        params.rating_overrides = vec![RatingOverride {
+            team_id: team,
+            elo: 700.0,
+        }];
+        assert!(params.validate(10_000).is_err());
+        params.rating_overrides = vec![
+            RatingOverride {
+                team_id: team,
+                elo: 1500.0,
+            },
+            RatingOverride {
+                team_id: team,
+                elo: 1600.0,
+            },
+        ];
+        assert!(params.validate(10_000).is_err());
+        params.rating_overrides = (0..=MAX_RATING_OVERRIDES as i32)
+            .map(|i| RatingOverride {
+                team_id: TeamId::new(1000 + i),
+                elo: 1500.0,
+            })
+            .collect();
+        assert!(params.validate(10_000).is_err(), "too many ratings set");
+        params.rating_overrides.clear();
+        params.excluded_teams = vec![team, team];
+        assert!(params.validate(10_000).is_err());
+        params.excluded_teams.clear();
+        params.qualification = Some(Qualification::Bubble2020);
+        assert!(params.validate(10_000).is_err());
+        params.qualification = None;
+        params.first_round_games = Some(6);
+        assert!(params.validate(10_000).is_err());
+        params.first_round_games = Some(7);
+        assert!(params.validate(10_000).is_ok());
     }
 
     #[test]
@@ -2815,6 +3092,80 @@ mod tests {
         assert!(
             mean(&small) < mean(&big),
             "an upset is a closer game than a favourite's win"
+        );
+    }
+
+    #[test]
+    fn a_barred_division_takes_no_protected_seed() {
+        // 2010: three division winners and the best other team hold the top four seeds. The
+        // whole Southwest division is barred; by record its teams would hold a protected seed.
+        let row = |id: usize, div: &str, wins: i32| Standing {
+            team_id: id,
+            conference: Conference::West,
+            division: div.into(),
+            wins,
+            losses: 82 - wins,
+            point_diff: 0,
+            conf_wins: 0,
+            conf_losses: 0,
+            div_wins: 0,
+            div_losses: 0,
+        };
+        let season = SeasonYear::of(2010);
+        let ordered = vec![
+            row(0, "P", 60),
+            row(1, "P", 58),
+            row(2, "NW", 55),
+            row(3, "P", 54),
+            row(4, "NW", 53),
+            row(5, "P", 50),
+            row(6, "NW", 48),
+            row(7, "P", 45),
+            row(8, "NW", 42),
+            row(9, "NW", 40),
+            // Barred, at the end of the order with their records.
+            row(10, "SW", 62),
+            row(11, "SW", 57),
+            row(12, "SW", 52),
+            row(13, "SW", 44),
+            row(14, "SW", 30),
+        ];
+        let mut excluded = vec![false; 15];
+        for e in &mut excluded[10..] {
+            *e = true;
+        }
+        // The plain seeding of the whole order would give the barred division winner a top seed.
+        let plain: Vec<usize> = seeding::seed_order(season, &ordered)
+            .iter()
+            .map(|s| s.team_id)
+            .collect();
+        assert!(plain[..4].contains(&10));
+        let seeded: Vec<usize> = seed_kept(season, ordered.clone(), &excluded)
+            .iter()
+            .map(|s| s.team_id)
+            .collect();
+        assert_eq!(seeded.len(), 15);
+        assert!(
+            seeded[..10].iter().all(|&t| t < 10),
+            "the kept teams fill the ten seeds"
+        );
+        assert_eq!(
+            seeded[..4],
+            [0, 1, 2, 3],
+            "two division winners and the two best others"
+        );
+        assert_eq!(
+            &seeded[10..],
+            &[10, 11, 12, 13, 14],
+            "the barred keep their place"
+        );
+        // Nothing barred: the plain seeding.
+        assert_eq!(
+            seed_kept(season, ordered.clone(), &[false; 15])
+                .iter()
+                .map(|s| s.team_id)
+                .collect::<Vec<_>>(),
+            plain
         );
     }
 }

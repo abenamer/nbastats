@@ -127,6 +127,8 @@ pub struct App {
     pub(crate) market_lines: super::market::LinesCache,
     /// What the capture task remembers between runs.
     pub(crate) tracking: std::sync::Mutex<super::tracking::Progress>,
+    /// What the daily title futures capture remembers.
+    pub(crate) futures: std::sync::Mutex<super::futures::Progress>,
     /// Counts the cache invalidations, so a load that began before one is not cached after it.
     pub(crate) cache_generation: AtomicU64,
     teams: RwLock<Option<Arc<HashMap<TeamId, Team>>>>,
@@ -194,6 +196,7 @@ impl App {
             played_absences: RwLock::new(HashMap::new()),
             market_lines: super::market::LinesCache::default(),
             tracking: std::sync::Mutex::new(super::tracking::Progress::default()),
+            futures: std::sync::Mutex::new(super::futures::Progress::default()),
             cache_generation: AtomicU64::new(0),
             teams: RwLock::new(None),
         }

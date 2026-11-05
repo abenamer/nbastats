@@ -6,6 +6,7 @@ pub mod boxscore;
 pub mod continuation;
 pub mod dashboard;
 pub mod dynasty;
+pub mod futures;
 pub mod home_advantage;
 pub mod imports;
 pub mod jobs;

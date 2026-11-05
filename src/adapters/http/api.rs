@@ -1437,6 +1437,18 @@ pub async fn season_market_track(
     Ok(Json(json!(r)))
 }
 
+/// A season's title futures: the latest day's field, the model beside the sportsbook, and
+/// the record against the champion once the season is decided.
+pub async fn season_futures(
+    State(app): State<AppState>,
+    Path(season): Path<SeasonYear>,
+) -> ApiResult<Value> {
+    let r = crate::application::futures::report(&app, season)
+        .await
+        .map_err(season_load_error)?;
+    Ok(Json(json!(r)))
+}
+
 /// A team's injury card: every report line priced for it and the sum as listed and held.
 pub async fn injury_card(
     State(app): State<AppState>,
