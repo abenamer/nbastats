@@ -392,6 +392,9 @@ async fn serve(
             scheduled = sync_schedule.is_some(),
             "BALLDONTLIE results sync available"
         );
+        if !plain_or_local(&config.balldontlie_base_url) {
+            warn!("BALLDONTLIE_BASE_URL is not https: the API key travels unencrypted");
+        }
     }
     let app = Arc::new(App::new(
         config.clone(),

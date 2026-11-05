@@ -1036,11 +1036,7 @@ pub async fn upload(State(app): State<AppState>, mut multipart: Multipart) -> Ap
     let _guard = import_slot(&app)?;
     let mut file: Option<(String, Vec<u8>)> = None;
     let mut force = false;
-    while let Some(field) = multipart
-        .next_field()
-        .await
-        .map_err(|e| ApiError::bad_request(e.to_string()))?
-    {
+    while let Some(field) = multipart.next_field().await.map_err(multipart_error)? {
         match field.name() {
             Some("file") => {
                 let name = field.file_name().unwrap_or("upload.csv").to_string();
@@ -1049,10 +1045,7 @@ pub async fn upload(State(app): State<AppState>, mut multipart: Multipart) -> Ap
                     .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_'))
                     .take(120)
                     .collect();
-                let bytes = field
-                    .bytes()
-                    .await
-                    .map_err(|e| ApiError::bad_request(e.to_string()))?;
+                let bytes = field.bytes().await.map_err(multipart_error)?;
                 file = Some((name, bytes.to_vec()));
             }
             Some("force") => {
@@ -1583,11 +1576,7 @@ pub async fn upload_results(
 ) -> ApiResult<Value> {
     let mut file: Option<(String, Vec<u8>)> = None;
     let mut season: Option<SeasonYear> = None;
-    while let Some(field) = multipart
-        .next_field()
-        .await
-        .map_err(|e| ApiError::bad_request(e.to_string()))?
-    {
+    while let Some(field) = multipart.next_field().await.map_err(multipart_error)? {
         match field.name() {
             Some("file") => {
                 let name: String = field
@@ -1597,10 +1586,7 @@ pub async fn upload_results(
                     .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_'))
                     .take(120)
                     .collect();
-                let bytes = field
-                    .bytes()
-                    .await
-                    .map_err(|e| ApiError::bad_request(e.to_string()))?;
+                let bytes = field.bytes().await.map_err(multipart_error)?;
                 file = Some((name, bytes.to_vec()));
             }
             Some("season") => {
@@ -2038,6 +2024,13 @@ pub async fn ask(State(app): State<AppState>, Json(body): Json<AskBody>) -> ApiR
         ask_error(e)
     })?;
     Ok(Json(answer))
+}
+
+/// A multipart upload that could not be read: the detail goes to the log, the client gets a
+/// fixed message.
+fn multipart_error(e: axum::extract::multipart::MultipartError) -> ApiError {
+    tracing::warn!(error = %e, "an upload could not be read as multipart form data");
+    ApiError::bad_request("the upload could not be read as multipart form data; see the log")
 }
 
 fn ask_error(e: AskError) -> ApiError {

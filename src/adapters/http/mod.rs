@@ -140,6 +140,8 @@ pub fn router(app: State) -> Router {
                 HeaderValue::from_static("no-cache"),
             ),
         )
+        // The guard sits inside the header layers, so its own answers carry the headers too.
+        .layer(middleware::from_fn_with_state(app.clone(), guard::browser_request_guard))
         .layer(DefaultBodyLimit::max(64 * 1024 * 1024))
         .layer(CompressionLayer::new())
         .layer(SetResponseHeaderLayer::if_not_present(
@@ -161,7 +163,6 @@ pub fn router(app: State) -> Router {
             header::REFERRER_POLICY,
             HeaderValue::from_static("same-origin"),
         ))
-        .layer(middleware::from_fn_with_state(app.clone(), guard::browser_request_guard))
         .layer(TraceLayer::new_for_http())
         .with_state(app)
 }
