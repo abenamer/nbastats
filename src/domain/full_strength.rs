@@ -35,15 +35,31 @@ pub const FULL_STRENGTH_MODEL: &str = "full-strength-1.0";
 /// game day, else the day before (reports are read in the morning).
 pub const REPORT_MAX_AGE_DAYS: i64 = 1;
 
+/// The Elo a side is missing with `players` out: each at the expected penalty of his worth
+/// `(elo, se)` (`worth::expected_penalty`). A worth at or below zero counts nothing, as it
+/// prices nothing tonight; so does a player without a worth, or one whose penalty is not
+/// finite (a worth with an error that is not), rather than the cap. The sum is capped at
+/// [`worth::MAX_ABSENCE_ELO`], so a night of resting starters cannot run a rating update
+/// past where its margin formula holds.
+pub fn missing_elo<'a>(
+    players: impl IntoIterator<Item = &'a PlayerId>,
+    worth_of: &HashMap<PlayerId, (f64, f64)>,
+) -> f64 {
+    players
+        .into_iter()
+        .filter_map(|p| worth_of.get(p))
+        .filter(|(elo, _)| *elo > 0.0)
+        .map(|(elo, se)| worth::expected_penalty(*elo, *se))
+        .filter(|p| p.is_finite())
+        .fold(0.0, |acc, p| acc + p)
+        .min(worth::MAX_ABSENCE_ELO)
+}
+
 /// The Elo each side was missing in each played game, by `(game_id, team)`: the players
 /// the latest stored report within [`REPORT_MAX_AGE_DAYS`] of the game listed for the team,
-/// who then did not play, each at the expected penalty of his worth `(elo, se)`
-/// (`worth::expected_penalty`). The report date is chosen across all teams, so a team with
-/// nobody on that report had nobody missing. A worth at or below zero counts nothing, as
-/// it prices nothing tonight; so does a player without a worth. A game the team has no
-/// box-score line for counts nothing: who played is not known. A side's total is capped at
-/// [`worth::MAX_ABSENCE_ELO`], so a night of resting starters cannot run the rating update
-/// past where its margin formula holds.
+/// who then did not play, priced by [`missing_elo`]. The report date is chosen across all
+/// teams, so a team with nobody on that report had nobody missing. A game the team has no
+/// box-score line for counts nothing: who played is not known.
 pub fn game_absences(
     games: &[Game],
     lines: &[BoxLine],
@@ -88,16 +104,13 @@ pub fn game_absences(
             let Some(team_lines) = by_team.get(&(team, *report_date)) else {
                 continue;
             };
-            let missing: f64 = team_lines
-                .iter()
-                .filter(|r| !played.contains(&(g.id, r.player_id)))
-                .filter_map(|r| worth_of.get(&r.player_id))
-                .filter(|(elo, _)| *elo > 0.0)
-                .map(|(elo, se)| worth::expected_penalty(*elo, *se))
-                // A worth whose error is not finite prices nothing rather than the cap.
-                .filter(|p| p.is_finite())
-                .fold(0.0, |acc, p| acc + p)
-                .min(worth::MAX_ABSENCE_ELO);
+            let missing = missing_elo(
+                team_lines
+                    .iter()
+                    .filter(|r| !played.contains(&(g.id, r.player_id)))
+                    .map(|r| &r.player_id),
+                worth_of,
+            );
             if missing > 0.0 {
                 out.insert((g.id, team), missing);
             }
@@ -166,29 +179,13 @@ pub fn replay(
         .iter()
         .filter(|g| g.game_date <= until && g.is_played())
     {
-        // A tie is no result: the stored chain does not rate it either.
-        let (Some(h), Some(a)) = (g.home_score, g.away_score) else {
-            continue;
-        };
-        if h == a {
-            continue;
-        }
         let home_out = missing.get(&(g.id, g.home_team_id)).copied().unwrap_or(0.0);
         let away_out = missing.get(&(g.id, g.away_team_id)).copied().unwrap_or(0.0);
         let home_full = out[&g.home_team_id].rating;
         let away_full = out[&g.away_team_id].rating;
-        // The update at the ratings the sides played at; the change goes to the full ones.
-        let (home_post, _) = elo::fivethirtyeight_update(
-            home_full - home_out,
-            away_full - away_out,
-            h,
-            a,
-            g.neutral,
-        );
-        let delta = home_post - (home_full - home_out);
-        if !delta.is_finite() {
+        let Some(delta) = step(g, home_full, away_full, home_out, away_out) else {
             continue;
-        }
+        };
         for (team, change, short, stored) in [
             (g.home_team_id, delta, home_out, g.home_elo_post),
             (g.away_team_id, -delta, away_out, g.away_elo_post),
@@ -202,6 +199,44 @@ pub fn replay(
                     row.elo_missing += short;
                 }
             }
+        }
+    }
+    out
+}
+
+/// One game's update at the ratings the sides played at (each side's full rating less the
+/// Elo it was missing): the home side's change, which the away side takes with the opposite
+/// sign, and which goes to the full ratings. None for a tie, which is no result (the stored
+/// chain does not rate it either), or an update that is not finite.
+fn step(g: &Game, home_full: f64, away_full: f64, home_out: f64, away_out: f64) -> Option<f64> {
+    let (h, a) = (g.home_score?, g.away_score?);
+    if h == a {
+        return None;
+    }
+    let (home_post, _) =
+        elo::fivethirtyeight_update(home_full - home_out, away_full - away_out, h, a, g.neutral);
+    let delta = home_post - (home_full - home_out);
+    delta.is_finite().then_some(delta)
+}
+
+/// Each played game's full-strength pre-game ratings, `(home, away)` by game id: the
+/// replay of [`replay`] read before each game's update instead of at a date. A team's
+/// first played game reads its stored pre-game rating, so with no absence every game reads
+/// its stored ratings back.
+pub fn pregame_ratings(games: &[Game], missing: &MissingElo) -> HashMap<i64, (f64, f64)> {
+    let mut ordered: Vec<&Game> = games.iter().filter(|g| g.is_played()).collect();
+    ordered.sort_by_key(|g| (g.game_date, g.seq, g.id));
+    let mut rating: HashMap<TeamId, f64> = HashMap::new();
+    let mut out = HashMap::with_capacity(ordered.len());
+    for g in ordered {
+        let home_full = *rating.entry(g.home_team_id).or_insert(g.home_elo_pre);
+        let away_full = *rating.entry(g.away_team_id).or_insert(g.away_elo_pre);
+        out.insert(g.id, (home_full, away_full));
+        let home_out = missing.get(&(g.id, g.home_team_id)).copied().unwrap_or(0.0);
+        let away_out = missing.get(&(g.id, g.away_team_id)).copied().unwrap_or(0.0);
+        if let Some(delta) = step(g, home_full, away_full, home_out, away_out) {
+            rating.insert(g.home_team_id, home_full + delta);
+            rating.insert(g.away_team_id, away_full - delta);
         }
     }
     out
@@ -284,6 +319,47 @@ mod tests {
         // Read before the first game, a team keeps its first rating.
         let early = replay(&games, &HashMap::new(), d(1) - chrono::Duration::days(1));
         assert_eq!(early[&TeamId::new(1)].rating, 1600.0);
+    }
+
+    #[test]
+    fn the_pregame_ratings_are_the_replay_read_before_each_game() {
+        let games = season();
+        // Without absences, every played game reads its stored pre-game ratings back; the
+        // unplayed game has none.
+        let plain = pregame_ratings(&games, &HashMap::new());
+        assert_eq!(plain.len(), 3);
+        for g in &games[..3] {
+            let (h, a) = plain[&g.id];
+            assert!((h - g.home_elo_pre).abs() < 1e-9 && (a - g.away_elo_pre).abs() < 1e-9);
+        }
+        // Team 1 lost game 1 at home short-handed: before game 2 its full rating is above
+        // the stored one, by what the replay read at the date between the games says, and
+        // before game 1 nothing has changed yet.
+        let missing: HashMap<(i64, TeamId), f64> = [((1, TeamId::new(1)), 120.0)].into();
+        let full = pregame_ratings(&games, &missing);
+        assert_eq!(full[&1], plain[&1]);
+        let between = replay(&games, &missing, d(2));
+        // Game 2: team 2 is home, team 1 away.
+        let (h2, a2) = full[&2];
+        assert!((h2 - between[&TeamId::new(2)].rating).abs() < 1e-9);
+        assert!((a2 - between[&TeamId::new(1)].rating).abs() < 1e-9);
+        assert!(a2 > games[1].away_elo_pre && h2 < games[1].home_elo_pre);
+        // The pricing helper: a worth at or below zero and a penalty that is not finite
+        // count nothing, and the side is capped.
+        let worth: HashMap<PlayerId, (f64, f64)> = [
+            (PlayerId::new(1), (90.0, 0.0)),
+            (PlayerId::new(2), (-30.0, 20.0)),
+            (PlayerId::new(3), (50.0, f64::INFINITY)),
+            (PlayerId::new(4), (500.0, 0.0)),
+        ]
+        .into();
+        let ids = [PlayerId::new(1), PlayerId::new(2), PlayerId::new(3)];
+        assert_eq!(missing_elo(&ids, &worth), 90.0);
+        assert_eq!(
+            missing_elo(&[PlayerId::new(1), PlayerId::new(4)], &worth),
+            worth::MAX_ABSENCE_ELO
+        );
+        assert_eq!(missing_elo(&[PlayerId::new(9)], &worth), 0.0);
     }
 
     #[test]

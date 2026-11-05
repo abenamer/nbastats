@@ -12,7 +12,7 @@ use crate::domain::bpm::{self, BoxLine, BoxTable};
 use crate::domain::ids::{PlayerId, SeasonYear, TeamId};
 use crate::domain::models::{Game, GameType};
 use crate::domain::worth::{BoxCalibration, WorthTable};
-use crate::domain::yaxel::{self, Floor, GameSample, Grid, Report, SeasonSample};
+use crate::domain::yaxel::{self, Floor, GameSample, Grid, Report, SeasonSample, Strength};
 
 use super::boxscore;
 use super::ports::PlayerStore;
@@ -178,11 +178,13 @@ async fn season_sample(
     // year, would look new: the season cannot tell its new players.
     let new_known = !box_tables.is_empty();
     let pricer = Pricer::load(app, season, tables, box_tables, &ids).await?;
-    let priors: HashMap<PlayerId, f64> = ids
+    // The worth each player entered the season with, and its error: the floors' priors
+    // and the price of an absence alike. A player without an estimate is left out.
+    let entering: HashMap<PlayerId, (f64, f64)> = ids
         .iter()
-        .map(|&id| {
+        .filter_map(|&id| {
             let (estimate, _) = pricer.estimate(id, pricer.players.get(&id));
-            (id, estimate.map_or(0.0, |e| e.elo))
+            estimate.map(|e| (id, (e.elo, e.se_elo)))
         })
         .collect();
     // The players new to the league this season; one without a record counts as new.
@@ -192,6 +194,7 @@ async fn season_sample(
         .filter(|id| pricer.is_new(*id, pricer.players.get(id)))
         .collect();
     let calibration = pricer.calibration.clone();
+    let carried = carried_rosters(app, season).await?;
     let home_advantage = app.home_advantage(season).await?.regular;
     let grid = grid.clone();
     let mut sample = tokio::task::spawn_blocking(move || {
@@ -201,7 +204,8 @@ async fn season_sample(
             &games,
             &lines,
             &listed,
-            &priors,
+            &entering,
+            &carried,
             &new_players,
             calibration.as_ref(),
             &grid,
@@ -217,10 +221,32 @@ async fn season_sample(
     Ok(Ok(sample))
 }
 
+/// The team each player ended the season before `season` with, by his last line of it
+/// (`yaxel::last_teams`), which puts him on its roster from the season's start. Empty
+/// without such a season.
+async fn carried_rosters(
+    app: &App,
+    season: SeasonYear,
+) -> Result<HashMap<PlayerId, TeamId>, SeasonLoadError> {
+    let Some(previous) = season.previous() else {
+        return Ok(HashMap::new());
+    };
+    let data = match app.season_data(previous).await {
+        Ok(d) => d,
+        Err(SeasonLoadError::NoGames(_)) => return Ok(HashMap::new()),
+        Err(e) => return Err(e),
+    };
+    let lines = app.store.season_box_lines(previous).await?;
+    Ok(yaxel::last_teams(&data.games, &lines))
+}
+
 /// The games of a season sampled: per date, the floors of the teams playing are the players
-/// who played in each team's previous game, each with the worth he entered the season with,
-/// his box worth over the window before the date, whether he is new to the league and his
-/// minutes in that previous game.
+/// who played in each team's previous game, each with the worth he entered the season with
+/// (`entering`, with its error), his box worth over the window before the date, whether he
+/// is new to the league and his minutes in that previous game; and each side's strength as
+/// the live forecast would read it, the absences read from the box scores at the entering
+/// worths, with `carried` the team each player ended the season before with
+/// (`yaxel::box_absences`, `yaxel::strengths`).
 #[allow(clippy::too_many_arguments)]
 fn build_season(
     season: SeasonYear,
@@ -228,11 +254,13 @@ fn build_season(
     games: &[Game],
     lines: &[BoxLine],
     listed: &HashMap<PlayerId, f64>,
-    priors: &HashMap<PlayerId, f64>,
+    entering: &HashMap<PlayerId, (f64, f64)>,
+    carried: &HashMap<PlayerId, TeamId>,
     new_players: &HashSet<PlayerId>,
     calibration: Option<&BoxCalibration>,
     grid: &Grid,
 ) -> SeasonSample {
+    let strengths = yaxel::strengths(games, &yaxel::box_absences(games, lines, entering, carried));
     let mut by_game: HashMap<i64, Vec<&BoxLine>> = HashMap::new();
     for l in lines {
         by_game.entry(l.game_id).or_default().push(l);
@@ -288,7 +316,7 @@ fn build_season(
                     players
                         .iter()
                         .map(|&(p, last_minutes)| Floor {
-                            prior_elo: priors.get(&p).copied().unwrap_or(0.0),
+                            prior_elo: entering.get(&p).map_or(0.0, |e| e.0),
                             recent: table
                                 .bpm_available
                                 .then(|| app_rookie::season_box(table, p))
@@ -307,12 +335,18 @@ fn build_season(
             let Some(outcome) = g.outcome() else { continue };
             let home_no = game_no.get(&g.home_team_id).copied().unwrap_or(0) + 1;
             let away_no = game_no.get(&g.away_team_id).copied().unwrap_or(0) + 1;
+            let (home_strength, away_strength) = strengths.get(&g.id).copied().unwrap_or((
+                Strength::plain(g.home_elo_pre),
+                Strength::plain(g.away_elo_pre),
+            ));
             out.push(GameSample {
                 game_date: date,
                 home_game_no: home_no,
                 away_game_no: away_no,
                 home_elo_pre: g.home_elo_pre,
                 away_elo_pre: g.away_elo_pre,
+                home_strength,
+                away_strength,
                 neutral: g.neutral,
                 home_won: outcome.home_won(),
                 floors: tables
@@ -354,22 +388,26 @@ fn scored_cells(s: Option<&yaxel::Scored>) -> String {
     }
 }
 
+fn dash() -> String {
+    "–".to_string()
+}
+
 fn cut_cells(c: &yaxel::Cut) -> String {
-    let f4 = |x: Option<f64>| x.map_or("–".to_string(), |v| format!("{v:.4}"));
+    let f4 = |x: Option<f64>| x.map_or_else(dash, |v| format!("{v:.4}"));
     format!(
         "{} | {} | {} | {} | {} | {} | {} | {}",
         c.games,
         if c.of == 0 {
-            "–".to_string()
+            dash()
         } else {
             format!("{:.0}%", 100.0 * f64::from(c.games) / f64::from(c.of))
         },
-        f4(c.brier_new),
-        f4(c.brier_rest),
+        f4(c.elo.brier_new),
+        f4(c.elo.brier_rest),
         c.team_games,
-        c.bias.map_or("–".to_string(), |b| signed(100.0 * b, 1)),
-        c.bias_elo().map_or("–".to_string(), |e| signed(e, 0)),
-        c.bias_z.map_or("–".to_string(), |z| format!("{z:.1}"))
+        c.elo.bias.map_or_else(dash, |b| signed(100.0 * b, 1)),
+        c.elo.bias_elo().map_or_else(dash, |e| signed(e, 0)),
+        c.elo.bias_z.map_or_else(dash, |z| format!("{z:.1}"))
     )
 }
 
@@ -379,6 +417,50 @@ const CUT_HEADER: &str =
     "| Games with | Share | Brier (new) | Brier (rest) | Team-games | Bias (pts) | ≈ Elo | z |";
 const CUT_RULE: &str = "|---|---|---|---|---|---|---|---|";
 const NOT_TOLD: &str = "not told | – | – | – | – | – | – | –";
+
+/// A forecast's bias on the cut in one cell: points of win chance, Elo at even odds and
+/// standard errors.
+fn bias_cell(b: &yaxel::Baseline) -> String {
+    match (b.bias, b.bias_elo()) {
+        (Some(p), Some(e)) => format!(
+            "{} pts, ≈ {} Elo, z {}",
+            signed(100.0 * p, 1),
+            signed(e, 0),
+            b.bias_z.map_or_else(dash, |z| format!("{z:.1}"))
+        ),
+        _ => dash(),
+    }
+}
+
+/// The cut against the absence-penalized rating: the team-games, the Elo missing tonight on
+/// the new players' teams and on the rest, and the bias against each of the three forecasts.
+fn penalized_cells(c: &yaxel::Cut) -> String {
+    let elo = |x: Option<f64>| x.map_or_else(dash, |v| format!("{v:.0}"));
+    format!(
+        "{} | {} / {} | {} | {} | {}",
+        c.team_games,
+        elo(c.missing_new),
+        elo(c.missing_rest),
+        bias_cell(&c.elo),
+        bias_cell(&c.penalized_last),
+        bias_cell(&c.penalized_tonight)
+    )
+}
+
+const PENALIZED_HEADER: &str = "| Team-games | Missing Elo tonight, new / rest | Bias against Elo | Against the rating less the last game's absentees | Against the rating less tonight's absentees |";
+const PENALIZED_RULE: &str = "|---|---|---|---|---|";
+const PENALIZED_NOT_TOLD: &str = "not told | – | – | – | –";
+
+/// The Brier scores of the three forecasts over all the games of a cut, in one sentence.
+fn brier_sentence(label: &str, c: &yaxel::Cut) -> String {
+    let f4 = |x: Option<f64>| x.map_or_else(dash, |v| format!("{v:.4}"));
+    format!(
+        "{label}: Elo {}; the rating less the last game's absentees {}; less tonight's {}.",
+        f4(c.elo.brier_all),
+        f4(c.penalized_last.brier_all),
+        f4(c.penalized_tonight.brier_all)
+    )
+}
 
 /// One grid run rendered: the folds, the test seasons and the pooled scores.
 fn render_run(out: &mut String, r: &yaxel::Run, through_game: u32) {
@@ -538,6 +620,57 @@ pub fn render(b: &Backtest) -> String {
                 .join(", ")
         ));
     }
+    out.push_str("\n## New players against the absence-penalized rating\n\nThe same bias, read against the rating the live forecast prices at, with the box scores standing in for the injury report (the stored seasons before the feed have none): the full-strength rating, the season's games replayed with the players who sat each game taken out of the expectation, less the Elo of the players missing tonight. A player is on a team's roster from his first game for it, or from the season's start when he ended the season before with the team, to the day before his first game for another team, or the season's end, so a player out from the first game who returns is missing until he does and a player signed in season is not; a roster player with no line played sat the game, read from a box score with at least five players played; each is priced at the worth he entered the season with, as the floors are, at the expected penalty, a side capped at 400 Elo. Tonight's missing Elo is read two ways: from the team's previous game (the players on its roster at both games who sat it: the lineup is known before tip-off, the roster is read from the season's lines as a report would list it) and from tonight's box score (the players who sat tonight, which the report tells the live page before the game for the players it lists out). Missing Elo tonight is its mean over the team-games with a new player on the floor and over the team-games without one. A bias that closes against the penalized rating is the absence effect the live page already prices; one that stays is not.\n\n");
+    let penalized_table =
+        |out: &mut String, first: &str, rows: &[(String, u32, Option<&yaxel::Cut>)]| {
+            out.push_str(&format!(
+                "| {first} | Games {PENALIZED_HEADER}\n|---|---{PENALIZED_RULE}\n"
+            ));
+            for (label, games, c) in rows {
+                out.push_str(&format!(
+                    "| {label} | {games} | {} |\n",
+                    c.map_or_else(|| PENALIZED_NOT_TOLD.to_string(), penalized_cells)
+                ));
+            }
+        };
+    penalized_table(
+        &mut out,
+        "Season",
+        &n.per_season
+            .iter()
+            .map(|l| (l.season.label(), l.games, l.all.as_ref()))
+            .collect::<Vec<_>>(),
+    );
+    out.push_str(&format!(
+        "\nEarly season (through game {}):\n\n",
+        r.through_game
+    ));
+    penalized_table(
+        &mut out,
+        "Season",
+        &n.per_season
+            .iter()
+            .map(|l| (l.season.label(), l.early_games, l.early.as_ref()))
+            .collect::<Vec<_>>(),
+    );
+    out.push_str("\nPooled over the seasons that can tell a new player:\n\n");
+    penalized_table(
+        &mut out,
+        "Cut",
+        &[
+            ("All games".to_string(), n.pooled.of, Some(&n.pooled)),
+            (
+                "Early season".to_string(),
+                n.pooled_early.of,
+                Some(&n.pooled_early),
+            ),
+        ],
+    );
+    out.push_str(&format!(
+        "\nBrier score of the three forecasts over all the games pooled, as a check that the penalized rating forecasts no worse. {} {}\n",
+        brier_sentence("All games", &n.pooled),
+        brier_sentence("Early season", &n.pooled_early)
+    ));
     out.push_str("\n## The term on every player\n\n");
     render_run(&mut out, &r.all, r.through_game);
     out.push_str("\n## The term on the new players alone\n\n");
@@ -547,7 +680,7 @@ pub fn render(b: &Backtest) -> String {
             "Not run: fewer than two sampled seasons can tell a new player (an earlier season of box scores is needed).\n",
         ),
     }
-    out.push_str("\nGain is base Brier less YAXEL Brier, in thousandths per game; z is the gain in standard errors over the games. A gain over two standard errors on the pooled test seasons, and on the early season, is the bar for taking a rule to the live page; for the term on the new players alone, the games with a new player on a floor are where it can act, and its gain there says whether it does. A bias of the new players' teams over two standard errors, with no gain from either term, says the rating is slow on them and the term as built is not the fix.\n");
+    out.push_str("\nGain is base Brier less YAXEL Brier, in thousandths per game; z is the gain in standard errors over the games. A gain over two standard errors on the pooled test seasons, and on the early season, is the bar for taking a rule to the live page; for the term on the new players alone, the games with a new player on a floor are where it can act, and its gain there says whether it does. A bias of the new players' teams over two standard errors, with no gain from either term, says the rating is slow on them and the term as built is not the fix; the same bias gone against the absence-penalized rating says it is the absence effect the live page already prices.\n");
     out
 }
 
@@ -608,8 +741,10 @@ mod tests {
 
     #[test]
     fn a_season_is_sampled_from_the_previous_games_floors_and_the_window_tables() {
-        // Three games between teams 1 and 2 on three dates; players 11 and 12 for team 1,
-        // 21 and 22 for team 2; 12 sat out the second game.
+        // Three games between teams 1 and 2 on three dates; players 11 and 12 for team 1
+        // with four more (15 to 18), 21 and 22 for team 2 with three more (23 to 25), so
+        // each box score has the five played lines that make it known whole; 12 sat out
+        // the second game.
         let games = vec![
             game(1, "2026-10-22", 1, 2, (100, 90)),
             game(2, "2026-10-25", 2, 1, (95, 101)),
@@ -621,10 +756,16 @@ mod tests {
             lines.push(line(g, 12, 1, if out { 0 } else { 1800 }, 10));
             lines.push(line(g, 21, 2, 2100, 22));
             lines.push(line(g, 22, 2, 1700, 9));
+            for p in 15..=18 {
+                lines.push(line(g, p, 1, 1800, 5));
+            }
+            for p in 23..=25 {
+                lines.push(line(g, p, 2, 1800, 5));
+            }
         }
-        let priors: HashMap<PlayerId, f64> = [(11, 30.0), (12, -5.0), (21, 10.0)]
+        let entering: HashMap<PlayerId, (f64, f64)> = [(11, 30.0), (12, 25.0), (21, 10.0)]
             .into_iter()
-            .map(|(p, w)| (PlayerId::new(p), w))
+            .map(|(p, w)| (PlayerId::new(p), (w, 0.0)))
             .collect();
         let grid = Grid {
             window_days: vec![7, 28],
@@ -638,7 +779,8 @@ mod tests {
             &games,
             &lines,
             &HashMap::new(),
-            &priors,
+            &entering,
+            &HashMap::new(),
             &new_players,
             None,
             &grid,
@@ -660,8 +802,8 @@ mod tests {
         let second = &s.games[1];
         assert_eq!((second.home_game_no, second.away_game_no), (2, 2));
         let (home, away) = &second.floors[0];
-        assert_eq!(home.len(), 2, "team 2 is home: 21 and 22");
-        assert_eq!(away.len(), 2, "team 1: 11 and 12");
+        assert_eq!(home.len(), 5, "team 2 is home: 21, 22 and three more");
+        assert_eq!(away.len(), 6, "team 1: 11, 12 and four more");
         assert!(
             home.iter().any(|f| f.prior_elo == 10.0) && home.iter().any(|f| f.prior_elo == 0.0)
         );
@@ -681,9 +823,38 @@ mod tests {
         let (home7, _) = &third.floors[0];
         assert!(home7.iter().all(|f| f.recent.is_none()));
         let (home28, away28) = &third.floors[1];
-        assert_eq!(home28.len(), 1, "team 1's floor is player 11 alone");
-        assert!(home28[0].recent.is_some());
-        assert_eq!(away28.len(), 2);
+        assert_eq!(
+            home28.len(),
+            5,
+            "team 1's floor is the five who played the second game"
+        );
+        assert!(home28.iter().all(|f| f.recent.is_some()));
+        assert!(home28.iter().all(|f| f.prior_elo != 25.0), "12 is off it");
+        assert_eq!(away28.len(), 5);
         assert_eq!((third.home_game_no, third.away_game_no), (3, 3));
+        // The strengths: nobody sat the first game, so the second game's sides are whole
+        // by their previous game; player 12 (worth 25) sat the second game, so team 1, the
+        // away side, was missing 25 tonight, and before the third game it is missing 25 by
+        // its previous game and whole tonight. Team 1 won the second game short-handed, so
+        // its full-strength rating before the third game stands above the stored one and
+        // team 2's below.
+        assert_eq!(first.home_strength, Strength::plain(1500.0));
+        assert_eq!(first.away_strength, Strength::plain(1500.0));
+        assert_eq!(
+            (
+                second.away_strength.missing_last,
+                second.away_strength.missing_tonight
+            ),
+            (0.0, 25.0)
+        );
+        assert_eq!(second.home_strength.missing_tonight, 0.0);
+        assert_eq!(
+            (
+                third.home_strength.missing_last,
+                third.home_strength.missing_tonight
+            ),
+            (25.0, 0.0)
+        );
+        assert!(third.home_strength.full_pre > 1500.0 && third.away_strength.full_pre < 1500.0);
     }
 }

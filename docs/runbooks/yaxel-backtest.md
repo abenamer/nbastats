@@ -27,11 +27,12 @@ Measure [YAXEL](/concepts/yaxel.md) before it touches a page. The backtest reads
 2. To keep the full report, add `--json /var/lib/nba-app/yaxel.json` (the application data volume) and copy it out with `docker compose cp nba-app:/var/lib/nba-app/yaxel.json .`.
 3. Read the report:
    * **New players on Elo's own forecasts**: before any rule, per season and pooled, the games with a new player on a floor and their share, Elo's Brier score on them against the rest, and the bias of the new players' teams (their results less Elo's chance, in points of win chance and as Elo at even odds) with z. A bias over two standard errors says the rating is slow on those teams; a bias near zero says the premise does not hold.
+   * **New players against the absence-penalized rating**: the same bias against the rating the Tonight page prices at, read from the box scores in place of the injury report: the full-strength rating less the Elo missing tonight, from the team's previous game and from tonight's box score. Beside it, the Elo missing tonight on the new players' teams against the rest, and the Brier score of each forecast over all games. A bias that is gone here is the absence effect the live page already prices; one that stays is not.
    * **The term on every player** and **The term on the new players alone**, each with:
      * **Folds**: the parameters each fold chose on its training seasons, and the test score under them. The two folds should choose similar parameters; if they do not, the rule is not stable.
      * **Seasons**: each test season's gain and the gain in standard errors (z), all games, early season and the games with a new player on a floor.
      * **Pooled**: the test seasons together, by cut. The bar is a gain of two standard errors (z ≥ 2) on the pooled test seasons and on the early season; for the term on the new players alone, the games with a new player on a floor are where it acts, and its gain there says whether it does.
-4. Record the run in [ADR 0014](/decisions/0014-yaxel-an-emergence-term-backtested-before-it-is-used.md): the range, the chosen parameters and the pooled numbers of both runs, and the new players' bias. A run that clears the bar is the case for the live term; one that does not is the case against.
+4. Record the run in [ADR 0014](/decisions/0014-yaxel-an-emergence-term-backtested-before-it-is-used.md): the range, the chosen parameters and the pooled numbers of both runs, and the new players' bias against Elo and against the absence-penalized rating. A run that clears the bar is the case for the live term; one that does not is the case against.
 
 # Reading the gain
 
