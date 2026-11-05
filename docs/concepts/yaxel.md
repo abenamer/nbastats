@@ -38,7 +38,7 @@ Three parameters: the window in days, the prior minutes and the damping. None is
 * The scores are the mean Brier score and log loss of each forecast, the mean gain, its standard error and the gain in standard errors, over all games and over the early season: games in which neither team has played more than thirty (`--through` sets the cut).
 * The report prints each fold's choice and test score, every test season under its fold's parameters, and the test seasons pooled; `--json <path>` writes it whole.
 
-The bar for taking the rule to a page is a gain of two standard errors on the pooled test seasons and on the early season. The backtest writes nothing and changes no rating or page.
+The bar for taking the rule to a page is a gain of two standard errors on the pooled test seasons and on the early season. The backtest writes nothing and changes no rating or page. The deciding run over the stored history (17 seasons, 2026-11-05) did not clear the bar, so the live term is off; [ADR 0014](/decisions/0014-yaxel-an-emergence-term-backtested-before-it-is-used.md) records the run.
 
 # Limits
 
@@ -47,4 +47,4 @@ The bar for taking the rule to a page is a gain of two standard errors on the po
 * A rookie's entering worth is his draft bracket, so a rookie's surprise is everything his box scores show above it, with six games' worth of noise. The prior minutes set how much of that counts.
 * The window table is built from a few days of games, so its team adjustment is rough; the window and the calibration carry that.
 * The gain in standard errors treats the games as independent. Games of one date share a window table and a team's games follow one another, so the error is a little understated and the bar of two leaves room for that.
-* The numbers in the report depend on the store they are run against; they are not in this bundle until a run on the maintainer's store puts them in the decision record.
+* The numbers in the report depend on the store they are run against; the ones in this bundle are the runs recorded in the decision record, the deciding one on the maintainer's store.
