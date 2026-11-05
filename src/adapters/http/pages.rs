@@ -226,6 +226,36 @@ pub struct DataPage {
 }
 
 #[derive(Template)]
+#[template(path = "tonight.html")]
+pub struct TonightPage {
+    pub layout: Layout,
+    pub seasons: Vec<Season>,
+}
+
+/// The night's games priced live: the seasons the Season Forecast page offers.
+pub async fn tonight(State(app): State<AppState>) -> Response {
+    render(TonightPage {
+        layout: Layout::new("Tonight", "tonight"),
+        seasons: season_list(&app).await,
+    })
+}
+
+#[derive(Template)]
+#[template(path = "injuries.html")]
+pub struct InjuriesPage {
+    pub layout: Layout,
+    pub seasons: Vec<Season>,
+}
+
+/// One team's injury report priced; the team and season may come in the query string.
+pub async fn injuries(State(app): State<AppState>) -> Response {
+    render(InjuriesPage {
+        layout: Layout::new("Injury card", "injuries"),
+        seasons: season_list(&app).await,
+    })
+}
+
+#[derive(Template)]
 #[template(path = "market.html")]
 pub struct MarketPage {
     pub layout: Layout,

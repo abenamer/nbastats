@@ -44,8 +44,16 @@
       const Book = providers.length === 1 ? providers[0] : 'Sportsbook';
       const c = r.comparison;
       const s = r.overall;
+      // The stored version string joins the version of every part, too long for a cell: the
+      // distinct versions are tagged v1, v2… in order of first use (the games come latest
+      // first), then any version the summary groups that the listed games cut off, then the
+      // model saving now when nothing is stored under it yet; a note under the games table
+      // spells each tag out.
+      const versions = [...new Set(r.games.slice().reverse().map(g => g.snapshot.model_version).concat(r.by_model.map(g => g.key), r.current_model ? [r.current_model] : []))];
+      const tag = v => `v${versions.indexOf(v) + 1}`;
+      document.getElementById('versions').textContent = versions.length ? `Model versions: ${versions.map(v => `${tag(v)} = ${v}`).join('; ')}.` : '';
       document.getElementById('verdict').textContent = r.note ? '' : verdict(c, book, s);
-      document.getElementById('note').textContent = r.note ? r.note : `${labelOf(r.season)}: ${r.snapshots} game${r.snapshots === 1 ? '' : 's'} saved, ${r.scored} scored, ${r.pending} waiting for a result${r.unmatched ? `, ${r.unmatched} matching no stored game (a game moved to another date)` : ''}; ${s.priced} of the scored games carry a sportsbook chance. The model saving now is ${r.current_model}.${r.games.length < r.scored ? ` The table lists the latest ${r.games.length}.` : ''}`;
+      document.getElementById('note').textContent = r.note ? r.note : `${labelOf(r.season)}: ${r.snapshots} game${r.snapshots === 1 ? '' : 's'} saved, ${r.scored} scored, ${r.pending} waiting for a result${r.unmatched ? `, ${r.unmatched} matching no stored game (a game moved to another date)` : ''}; ${s.priced} of the scored games carry a sportsbook chance. The model saving now is ${tag(r.current_model)}.${r.games.length < r.scored ? ` The table lists the latest ${r.games.length}.` : ''}`;
       cards(document.getElementById('cards'), c ? [
         { label: 'Games both priced', value: c.games.toLocaleString(), sub: `${r.scored.toLocaleString()} scored in all` },
         { label: 'Model closer', value: `${c.model_closer} of ${c.games}`, sub: `Brier ${num(s.brier_model, 3)}, log loss ${num(s.log_loss_model, 3)}` },
@@ -53,7 +61,7 @@
         { label: 'Lead in standard errors', value: c.z == null ? '–' : num(Math.abs(c.z), 1), sub: c.z == null ? (c.leader == null ? 'level' : 'not measurable yet') : c.decided ? `${c.leader === 'model' ? 'the model' : book} leads` : c.games < MIN_GAMES_TO_CALL ? `too few games to call (${MIN_GAMES_TO_CALL} needed)` : 'not yet apart' },
         { label: 'Games to tell', value: c.games_to_tell == null ? '–' : c.games_to_tell.toLocaleString(), sub: c.games_to_tell == null ? (c.leader == null ? 'the two are level' : c.z == null ? 'no spread measured yet' : 'more than ten seasons at this gap') : 'at the gap and spread so far' }] : []);
       const rows = r.scored ? [{ key: 'All games', ...s, comparison: c }]
-        .concat(r.by_model.map(g => ({ ...g, key: `Model ${g.key}${g.key === r.current_model ? ' (now)' : ''}` })))
+        .concat(r.by_model.map(g => ({ ...g, key: `Model ${tag(g.key)}${g.key === r.current_model ? ' (now)' : ''}` })))
         .concat(r.by_month.map(g => ({ ...g, key: `Month ${g.key}` }))) : [];
       const cmp = (g, f) => g.comparison ? f(g.comparison) : '';
       document.getElementById('summary').innerHTML = rows.length ? table([
@@ -85,7 +93,7 @@
         { label: `${Book} moneylines`, value: g => g.snapshot.home_moneyline == null ? '' : `${g.snapshot.away_code} ${line(g.snapshot.away_moneyline)} / ${g.snapshot.home_code} ${line(g.snapshot.home_moneyline)}`, left: true },
         { label: 'Lean', value: g => bet(g.lean, g.lean_result, g.lean_units, g), left: true, cls: g => g.lean_units > 0 ? 'good' : g.lean_units < 0 ? 'bad' : '' },
         { label: 'Flagged', value: g => g.flagged.map(f => `${sideCode(g, f.edge.side)} ${f.edge.kind === 'spread' ? `${f.edge.line > 0 ? '+' : f.edge.line < 0 ? '−' : ''}${num(Math.abs(f.edge.line), 1)} ` : ''}${line(f.edge.price)} ${f.result} (${signed(f.units, 2)})`).join('; '), left: true },
-        { label: 'Model version', value: g => g.snapshot.model_version, left: true }], r.games) : '';
+        { label: 'Model version', value: g => tag(g.snapshot.model_version), left: true, title: 'The tag of the model version that priced the game; the note under the table spells it out' }], r.games) : '';
     } catch (e) {
       if (mine !== request) return;
       setStatus(status, `Unavailable: ${e.message}`, true);
@@ -94,6 +102,7 @@
       document.getElementById('cards').innerHTML = '';
       document.getElementById('summary').innerHTML = '';
       document.getElementById('games').innerHTML = '';
+      document.getElementById('versions').textContent = '';
     }
   }
   seasonSel.addEventListener('change', load);

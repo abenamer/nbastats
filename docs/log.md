@@ -1,5 +1,8 @@
 # Bundle update log
 
+## 2026-11-05
+* **Update**: [Application overview](/concepts/application.md) lists the Tonight and Injury card pages and the Season menu; [Season forecast engine](/concepts/season-engine.md), [Market tracking](/concepts/market-tracking.md), [Player worth](/concepts/player-worth.md) and the [Security model](/concepts/security.md) say Tonight page where they said Tonight panel; the terms Tonight and Season menu are added, Injury card names its page, and the API reference lists every page. [Market tracking](/concepts/market-tracking.md) describes the version tags of the Model vs Market page.
+
 ## 2026-11-04
 * **New**: [ADR 0014](/decisions/0014-yaxel-an-emergence-term-backtested-before-it-is-used.md) records the emergence term and its backtest-first rule; [YAXEL](/concepts/yaxel.md) describes the rule, the samples and the report; the runbook [Run the YAXEL backtest](/runbooks/yaxel-backtest.md) says how to run it; the term YAXEL is added.
 

@@ -1,11 +1,11 @@
 {% extends "base.html" %}
 {% block content %}
-<p class="lead">Every team's chances of reaching the play-in, the playoffs, the second round, the conference finals, the NBA Finals and winning the title, simulated from the information available on a chosen date. Only games on or before that date are used; the rest of the regular season, the play-in and the playoffs are simulated.</p>
+<p class="lead">Every team's chances of reaching the play-in, the playoffs, the second round, the conference finals, the NBA Finals and winning the title, simulated from the information available on a chosen date. Only games on or before that date are used; the rest of the regular season, the play-in and the playoffs are simulated. The night's games priced live are on the <a href="/season/tonight">Tonight</a> page, a team's report on the <a href="/season/injuries">Injury card</a> page, and the record against the sportsbook on <a href="/market">Model vs Market</a>.</p>
 <section class="controls">
   <label>Season <select id="season">{% for s in seasons %}<option value="{{ s.season }}">{{ s.label }}</option>{% endfor %}</select></label>
   <label>As of date <input id="asOf" type="date"></label>
   <label><input id="preseason" type="checkbox" checked> Preseason (before any game)</label>
-  <label>Reg-season home adv. <input id="radv" type="number" placeholder="fitted" min="-100" max="400" step="5" title="Empty: the value fitted on the previous five seasons. It sets the forecast, the Tonight panel and the injury card"></label>
+  <label>Reg-season home adv. <input id="radv" type="number" placeholder="fitted" min="-100" max="400" step="5" title="Empty: the value fitted on the previous five seasons"></label>
   <label>Playoff home adv. <input id="adv" type="number" value="100" min="0" max="400" step="5"></label>
   <label>Reg-season K <input id="k" type="number" value="20" min="0" max="100" step="1"></label>
   <label>Playoff K <input id="pk" type="number" placeholder="fixed" min="0" max="100" step="1"></label>
@@ -17,7 +17,7 @@
   <span id="status" class="muted"></span>
 </section>
 <section class="controls" id="whatIf">
-  <label>Player out <input id="whoName" list="whoOptions" placeholder="type a name" autocomplete="off" style="width:14rem" title="A player whose worth comes off his team's rating for the span; the search needs two letters"><datalist id="whoOptions"></datalist></label>
+  <label>Player out <input id="whoName" list="whoOptions" placeholder="type a name" autocomplete="off" style="width:14rem" title="A player whose worth comes off his team's rating for the span; the search needs two letters"></label>
   <label>From <input id="whoFrom" type="date"></label>
   <label>To <input id="whoTo" type="date"></label>
   <label>Estimate <select id="whoEstimate" title="Worth: from the games his team played without him, with its error. Box: from his box score, without an error. Auto: the worth when he has one, else the box"><option value="auto">Auto</option><option value="worth">Worth (missed games)</option><option value="box">Box score</option></select></label>
@@ -26,46 +26,11 @@
   <label title="Run the season a second time with every absence that covers the cutoff date held to the last regular-season game: the forecast if the roster of the cutoff date were the roster all season, the bound the dated forecast sits above"><input id="holdAbsences" type="checkbox"> Hold the cutoff date's absences all season</label>
   <span id="whoStatus" class="muted small"></span>
 </section>
-<section class="controls" id="worthWhatIf">
-  <label>Player worth what-if <input id="wiName" list="whoOptions" placeholder="type a name" autocomplete="off" style="width:14rem" title="A player whose worth you set yourself, read from a window of his games or typed: his team's rating moves by the difference from the model's estimate, in the forecast, the Tonight panel and the injury card, and his absences are priced at the what-if. The model's own numbers do not change"></label>
-  <label>as he played in his <select id="wiBasis" title="His box scores over the window, read through the model's own conversion of a stat line to Elo (BPM over replacement per game, scaled by the season's box calibration), as if the season were only those games. One game is noise; ten is a read">
-    <option value="last5">last 5 games</option><option value="last1">last game</option><option value="last2">last 2 games</option><option value="last3">last 3 games</option><option value="last4">last 4 games</option><option value="last6">last 6 games</option><option value="last7">last 7 games</option><option value="last8">last 8 games</option><option value="last9">last 9 games</option><option value="last10">last 10 games</option><option value="last82">season so far</option><option value="elo">a worth I type (Elo)</option></select></label>
-  <label id="wiEloLabel" hidden>worth (Elo) <input id="wiElo" type="number" placeholder="60" min="-400" max="400" step="5" style="min-width:5rem;width:5.5rem" title="Elo points the team loses when he sits: a solid starter 20 to 40, a star 60 to 100; below zero means he hurts his team"></label>
-  <button id="wiAdd">Add</button>
-  <span id="wiStatus" class="muted small"></span>
-</section>
+{% include "partials/whatif.html" %}
 <ul id="absences" class="small" style="margin:0 0 .5rem 0;padding-left:1.2rem"></ul>
-<ul id="whatIfs" class="small" style="margin:0 0 .5rem 0;padding-left:1.2rem"></ul>
 <p class="muted small" id="advNote"></p>
 <p class="muted small" id="note"></p>
-<section class="panel" id="tonightPanel"><h2>Tonight</h2>
-<p class="muted small">The next night with regular-season games, at the ratings the teams play at that night: each team's full-strength rating less the penalties of the absences that cover the date, from the latest injury report. The full-strength rating replays the season's games with the Elo each side was missing in each game (players listed on that day's report who then did not play, at their worth) taken out of the expectation, so a loss played short does not lower it and tonight's absences come off the full team once; the stored Elo stands beside it in the team table. Each game takes two rows, as a sportsbook lists it: the visitor, then the home team after @. Each team has its chance to win, at full strength and at tonight's ratings, from the Elo curve with the regular-season home bonus: P(home) = 1 / (1 + 10^(−(home rating + bonus − away rating) / 400)), with no bonus on a neutral floor. The bonus is the Reg-season home adv. field when it is set, else the season's fitted value, and the note says which; the injury card uses the same bonus. Each team's spread is the same gap in points, 28 Elo to a point, written as a sportsbook writes it: − is the points the team gives, + the points it gets. The fair moneyline is tonight's chance as American odds with no bookmaker margin: −150 risks 150 to win 100, +150 wins 150 on 100; at a sportsbook the favourite must risk more to win 100 and 100 on the underdog wins less, so compare its spread directly and its moneylines after taking its margin out. Each column says whose number it holds: the model's (Model spread, Model moneyline, Model wins) or the sportsbook's, named for it and shaded. The sportsbook's lines come from The Odds API (the sportsbook of your choice, FanDuel by default) when a key is set, else from ESPN's scoreboard (DraftKings lines when ESPN carries them): its spread with the price of the bet, its moneyline, and its wins, the chance its two moneylines imply once its margin is taken out (each implied chance divided by their sum). Model − sportsbook is the model's chance on the night less the sportsbook's, in percentage points. A ★ marks a bet the model likes: a side's moneyline or spread whose expected return at the sportsbook's price (the model's chance of winning times the payout, less the chance of losing; the price carries the margin, so the bar is above it) reaches the bar in the field, five percent of the stake by default; the list under the table gives each bet's arithmetic. Spread chances take the model's margin against the line with the scatter of real margins measured from the played games. The edge is the model's disagreement with the sportsbook, unproven until the Model vs market panel's flagged record says otherwise. The team table lists every team by its rating tonight; a code opens the team's injury card. Nothing here averages over the season.</p>
-<p class="muted small" id="tonightNote"></p>
-<p class="small"><label>Flag a bet when its expected return is at least <input id="minret" type="number" value="5" min="0" max="100" step="1" style="min-width:4rem;width:4.5rem" title="The bar, as a share of the stake: the model's chance of winning times the payout at the sportsbook's price, less the chance of losing, must reach this. The price carries the bookmaker's margin, so the bar is above it. 0 flags any positive return."> % of the stake</label></p>
-<div id="tonightGames" class="table-wrap"></div>
-<p class="muted small" id="tonightMarketNote"></p>
-<div id="tonightPicks" class="small"></div>
-<details class="small" id="tonightLegendBox" hidden><summary class="muted">What the columns mean</summary><dl class="kv" id="tonightLegend"></dl></details>
-<div id="tonightTeams" class="table-wrap" style="margin-top:.75rem"></div>
-</section>
-<section class="panel" id="trackPanel"><h2>Model vs market</h2>
-<p class="muted small">On the night's date, while the application runs with a market source (The Odds API or the ESPN feed), the lines are read once when the date comes and once in the last eleven minutes before each tip-off time, and each game of the Tonight panel that the sportsbook prices and that has not started is saved: the model's chance and margin at the ratings the teams play at, the sportsbook's spread with its prices and its moneylines, and the model's version. The last save before a game starts stands for it, so the line is close to the closing line. Once the game is played it is scored. Brier is the mean squared error of the home team's chance against the result, and log loss the mean of minus the log of the chance given to what happened: lower is better for both, and the two columns compare the same games. The lean is the side whose chance the model puts above the market's; its record and units are a one-unit bet on it at the sportsbook's moneyline. Against the spread is the side the model's margin takes against the sportsbook's line, at that bet's price. Flagged is the bets the edge rule marked on the stored line at the bar in the Tonight panel's field, each at its price: the record of the highlights. A return above zero per unit beats the sportsbook's margin. Each model version has its own row, so a change to the model starts a new record instead of blending into the old one. Dozens of games say little; hundreds begin to. The <a href="/market">Model vs Market</a> page lists every scored game of the season and says which has been the more accurate so far.</p>
-<p class="muted small" id="trackNote"></p>
-<div id="trackSummary" class="table-wrap"></div>
-<div id="trackGames" class="table-wrap" style="margin-top:.75rem"></div>
-</section>
 <section class="panel"><div id="results" class="table-wrap"></div></section>
-<section class="panel" id="injuryCard"><h2>Injury card</h2>
-<p class="muted small">Every line of the latest injury report priced for one team, with the arithmetic in the open. Each player's penalty per game is his worth times the weight of his status; when the worth carries an error, the games are priced at the mean of the draw held between zero and the cap, as the forecast prices them, and the card shows both when they differ. The penalty applies from the report date to the end of his span, over the team's remaining regular-season games. The team's mean penalty is the sum of the penalties over those games divided by the games, so a large penalty over a few games is a small mean. Wins lost is the win probability at the full rating less the probability at the penalized one, game by game at today's ratings with the opponents at full strength: a first-order figure, where the forecast simulates the season. As listed is the dated estimate, with each absence ending when the report, the curve or the status default says. Held, with today's absences lasting to the last regular-season game, is the upper bound; the forecast at full strength is the lower.</p>
-<div class="controls">
-  <label>Team <select id="cardTeam"></select></label>
-  <button id="cardLoad" type="button">Show</button>
-  <span id="cardStatus" class="muted"></span>
-</div>
-<p class="muted small" id="cardNote"></p>
-<div id="cardTotals" class="table-wrap"></div>
-<div id="cardLines" class="table-wrap"></div>
-</section>
 <section class="panel"><h2>Projected bracket</h2>
 <p class="muted small">One bracket of very many. Each seed goes, in turn, to the team that held it most often in the simulated seasons among the teams not yet placed. The record is the projected final record, so a higher seed can show a worse record than a lower one. The chance beside each rating is the exact chance of winning that round, from the start of the playoffs, at the ratings of the cutoff date with fixed ratings. Each first-round series line is the exact series chance; a later-round slot shows the team more likely to have won the round before, marked projected. The simulation does not predict this bracket. The line under it says how rarely this exact seeding, or even this sixteen-team field, occurred.</p>
 <p class="small" id="bracketNote"></p>
@@ -85,4 +50,4 @@
   <div class="panel"><h2>Playoff and play-in probability</h2><canvas id="stageChart" height="300"></canvas></div>
 </section>
 {% endblock %}
-{% block scripts %}<script src="/static/js/season.js?v={{ layout.assets }}" defer></script>{% endblock %}
+{% block scripts %}<script src="/static/js/seasonkit.js?v={{ layout.assets }}" defer></script><script src="/static/js/season.js?v={{ layout.assets }}" defer></script>{% endblock %}
