@@ -72,6 +72,7 @@ This project follows the [REAS engineering standard](https://github.com/abenamer
 * [ADR 0012 — Cup games from the source's stage labels](decisions/0012-cup-games-from-the-stage-labels.md) - Why the season engine tells the Cup games by the stage labels the results source puts on each game, with the curated dates kept for the seasons before the labels and as the fallback, and why a stored Cup season without labels is fetched whole once.
 * [ADR 0013 — Call the model against the market by the paired Brier gap](decisions/0013-call-the-model-against-the-market-by-the-paired-brier-gap.md) - Why the Model vs Market page calls the more accurate side by the mean game-by-game Brier gap in standard errors, two as the bar, and tells how many games it takes to reach it.
 * [ADR 0014 — YAXEL, an emergence term backtested before it is used](decisions/0014-yaxel-an-emergence-term-backtested-before-it-is-used.md) - Why a player's recent box scores, against the worth he entered the season with, could move his team's rating, and why the rule is backtested from the command line before it touches a page.
+* [ADR 0015 — Mint and rotate the question box's key from a management key](decisions/0015-mint-and-rotate-the-question-box-key-from-a-management-key.md) - Why the application mints its own OpenRouter completion key from a management key, replaces it on a schedule and when the service refuses it, deletes the keys it minted before, and keeps no secret of its own.
 
 # History
 

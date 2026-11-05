@@ -9,6 +9,7 @@ pub mod dynasty;
 pub mod home_advantage;
 pub mod imports;
 pub mod jobs;
+pub mod keys;
 pub mod market;
 pub mod players;
 pub mod ports;

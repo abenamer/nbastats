@@ -595,6 +595,54 @@ pub enum ModelError {
     InvalidResponse(String),
 }
 
+#[derive(Debug, thiserror::Error)]
+pub enum KeyError {
+    #[error("key service request failed: {0}")]
+    Transport(String),
+    #[error("key service answered with status {status}: {message}")]
+    Rejected { status: u16, message: String },
+    #[error("key service answer is invalid: {0}")]
+    InvalidResponse(String),
+}
+
+/// A key the service minted: the secret, shown once, and the hash that names it afterwards.
+/// `Debug` shows the hash only.
+#[derive(Clone, PartialEq, Eq)]
+pub struct IssuedKey {
+    pub secret: String,
+    pub hash: String,
+}
+
+impl std::fmt::Debug for IssuedKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("IssuedKey")
+            .field("secret", &"<redacted>")
+            .field("hash", &self.hash)
+            .finish()
+    }
+}
+
+/// A key at the service as the listing shows it (no secret).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KeyRecord {
+    pub hash: String,
+    pub name: String,
+    pub disabled: bool,
+}
+
+/// The service's key management, for the question box's key rotation. The concrete adapter is
+/// `adapters::openrouter::OpenRouterKeys`; it needs a management key (a provisioning key in the
+/// service's older words), which can mint and delete keys and cannot ask a model.
+#[allow(async_fn_in_trait)]
+pub trait KeyProvisioner: Send + Sync {
+    /// Mint a key named `name`, with a spending limit in credits when `limit` is set.
+    async fn create(&self, name: &str, limit: Option<f64>) -> Result<IssuedKey, KeyError>;
+    /// Every key of the account, disabled ones included.
+    async fn list(&self) -> Result<Vec<KeyRecord>, KeyError>;
+    /// Delete the key named by `hash`.
+    async fn delete(&self, hash: &str) -> Result<(), KeyError>;
+}
+
 /// A chat model with tool calling. The concrete adapter is `adapters::openrouter::OpenRouterModel`.
 #[allow(async_fn_in_trait)]
 pub trait LanguageModel: Send + Sync {
