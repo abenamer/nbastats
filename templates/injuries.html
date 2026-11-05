@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block content %}
+<p class="lead">Every line of the latest injury report priced for one team, with the arithmetic in the open. A team code on the <a href="/season">Forecast</a> table or the <a href="/season/tonight">Tonight</a> page opens its card here.</p>
+<section class="controls">
+  <label>Season <select id="season">{% for s in seasons %}<option value="{{ s.season }}">{{ s.label }}</option>{% endfor %}</select></label>
+  <label>Team <select id="cardTeam"></select></label>
+  <label>Reg-season home adv. <input id="radv" type="number" placeholder="fitted" min="-100" max="400" step="5" title="Empty: the value fitted on the previous five seasons. It prices the wins lost"></label>
+  <button id="cardLoad" type="button" class="primary">Show</button>
+  <span id="cardStatus" class="muted"></span>
+</section>
+{% include "partials/whatif.html" %}
+<p class="muted small" id="advNote"></p>
+<section class="panel" id="injuryCard"><h2>The report priced</h2>
+<p class="muted small">Each player's penalty per game is his worth times the weight of his status; when the worth carries an error, the games are priced at the mean of the draw held between zero and the cap, as the forecast prices them, and the card shows both when they differ. The penalty applies from the report date to the end of his span, over the team's remaining regular-season games. The team's mean penalty is the sum of the penalties over those games divided by the games, so a large penalty over a few games is a small mean. Wins lost is the win probability at the full rating less the probability at the penalized one, game by game at today's ratings with the opponents at full strength: a first-order figure, where the forecast simulates the season. As listed is the dated estimate, with each absence ending when the report, the curve or the status default says. Held, with today's absences lasting to the last regular-season game, is the upper bound; the forecast at full strength is the lower. A what-if on a player's worth moves his team's rating by the difference from the model's estimate and prices his absences at the what-if.</p>
+<p class="muted small" id="cardNote"></p>
+<div id="cardTotals" class="table-wrap"></div>
+<div id="cardLines" class="table-wrap"></div>
+</section>
+{% endblock %}
+{% block scripts %}<script src="/static/js/seasonkit.js?v={{ layout.assets }}" defer></script><script src="/static/js/injuries.js?v={{ layout.assets }}" defer></script>{% endblock %}

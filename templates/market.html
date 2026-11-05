@@ -3,7 +3,7 @@
 <p class="lead">Every game the sportsbook priced and the model forecast, with the result, and which of the two has been the more accurate. Before each tip-off the application saves the model's chance and spread and the sportsbook's moneylines and spread (the last save before the start, close to the closing line); once the game is played both are scored against the result. Nothing here changes the model: it is the record the model's disagreements with the market have to earn.</p>
 <section class="controls">
   <label>Season <select id="season">{% for s in seasons %}<option value="{{ s.season }}">{{ s.label }}</option>{% endfor %}</select></label>
-  <label>Flag a bet at <input id="minret" type="number" value="5" min="0" max="100" step="1" style="min-width:4rem;width:4.5rem" title="The bar of the edge rule the flagged bets are scored at, as a share of the stake: the model's chance of winning times the payout at the sportsbook's price, less the chance of losing. The price carries the bookmaker's margin, so the bar is above it."> % of the stake</label>
+  <label>Flag a bet at (% of the stake) <input id="minret" type="number" value="5" min="0" max="100" step="1" style="min-width:4rem;width:4.5rem" title="The bar of the edge rule the flagged bets are scored at, as a share of the stake: the model's chance of winning times the payout at the sportsbook's price, less the chance of losing. The price carries the bookmaker's margin, so the bar is above it."></label>
   <span id="status" class="muted"></span>
 </section>
 <section class="panel"><h2>Which is more accurate</h2>
@@ -14,8 +14,9 @@
 <div id="summary" class="table-wrap"></div>
 </section>
 <section class="panel"><h2>Every scored game</h2>
-<p class="muted small">Latest first. Home wins is each side's chance that the home team wins; Closer names the side whose chance was nearer the result. The spreads are the home team's as a sportsbook writes them: − is the points it gives, + the points it gets; the model's is its expected margin on the night, 28 Elo to a point. Margin is the final margin by the home team. Lean is the side whose chance the model put above the sportsbook's, with how a one-unit bet on it at the sportsbook's moneyline went; Flagged the bets the edge rule marked on the stored line at the bar above, each at its price. Each row names the model version that priced it.</p>
+<p class="muted small">Latest first. Home wins is each side's chance that the home team wins; Closer names the side whose chance was nearer the result. The spreads are the home team's as a sportsbook writes them: − is the points it gives, + the points it gets; the model's is its expected margin on the night, 28 Elo to a point. Margin is the final margin by the home team. Lean is the side whose chance the model put above the sportsbook's, with how a one-unit bet on it at the sportsbook's moneyline went; Flagged the bets the edge rule marked on the stored line at the bar above, each at its price. Each row carries a short tag (v1, v2…) for the model version that priced it, numbered in the order the versions were first used; the note under the table spells each tag out.</p>
 <div id="games" class="table-wrap"></div>
+<p class="muted small" id="versions"></p>
 </section>
 {% endblock %}
 {% block scripts %}<script src="/static/js/market.js?v={{ layout.assets }}" defer></script>{% endblock %}
