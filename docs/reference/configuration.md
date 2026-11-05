@@ -17,7 +17,7 @@ sources:
 | Variable | Default | Function |
 |----------|---------|----------|
 | `DATABASE_URL` | none (required) | PostgreSQL connection string. |
-| `APP_BIND` | `0.0.0.0:3000` | Address the server listens on inside the container. |
+| `APP_BIND` | `127.0.0.1:3000` | Address the server listens on: loopback by default, so a native run is reachable from this computer only. The image and the compose file set `0.0.0.0:3000` inside the container, where `APP_HOST_BIND` decides what reaches the host. |
 | `APP_DATA_DIR` | `./app-data` | Directory for downloaded datasets. The container uses `/var/lib/nba-app`. |
 | `AUTO_IMPORT_BUNDLED` | `true` | Import the bundled dataset when the database is empty. |
 | `BUNDLED_DATASET` | `./data/nba_elo_neil_paine.csv.gz` | Path of the bundled dataset. |

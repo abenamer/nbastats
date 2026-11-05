@@ -7,7 +7,9 @@ use std::path::PathBuf;
 use crate::domain::ids::SeasonYear;
 use std::time::Duration;
 
-#[derive(Debug, Clone)]
+/// The configuration. `Debug` shows the addresses and switches and redacts every secret:
+/// the database password and the API keys.
+#[derive(Clone)]
 pub struct Config {
     pub database_url: String,
     pub bind_addr: String,
@@ -67,11 +69,32 @@ pub struct Config {
     pub odds_api_bookmaker: String,
 }
 
+impl std::fmt::Debug for Config {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let secret = |k: &Option<String>| if k.is_some() { "<redacted>" } else { "<none>" };
+        f.debug_struct("Config")
+            .field("database_url", &self.masked_database_url())
+            .field("bind_addr", &self.bind_addr)
+            .field("data_dir", &self.data_dir)
+            .field("allowed_hosts", &self.allowed_hosts)
+            .field("balldontlie_api_key", &secret(&self.balldontlie_api_key))
+            .field("openrouter_api_key", &secret(&self.openrouter_api_key))
+            .field(
+                "openrouter_management_key",
+                &secret(&self.openrouter_management_key),
+            )
+            .field("odds_api_key", &secret(&self.odds_api_key))
+            .finish_non_exhaustive()
+    }
+}
+
 impl Config {
     pub fn from_env() -> anyhow::Result<Self> {
         let database_url = env::var("DATABASE_URL")
             .map_err(|_| anyhow::anyhow!("DATABASE_URL must be set (see .env.example)"))?;
-        let bind_addr = env::var("APP_BIND").unwrap_or_else(|_| "0.0.0.0:3000".to_string());
+        // Loopback unless told otherwise: the image and the compose file set 0.0.0.0 inside
+        // the container, where the published port is the one that reaches the host.
+        let bind_addr = env::var("APP_BIND").unwrap_or_else(|_| "127.0.0.1:3000".to_string());
         let data_dir =
             PathBuf::from(env::var("APP_DATA_DIR").unwrap_or_else(|_| "./app-data".to_string()));
         let db_max_connections = env::var("DB_MAX_CONNECTIONS")
@@ -293,16 +316,51 @@ impl Config {
     }
 }
 
+/// The URL with its password masked, whether it stands in the user information or, as the
+/// database driver also allows, in a `password` query parameter. The user information is cut
+/// from the authority (up to the first `/`) before the query is looked at, so a password with
+/// a raw `?` in it is masked too.
 pub fn mask_url(url: &str) -> String {
-    if let Some(scheme_end) = url.find("://") {
-        let rest = &url[scheme_end + 3..];
-        if let Some(at) = rest.rfind('@') {
-            let creds = &rest[..at];
-            let user = creds.split(':').next().unwrap_or("");
-            return format!("{}://{}:****@{}", &url[..scheme_end], user, &rest[at + 1..]);
+    let Some(scheme_end) = url.find("://") else {
+        return mask_query(url);
+    };
+    let rest = &url[scheme_end + 3..];
+    let (authority, tail) = match rest.find('/') {
+        Some(i) => (&rest[..i], &rest[i..]),
+        None => (rest, ""),
+    };
+    let (userinfo, host) = match authority.rfind('@') {
+        Some(at) => {
+            let creds = &authority[..at];
+            // A user with no password keeps its form: no mask is invented.
+            let masked = match creds.split_once(':') {
+                Some((user, _)) => format!("{user}:****@"),
+                None => format!("{creds}@"),
+            };
+            (masked, &authority[at + 1..])
         }
-    }
-    url.to_string()
+        None => (String::new(), authority),
+    };
+    format!(
+        "{}://{userinfo}{}",
+        &url[..scheme_end],
+        mask_query(&format!("{host}{tail}"))
+    )
+}
+
+/// `password=...` masked in the query string, if there is one.
+fn mask_query(s: &str) -> String {
+    let Some((base, query)) = s.split_once('?') else {
+        return s.to_string();
+    };
+    let parts: Vec<String> = query
+        .split('&')
+        .map(|p| match p.split_once('=') {
+            Some((k, _)) if k.eq_ignore_ascii_case("password") => format!("{k}=****"),
+            _ => p.to_string(),
+        })
+        .collect();
+    format!("{base}?{}", parts.join("&"))
 }
 
 pub const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -369,5 +427,33 @@ mod tests {
             "postgres://nba:****@db:5432/nba"
         );
         assert_eq!(mask_url("postgres://db/nba"), "postgres://db/nba");
+        assert_eq!(
+            mask_url("postgres://db/nba?user=nba&password=secret&sslmode=require"),
+            "postgres://db/nba?user=nba&password=****&sslmode=require"
+        );
+        assert_eq!(
+            mask_url("postgres://nba:pa?ss@db/nba"),
+            "postgres://nba:****@db/nba",
+            "a raw ? in the password"
+        );
+        assert_eq!(
+            mask_url("postgres://nba:secret@db?password=x"),
+            "postgres://nba:****@db?password=****"
+        );
+        assert_eq!(
+            mask_url("postgres://db/nba?options=-c%20x@y"),
+            "postgres://db/nba?options=-c%20x@y",
+            "an @ in the query is not user information"
+        );
+        assert_eq!(
+            mask_url("postgres://nba@db/nba"),
+            "postgres://nba@db/nba",
+            "a user without a password"
+        );
+        assert_eq!(
+            mask_url("postgres://nbä:s@db/nba?a=1&PASSWORD=2"),
+            "postgres://nbä:****@db/nba?a=1&PASSWORD=****"
+        );
+        assert_eq!(mask_url("nodb"), "nodb");
     }
 }

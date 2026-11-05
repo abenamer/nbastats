@@ -22,7 +22,7 @@
   function renderTable(rows, sim) {
     const cols = [
       { label: 'Team', value: r => `${r.conference === 'East' ? 'E' : 'W'}${r.seed} ${r.code} · ${r.name}`, left: true }, { label: 'Record', value: r => `${r.wins}-${r.losses}` },
-      { label: 'Elo', value: r => `<input type="number" data-code="${r.code}" value="${num(r.elo, 1)}" step="1" style="width:5.5rem">`, raw: true },
+      { label: 'Elo', value: r => `<input type="number" data-code="${esc(r.code)}" value="${num(r.elo, 1)}" step="1" style="width:5.5rem">`, raw: true },
       { label: 'Exact 2nd rd', value: r => r.exact ? pct(r.exact[0]) : '–' }, { label: 'Exact conf. finals', value: r => r.exact ? pct(r.exact[1]) : '–' },
       { label: 'Exact Finals', value: r => r.exact ? pct(r.exact[2]) : '–' }, { label: 'Exact title', value: r => r.exact ? pct(r.exact[3], 2) : '–', cls: () => 'good' }];
     if (sim) cols.push({ label: 'MC title', value: r => `${pct(r.p_champion, 2)} ± ${pct(1.96 * r.p_champion_se, 2)}` }, { label: 'MC Finals', value: r => pct(r.p_finals) }, { label: 'Titles (sim)', value: r => r.titles.toLocaleString() });

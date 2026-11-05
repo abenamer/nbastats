@@ -29,14 +29,44 @@ const MAX_RATE_LIMIT_RETRIES: u32 = 6;
 /// Upper bound on one page's body (a 100-game page is about 60 KB).
 const MAX_PAGE_BYTES: usize = 8 * 1024 * 1024;
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct BalldontlieConfig {
     pub api_key: String,
     pub base_url: String,
     pub requests_per_minute: u32,
 }
 
-#[derive(Debug)]
+impl std::fmt::Debug for BalldontlieConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BalldontlieConfig")
+            .field("api_key", &"<redacted>")
+            .field("base_url", &self.base_url)
+            .field("requests_per_minute", &self.requests_per_minute)
+            .finish()
+    }
+}
+
+/// Upper bound on an error body read for its message (the message is cut to 300 characters).
+const MAX_ERROR_BYTES: usize = 4 * 1024;
+
+/// The service's message from an error answer, read up to `MAX_ERROR_BYTES` and cut to 300
+/// characters, never the whole body, with the key blanked should the service echo it.
+async fn error_message(mut resp: reqwest::Response, api_key: &str) -> String {
+    let mut bytes: Vec<u8> = Vec::new();
+    while let Ok(Some(chunk)) = resp.chunk().await {
+        bytes.extend_from_slice(&chunk);
+        if bytes.len() >= MAX_ERROR_BYTES {
+            bytes.truncate(MAX_ERROR_BYTES);
+            break;
+        }
+    }
+    String::from_utf8_lossy(&bytes)
+        .replace(api_key, "<key>")
+        .chars()
+        .take(300)
+        .collect()
+}
+
 pub struct BalldontlieSource {
     client: reqwest::Client,
     config: BalldontlieConfig,
@@ -44,6 +74,14 @@ pub struct BalldontlieSource {
     next_slot: Mutex<Instant>,
     /// The source's team identifiers by dataset code, fetched once for the injury report.
     teams: Mutex<Option<HashMap<i64, String>>>,
+}
+
+impl std::fmt::Debug for BalldontlieSource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BalldontlieSource")
+            .field("config", &self.config)
+            .finish_non_exhaustive()
+    }
 }
 
 impl BalldontlieSource {
@@ -55,6 +93,8 @@ impl BalldontlieSource {
         }
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(60))
+            // The key goes to the configured host only.
+            .redirect(reqwest::redirect::Policy::none())
             .user_agent(concat!("nba-elo-simulator/", env!("CARGO_PKG_VERSION")))
             .build()
             .map_err(|e| SourceError::Transport(e.to_string()))?;
@@ -138,10 +178,9 @@ impl BalldontlieSource {
                 continue;
             }
             if !status.is_success() {
-                let message = resp.text().await.unwrap_or_default();
                 return Err(SourceError::Rejected {
                     status: status.as_u16(),
-                    message: message.chars().take(300).collect(),
+                    message: error_message(resp, &self.config.api_key).await,
                 });
             }
             if let Some(len) = resp.content_length() {
@@ -500,10 +539,9 @@ impl BalldontlieSource {
                 continue;
             }
             if !status.is_success() {
-                let message = resp.text().await.unwrap_or_default();
                 return Err(SourceError::Rejected {
                     status: status.as_u16(),
-                    message: message.chars().take(300).collect(),
+                    message: error_message(resp, &self.config.api_key).await,
                 });
             }
             let bytes = resp

@@ -90,7 +90,13 @@ impl From<ImportError> for ApiError {
     fn from(e: ImportError) -> Self {
         match e {
             ImportError::Parse(p) => ApiError::BadRequest(format!("import failed: {p}")),
-            ImportError::Download(d) => ApiError::BadRequest(format!("refresh failed: {d}")),
+            ImportError::Download(d) => {
+                // The detail may carry the source URL; it goes to the log.
+                tracing::warn!(error = %d, "the dataset could not be downloaded");
+                ApiError::BadRequest(
+                    "refresh failed: the dataset could not be downloaded; see the log".to_string(),
+                )
+            }
             ImportError::Io(io) => ApiError::Internal(io.to_string()),
             ImportError::Store(s) => s.into(),
         }
