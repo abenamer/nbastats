@@ -1,6 +1,7 @@
 # Bundle update log
 
 ## 2026-11-05
+* **New**: [ADR 0016](/decisions/0016-track-the-title-chances-against-the-sportsbooks-futures.md) records the title futures; [Market tracking](/concepts/market-tracking.md) gains the section Title futures; the [API reference](/reference/api.md), the [Security model](/concepts/security.md) and the terms Title futures and Fair field follow.
 * **Update**: [ADR 0014](/decisions/0014-yaxel-an-emergence-term-backtested-before-it-is-used.md) gains the section Runs, with the first backtest run (development data, two seasons, bar not cleared) and the deciding run still the maintainer's.
 * **Update**: [Security model](/concepts/security.md) describes the loopback default of `APP_BIND`, the guard on cross-site reads, the redacted `Debug` output and the BALLDONTLIE client's redirect policy; the [Configuration](/reference/configuration.md) reference follows.
 * **New**: [ADR 0015](/decisions/0015-mint-and-rotate-the-question-box-key-from-a-management-key.md) records the key rotation; [Question box](/concepts/question-box.md) gains the section Key rotation; the [Configuration](/reference/configuration.md) and [API](/reference/api.md) references, the [Security model](/concepts/security.md) and the terms Management key and Key rotation follow.

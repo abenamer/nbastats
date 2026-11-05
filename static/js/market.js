@@ -105,7 +105,42 @@
       document.getElementById('versions').textContent = '';
     }
   }
-  seasonSel.addEventListener('change', load);
+  // The title futures: the latest day's field and the record against the champion.
+  let futuresRequest = 0;
+  async function loadFutures() {
+    const mine = ++futuresRequest;
+    const season = parseInt(seasonSel.value);
+    const note = document.getElementById('futuresNote');
+    try {
+      const f = await getJSON(`/api/seasons/${season}/futures`);
+      if (mine !== futuresRequest) return;
+      const book = f.latest ? f.latest.provider : 'the sportsbook';
+      const r = f.record;
+      note.textContent = f.note || !r
+        ? `${f.note || ''}${f.days ? ` ${f.days} day${f.days === 1 ? '' : 's'} saved, ${f.first_day} to ${f.last_day}.` : ''}`
+        : `${f.days} day${f.days === 1 ? '' : 's'} saved, ${f.first_day} to ${f.last_day}; the champion is ${f.champion}. ${r.days} day${r.days === 1 ? '' : 's'} scored: the model was the closer on ${r.model_closer}, ${book} on ${r.market_closer}${r.ties ? `, ${r.ties} level` : ''}.`;
+      cards(document.getElementById('futuresCards'), r ? [
+        { label: 'Days scored', value: r.days.toLocaleString(), sub: `${r.first.date} to ${r.last.date}` },
+        { label: 'Model closer', value: `${r.model_closer} of ${r.days}`, sub: `mean Brier ${num(r.mean_brier_model, 3)}, log loss ${num(r.mean_log_loss_model, 2)}` },
+        { label: `${book} closer`, value: `${r.market_closer} of ${r.days}`, sub: `mean Brier ${num(r.mean_brier_market, 3)}, log loss ${num(r.mean_log_loss_market, 2)}` },
+        { label: 'Champion, first day', value: `${pct(r.first.champion_p_model, 0)} vs ${pct(r.first.champion_p_market, 0)}`, sub: `model vs ${book} on ${r.first.date}` },
+        { label: 'Champion, last day', value: `${pct(r.last.champion_p_model, 0)} vs ${pct(r.last.champion_p_market, 0)}`, sub: `model vs ${book} on ${r.last.date}` }] : []);
+      const l = f.latest;
+      document.getElementById('futuresField').innerHTML = l ? `<p class="muted small">The field of ${l.date} (${esc(l.provider)}, margin ${pct(l.book_margin, 0)}; the model's forecast of that day).</p>` + table([
+        { label: 'Team', value: x => `${x.code} · ${x.name}`, left: true },
+        { label: 'Model title', value: x => `${pct(x.p_model, 1)}${x.p_model_se ? ` ± ${pct(1.96 * x.p_model_se, 1)}` : ''}`, title: 'The season engine\'s chance of the title from that day, with the injury report, and its simulation error' },
+        { label: `${l.provider} price`, value: x => `${x.price > 0 ? '+' : ''}${num(x.price, 0)}`, title: 'The outright price, American' },
+        { label: `${l.provider} title`, value: x => pct(x.p_market, 1), title: 'The chance the price implies with the field\'s margin taken out' },
+        { label: 'Model − sportsbook', value: x => { const g = Math.round(1000 * x.gap) / 10; return g === 0 ? '0.0' : `${g > 0 ? '+' : '−'}${Math.abs(g).toFixed(1)}`; }, cls: x => x.gap > 0.005 ? 'good' : x.gap < -0.005 ? 'bad' : '', title: 'Percentage points' }], l.rows) : '';
+    } catch (e) {
+      if (mine !== futuresRequest) return;
+      note.textContent = `Title futures unavailable: ${e.message}`;
+      document.getElementById('futuresCards').innerHTML = '';
+      document.getElementById('futuresField').innerHTML = '';
+    }
+  }
+  seasonSel.addEventListener('change', () => { load(); loadFutures(); });
+  loadFutures();
   minret.addEventListener('change', load);
   load();
 })();

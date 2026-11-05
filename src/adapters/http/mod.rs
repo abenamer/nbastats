@@ -52,6 +52,7 @@ pub fn router(app: State) -> Router {
             "/seasons/{season}/market/track",
             get(api::season_market_track),
         )
+        .route("/seasons/{season}/futures", get(api::season_futures))
         .route("/research/return-curve", get(api::return_curve))
         .route("/players/{id}/worth", get(api::player_worth))
         .route(

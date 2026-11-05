@@ -16,7 +16,9 @@ use chrono::{DateTime, NaiveDate, Utc};
 use serde::Serialize;
 use serde_json::Value;
 
-use crate::application::ports::{MarketLine, MarketSource, SourceError};
+use crate::application::ports::{
+    FuturePrice, FuturesSource, MarketLine, MarketSource, SourceError,
+};
 use crate::domain::calendar;
 
 use super::feed::{self, read_body, text};
@@ -24,6 +26,8 @@ use super::feed::{self, read_body, text};
 const MAX_BODY_BYTES: usize = 4 * 1024 * 1024;
 /// The service's sport key for the league.
 const SPORT: &str = "basketball_nba";
+/// The service's sport for the title outrights.
+const OUTRIGHT_SPORT: &str = "basketball_nba_championship_winner";
 /// The markets asked for: the moneyline, the spread and the total; each costs a credit.
 const MARKETS: &str = "h2h,spreads,totals";
 
@@ -140,19 +144,38 @@ impl OddsApi {
     /// The odds answer for the games of a date, as bytes.
     async fn odds(&self, date: NaiveDate) -> Result<Vec<u8>, SourceError> {
         let (from, to) = calendar::day_span(date);
-        let url = format!("{}/v4/sports/{SPORT}/odds", self.config.base_url);
+        self.fetch(
+            SPORT,
+            &[
+                ("markets", MARKETS),
+                ("commenceTimeFrom", &stamp(from)),
+                ("commenceTimeTo", &stamp(to)),
+            ],
+        )
+        .await
+    }
+
+    /// The outright answer on the title, as bytes: one market, one credit.
+    async fn outrights(&self) -> Result<Vec<u8>, SourceError> {
+        self.fetch(OUTRIGHT_SPORT, &[("markets", "outrights")])
+            .await
+    }
+
+    /// One odds request of `sport` with `extra` beside the key, the sportsbook and the
+    /// formats; the quota remembered, the body capped, the key blanked from an error.
+    async fn fetch(&self, sport: &str, extra: &[(&str, &str)]) -> Result<Vec<u8>, SourceError> {
+        let url = format!("{}/v4/sports/{sport}/odds", self.config.base_url);
+        let mut query: Vec<(&str, &str)> = vec![
+            ("apiKey", self.config.api_key.as_str()),
+            ("bookmakers", self.config.bookmaker.as_str()),
+            ("oddsFormat", "american"),
+            ("dateFormat", "iso"),
+        ];
+        query.extend_from_slice(extra);
         let resp = self
             .client
             .get(&url)
-            .query(&[
-                ("apiKey", self.config.api_key.as_str()),
-                ("bookmakers", self.config.bookmaker.as_str()),
-                ("markets", MARKETS),
-                ("oddsFormat", "american"),
-                ("dateFormat", "iso"),
-                ("commenceTimeFrom", &stamp(from)),
-                ("commenceTimeTo", &stamp(to)),
-            ])
+            .query(&query)
             .send()
             .await
             .map_err(transport)?;
@@ -298,6 +321,74 @@ impl MarketSource for OddsApi {
     }
 }
 
+/// The sportsbook's name and its outright price on each team in an outright answer: the
+/// one event's first sportsbook's `outrights` market. An answer with no event, no
+/// sportsbook or fewer than two usable prices is an error: the sportsbook does not price
+/// the title, or the service does not know it.
+pub fn parse_outrights(bytes: &[u8]) -> Result<(String, Vec<FuturePrice>), SourceError> {
+    let doc: Value = serde_json::from_slice(bytes)
+        .map_err(|e| SourceError::InvalidPayload(format!("not an outright answer: {e}")))?;
+    let events = doc
+        .as_array()
+        .ok_or_else(|| SourceError::InvalidPayload("not a list of events".to_string()))?;
+    let book = events
+        .iter()
+        .filter_map(|e| e.get("bookmakers")?.as_array()?.first())
+        .next()
+        .ok_or_else(|| {
+            SourceError::InvalidPayload(
+                "no sportsbook prices the title; check ODDS_API_BOOKMAKER".to_string(),
+            )
+        })?;
+    let provider: String = text(book, "title")
+        .or_else(|| text(book, "key"))
+        .unwrap_or_default()
+        .chars()
+        .take(40)
+        .collect();
+    let market = book
+        .get("markets")
+        .and_then(Value::as_array)
+        .and_then(|ms| {
+            ms.iter()
+                .find(|m| text(m, "key").as_deref() == Some("outrights"))
+        })
+        .ok_or_else(|| SourceError::InvalidPayload("no outright market".to_string()))?;
+    let mut prices: Vec<FuturePrice> = market
+        .get("outcomes")
+        .and_then(Value::as_array)
+        .map(|os| {
+            os.iter()
+                .filter_map(|o| {
+                    let name = text(o, "name").filter(|n| !n.is_empty())?;
+                    let price = finite(o.get("price")).filter(|p| feed::usable_odds(*p))?;
+                    Some(FuturePrice { name, price })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    // One price per name: the first listed.
+    let mut seen = std::collections::HashSet::new();
+    prices.retain(|p| seen.insert(p.name.to_ascii_lowercase()));
+    if prices.len() < 2 {
+        return Err(SourceError::InvalidPayload(format!(
+            "{} usable outright price(s); a field needs two",
+            prices.len()
+        )));
+    }
+    Ok((provider, prices))
+}
+
+impl FuturesSource for OddsApi {
+    fn name(&self) -> &'static str {
+        "the-odds-api"
+    }
+
+    async fn title_futures(&self) -> Result<(String, Vec<FuturePrice>), SourceError> {
+        parse_outrights(&self.outrights().await?)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -397,6 +488,54 @@ mod tests {
             (stamp(from).as_str(), stamp(to).as_str()),
             ("2026-11-02T05:00:00Z", "2026-11-03T04:59:59Z")
         );
+    }
+
+    const OUTRIGHTS: &str = r#"[
+      {"id":"o1","sport_key":"basketball_nba_championship_winner","commence_time":"2027-06-30T00:00:00Z",
+       "home_team":null,"away_team":null,
+       "bookmakers":[{"key":"fanduel","title":"FanDuel","last_update":"2026-11-05T12:00:00Z","markets":[
+         {"key":"outrights","last_update":"2026-11-05T12:00:00Z","outcomes":[
+           {"name":"Oklahoma City Thunder","price":300},
+           {"name":"Boston Celtics","price":450},
+           {"name":"Denver Nuggets","price":900},
+           {"name":"Denver Nuggets","price":1000},
+           {"name":"Washington Wizards","price":50000},
+           {"name":"Nobody","price":50},
+           {"name":"","price":400}]}]}]}
+    ]"#;
+
+    #[test]
+    fn the_outright_prices_are_read_once_per_team_with_the_sportsbook() {
+        let (provider, prices) = parse_outrights(OUTRIGHTS.as_bytes()).unwrap();
+        assert_eq!(provider, "FanDuel");
+        let names: Vec<&str> = prices.iter().map(|p| p.name.as_str()).collect();
+        assert_eq!(
+            names,
+            vec![
+                "Oklahoma City Thunder",
+                "Boston Celtics",
+                "Denver Nuggets",
+                "Washington Wizards"
+            ],
+            "a repeated name keeps its first price; +50 and a blank name are dropped"
+        );
+        assert_eq!(prices[2].price, 900.0);
+        assert!(matches!(
+            parse_outrights(b"[]"),
+            Err(SourceError::InvalidPayload(m)) if m.contains("ODDS_API_BOOKMAKER")
+        ));
+        assert!(matches!(
+            parse_outrights(br#"[{"bookmakers":[{"key":"fanduel","markets":[{"key":"h2h","outcomes":[]}]}]}]"#),
+            Err(SourceError::InvalidPayload(m)) if m.contains("no outright market")
+        ));
+        assert!(matches!(
+            parse_outrights(br#"[{"bookmakers":[{"key":"fanduel","markets":[{"key":"outrights","outcomes":[{"name":"A","price":300}]}]}]}]"#),
+            Err(SourceError::InvalidPayload(m)) if m.contains("needs two")
+        ));
+        assert!(matches!(
+            parse_outrights(b"<html>"),
+            Err(SourceError::InvalidPayload(_))
+        ));
     }
 
     #[test]

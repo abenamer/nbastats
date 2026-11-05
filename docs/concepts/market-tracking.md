@@ -17,6 +17,9 @@ sources:
   - id: odds
     resource: /src/adapters/odds_api.rs
     title: The Odds API adapter
+  - id: futures
+    resource: /src/application/futures.rs
+    title: Title futures capture and report
 ---
 
 # Purpose
@@ -50,6 +53,12 @@ A tie scores nothing. A snapshot whose game is not yet played is pending; one th
 The two forecasters are compared game by game on the games both priced ([ADR 0013](/decisions/0013-call-the-model-against-the-market-by-the-paired-brier-gap.md), `domain::tracking::compare`). The gap of a game is the sportsbook's Brier score less the model's, so a positive gap favours the model. The comparison gives the mean gap, its standard error (the sample standard deviation of the gaps over the square root of their count) and the mean in standard errors; the games each side was the closer on, and the level ones; the leader, the side with the lower mean score; whether the lead is decided, at two standard errors or more, about one chance in twenty of luck alone, and from thirty games both priced on, since fewer cannot carry the normal approximation the test rests on; and how many games it takes to reach two at the mean gap and spread seen so far, the square of twice the standard deviation over the mean gap, at least thirty, reported as none beyond ten seasons' worth (12,300); a lead is decided exactly when the games reach the figure. One game has no error; games with the same gap every time have an error of zero and no verdict; a mean gap too small to tell from zero is level, with no leader; without a game both priced there is no comparison. It is made overall, per model version and per month, and travels with the track record as `comparison`. The page puts it in one sentence: who has been the closer, the two mean scores, the count, the lead in standard errors, and whether it is more than luck gives, with the games to tell when it is not.
 
 The comparison treats the games as independent. Games of one night share the injury report and the ratings, so the standard error is a little understated; the bar of two errors leaves room for that. Log loss is shown beside the Brier score and not called.
+
+# Title futures
+
+The season forecast's headline is each team's chance of the title, and a sportsbook prices the same thing as championship futures, the outright prices on every team ([ADR 0016](/decisions/0016-track-the-title-chances-against-the-sportsbooks-futures.md)). Once a day while the regular season runs, at the day's first look of the capture task, the application reads the sportsbook's outright prices through The Odds API (one credit; ESPN's scoreboard carries none, so the futures need `ODDS_API_KEY`) and forecasts the season from that day with the injury report, from the full-strength ratings, at 2,000 simulated seasons with a fixed seed, as the question box's comparison runs it (`application::futures`). Both chances are saved per team and day (`futures_snapshots`): the sportsbook's price, the chance it implies with the field's margin taken out by the proportional rule (every implied chance scaled by the same factor so the field adds up to one, `domain::market::fair_field`), the margin, the model's chance with its simulation error, the model version and the application version. A later capture of the day replaces an earlier one. A read or a forecast that fails is tried again after an hour; an answer the application cannot keep (the sportsbook prices no title or names no team of the season, or the answer is not an outright listing) waits for the next day, so a configuration that cannot work costs one credit a day. The field is the season's teams the sportsbook names; a name it does not match is left out and logged. The capture runs from the day the season's schedule is stored to its last regular-season game; the playoffs are not captured, since the season engine forecasts from before them.
+
+Once the postseason is complete, each saved day is scored against the champion (`domain::futures::score_days`): the squared error summed over the teams, the Brier score of the field, and minus the log of the chance given to the champion, for the model and for the sportsbook; lower is better. The record counts the days each was the closer and gives the mean scores. The days are not independent, so no standard error is put on the count; the judgement firms up over seasons. The Model vs Market page shows the latest day's field, the model beside the sportsbook with the gap in percentage points, the days saved and the record (`GET /api/seasons/{season}/futures`).
 
 # Limits
 
