@@ -2,6 +2,7 @@
 //! with ports; adapters implement the ports (REAS-ARCH-001).
 pub mod ask;
 pub mod ask_players;
+pub mod backfill;
 pub mod boxscore;
 pub mod continuation;
 pub mod dashboard;

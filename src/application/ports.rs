@@ -795,6 +795,62 @@ pub trait MarketSource: Send + Sync {
     async fn lines_on(&self, date: NaiveDate) -> Result<Vec<MarketLine>, SourceError>;
 }
 
+/// A market a sportsbook prices on a game: the moneyline, the spread or the total. The
+/// Odds API bills its credits by the market in each read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OddsMarket {
+    Moneyline,
+    Spread,
+    Total,
+}
+
+impl OddsMarket {
+    /// The market's key at The Odds API.
+    pub fn key(self) -> &'static str {
+        match self {
+            OddsMarket::Moneyline => "h2h",
+            OddsMarket::Spread => "spreads",
+            OddsMarket::Total => "totals",
+        }
+    }
+
+    /// A market by its key at the service or its name here; none for another word.
+    pub fn parse(word: &str) -> Option<Self> {
+        match word.trim().to_ascii_lowercase().as_str() {
+            "h2h" | "moneyline" => Some(OddsMarket::Moneyline),
+            "spreads" | "spread" => Some(OddsMarket::Spread),
+            "totals" | "total" => Some(OddsMarket::Total),
+            _ => None,
+        }
+    }
+}
+
+/// Where a past night's sportsbook lines come from: the service's stored snapshots of the
+/// odds as they stood at a time. The concrete adapter is `adapters::odds_api::OddsApi`;
+/// ESPN's scoreboard keeps no history. The history costs the service's credits by the
+/// market, so a read names the markets it needs.
+#[allow(async_fn_in_trait)]
+pub trait MarketHistory: Send + Sync {
+    /// The source's name as the snapshots record it.
+    fn name(&self) -> &'static str;
+    /// The tip-off times of the games of `date` (the league's date), distinct and in order,
+    /// as the service listed them at `at`.
+    async fn tip_offs_at(
+        &self,
+        date: NaiveDate,
+        at: chrono::DateTime<chrono::Utc>,
+    ) -> Result<Vec<chrono::DateTime<chrono::Utc>>, SourceError>;
+    /// The lines of the games of `date` as they stood at `at`: the service's latest snapshot
+    /// at or before `at`, with that snapshot's own time, in the markets named.
+    async fn lines_at(
+        &self,
+        date: NaiveDate,
+        at: chrono::DateTime<chrono::Utc>,
+        markets: &[OddsMarket],
+    ) -> Result<(chrono::DateTime<chrono::Utc>, Vec<MarketLine>), SourceError>;
+}
+
 // ---------------------------------------------------------------------------------------
 // Players (the player catalogue, box scores and injury reports)
 // ---------------------------------------------------------------------------------------

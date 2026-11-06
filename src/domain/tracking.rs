@@ -18,6 +18,18 @@ use serde::Serialize;
 use crate::domain::ids::SeasonYear;
 use crate::domain::market;
 
+/// The model of a snapshot backfilled from the sportsbook's history: the stored pre-game
+/// Elo alone, with the season's fitted home bonus and no absence priced, since a past night
+/// has no injury report to price as the live model prices tonight's. Its rows stand apart
+/// from the live model's in the record.
+pub const ELO_ONLY_MODEL: &str = "elo-stored-1.0";
+
+/// The version a backfilled snapshot carries: the Elo-only model and the conversion of a
+/// rating gap to points, which its expected margin uses.
+pub fn elo_only_model_version() -> String {
+    [ELO_ONLY_MODEL, crate::domain::worth::MARGIN_MODEL_VERSION].join(" ")
+}
+
 /// The parts of the model a snapshot's numbers come from, joined: a change to any shows as
 /// a new version in the record.
 pub fn tonight_model_version() -> String {

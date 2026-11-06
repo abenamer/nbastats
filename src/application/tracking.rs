@@ -22,7 +22,7 @@ use super::market::{self, Market};
 use super::ports::{GameLog, MarketStore};
 use super::scheduler::current_season;
 use super::state::{App, SeasonLoadError};
-use super::worth::{self, Tonight};
+use super::worth::{self, GameTonight, Tonight};
 
 /// How often the task looks whether a read is due.
 pub const CAPTURE_EVERY: Duration = Duration::from_secs(10 * 60);
@@ -116,7 +116,7 @@ pub fn build_snapshots(
     m: &Market,
     model_version: &str,
 ) -> Vec<Snapshot> {
-    let (Some(night), Some(captured_at), Some(source)) = (t.night, m.read_at, m.source) else {
+    let Some(night) = t.night else {
         return Vec::new();
     };
     let stored: HashMap<TeamId, f64> = t
@@ -124,8 +124,34 @@ pub fn build_snapshots(
         .iter()
         .map(|x| (x.team_id, x.stored_rating))
         .collect();
+    snapshots_of(
+        season,
+        night,
+        t.home_advantage,
+        &t.games,
+        &stored,
+        m,
+        model_version,
+    )
+}
+
+/// The snapshots of `games` played on `night` from the market `m`, as [`build_snapshots`]
+/// takes them from the Tonight page: `stored` gives each team's stored rating, the game's
+/// own rating standing in for a team not in it.
+pub fn snapshots_of(
+    season: SeasonYear,
+    night: NaiveDate,
+    home_advantage: f64,
+    games: &[GameTonight],
+    stored: &HashMap<TeamId, f64>,
+    m: &Market,
+    model_version: &str,
+) -> Vec<Snapshot> {
+    let (Some(captured_at), Some(source)) = (m.read_at, m.source) else {
+        return Vec::new();
+    };
     let lines: HashMap<i64, &market::GameMarket> = m.games.iter().map(|g| (g.game_id, g)).collect();
-    t.games
+    games
         .iter()
         .filter_map(|g| {
             let line = lines.get(&g.game.game_id)?;
@@ -143,7 +169,7 @@ pub fn build_snapshots(
                 start_time: line.start_time,
                 model_version: model_version.to_string(),
                 app_version: env!("CARGO_PKG_VERSION").to_string(),
-                home_advantage: t.home_advantage,
+                home_advantage,
                 home_rating: n.home_rating,
                 away_rating: n.away_rating,
                 home_stored: stored

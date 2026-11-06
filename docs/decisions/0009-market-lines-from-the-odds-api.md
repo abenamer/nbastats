@@ -32,7 +32,7 @@ generated: { by: "human:abenamer", at: "2026-11-02T12:00:00Z" }
 ## Alternatives
 
 * Reading several sportsbooks in one request was rejected for now: each sportsbook's region costs its own credits, and the maintainer bets at one.
-* Buying historical odds to backfill the record was rejected: the service bills ten credits per market and snapshot for history, and the record from today forward is what the tracking needs.
+* Buying historical odds to backfill the record was rejected: the service bills ten credits per market and snapshot for history, and the record from today forward is what the tracking needs. (Set aside 2026-11-05 by [ADR 0018](0018-backfill-the-market-record-from-the-sportsbooks-history.md), once the maintainer bought a month of the paid plan to read the history back to 2020-21.)
 * A longer cache for the service's lines, to spend fewer credits, was rejected: it would move the stored line further from the closing line, which the scoring wants.
 * Reading every ten minutes through the night (the first version of this decision) was replaced the same day: about 400 credits a day, which the free tier does not cover, for lines that the next read replaced.
 * Keeping ESPN as the only source was rejected: its sportsbook is not the one the bets are placed at, and its shape is undocumented.

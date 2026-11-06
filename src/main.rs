@@ -94,6 +94,32 @@ enum Command {
         #[arg(long)]
         json: Option<std::path::PathBuf>,
     },
+    /// Backfill the market record from The Odds API's history: for each night in the range
+    /// with stored games and no snapshot, the sportsbook's lines as they stood before the
+    /// tip-off, beside the stored pre-game Elo (needs ODDS_API_KEY on a paid plan; costs
+    /// ten credits per market and read, one per night's listing)
+    MarketBackfill {
+        /// First date, YYYY-MM-DD (the league's date)
+        #[arg(long)]
+        from: chrono::NaiveDate,
+        /// Last date, YYYY-MM-DD, inclusive
+        #[arg(long)]
+        to: chrono::NaiveDate,
+        /// Read the lines before each tip-off time of the night, as the live capture does,
+        /// instead of once before the night's first tip-off
+        #[arg(long)]
+        per_tip_off: bool,
+        /// The markets to read, comma-separated: h2h (the moneyline), spreads, totals
+        #[arg(long, default_value = "h2h")]
+        markets: String,
+        /// List the nights and the estimated cost without reading anything
+        #[arg(long)]
+        dry_run: bool,
+        /// Stop before a request that would take the run's credits, by the service's rates,
+        /// past this many; without it the run stops only when the service's credits run out
+        #[arg(long)]
+        max_credits: Option<u64>,
+    },
     /// Container health check: GET /healthz on the bound address (exit 0 when healthy)
     Healthcheck,
 }
@@ -325,6 +351,81 @@ async fn main() -> anyhow::Result<()> {
                 eprintln!("report written to {}", path.display());
             }
             println!("{}", yaxel::render(&answer));
+            Ok(())
+        }
+        Command::MarketBackfill {
+            from,
+            to,
+            per_tip_off,
+            markets,
+            dry_run,
+            max_credits,
+        } => {
+            use nba_elo_simulator::application::backfill::{self, Plan};
+            use nba_elo_simulator::application::ports::OddsMarket;
+            use nba_elo_simulator::application::state::{App, Outbound};
+            anyhow::ensure!(from <= to, "--from must not be after --to");
+            // Each market once, in the order given: a repeated one would be billed again.
+            let mut parsed: Vec<OddsMarket> = Vec::new();
+            for w in markets.split(',').filter(|w| !w.trim().is_empty()) {
+                let m = OddsMarket::parse(w).ok_or_else(|| {
+                    anyhow::anyhow!("--markets must name h2h, spreads or totals; not {w:?}")
+                })?;
+                if !parsed.contains(&m) {
+                    parsed.push(m);
+                }
+            }
+            let markets = parsed;
+            anyhow::ensure!(
+                !markets.is_empty(),
+                "--markets must name at least one market"
+            );
+            let key = config
+                .odds_api_key
+                .clone()
+                .ok_or_else(|| anyhow::anyhow!("ODDS_API_KEY must be set to read the history"))?;
+            if !plain_or_local(&config.odds_api_base_url) {
+                warn!("ODDS_API_BASE_URL is not https: the API key travels unencrypted in the query string");
+            }
+            let odds = OddsApi::new(OddsApiConfig {
+                api_key: key,
+                base_url: config.odds_api_base_url.clone(),
+                bookmaker: config.odds_api_bookmaker.clone(),
+            })?;
+            let app = App::new(
+                config,
+                store,
+                source,
+                Outbound {
+                    results: None,
+                    sync_schedule: None,
+                    model: None,
+                    keys: None,
+                    reports: None,
+                    odds: Some(odds),
+                },
+            );
+            let history = app
+                .odds
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("The Odds API adapter was not kept"))?;
+            let plan = Plan {
+                per_tip_off,
+                markets,
+            };
+            let progress = |line: &str| eprintln!("{line}");
+            let outcome = backfill::backfill(
+                &app,
+                history,
+                from,
+                to,
+                &plan,
+                dry_run,
+                max_credits,
+                &progress,
+            )
+            .await?;
+            println!("{}", serde_json::to_string_pretty(&outcome)?);
             Ok(())
         }
         Command::Serve => serve(config, store, source, results, model, keys).await,

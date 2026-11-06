@@ -47,6 +47,7 @@ This project follows the [REAS engineering standard](https://github.com/abenamer
 * [Verify persistence](runbooks/verify-persistence.md) - Run the automated persistence test.
 * [Import and refresh data](runbooks/import-data.md) - Load a CSV file or download the latest game log.
 * [Run the YAXEL backtest](runbooks/yaxel-backtest.md) - Score the emergence term over the stored seasons from the command line and read the report.
+* [Backfill the market record](runbooks/market-backfill.md) - Fill the Model vs Market record from The Odds API's history for the nights the live capture did not see, and what it costs.
 * [Develop and test](runbooks/develop.md) - Build, run and test outside Docker.
 
 # Reference
@@ -74,6 +75,7 @@ This project follows the [REAS engineering standard](https://github.com/abenamer
 * [ADR 0014 — YAXEL, an emergence term backtested before it is used](decisions/0014-yaxel-an-emergence-term-backtested-before-it-is-used.md) - Why a player's recent box scores, against the worth he entered the season with, could move his team's rating, and why the rule is backtested from the command line before it touches a page.
 * [ADR 0015 — Mint and rotate the question box's key from a management key](decisions/0015-mint-and-rotate-the-question-box-key-from-a-management-key.md) - Why the application mints its own OpenRouter completion key from a management key, replaces it on a schedule and when the service refuses it, deletes the keys it minted before, and keeps no secret of its own.
 * [ADR 0016 — Track the model's title chances against the sportsbook's futures](decisions/0016-track-the-title-chances-against-the-sportsbooks-futures.md) - Why the application saves, once a day through the regular season, the sportsbook's outright prices on the title beside the model's title chance of the same day, how the prices become chances, and how the days are scored against the champion.
+* [ADR 0018 — Backfill the market record from the sportsbook's history](decisions/0018-backfill-the-market-record-from-the-sportsbooks-history.md) - Why the nights before the tracking was on, and the seasons before, are filled from The Odds API's stored snapshots of the lines read before the tip-off, beside the stored pre-game Elo alone under its own model version, and how the plan's credits are spent.
 * [ADR 0017 — A What if page runs counterfactuals through the season engine](decisions/0017-a-what-if-page-runs-counterfactuals-through-the-season-engine.md) - Why a real season can be run again with a team's rating set by hand, a team barred from the postseason, another era's playoff format, players out or a player's worth changed, as a second run of the season engine beside the plain one, and what the engine takes as parameters for it.
 
 # History

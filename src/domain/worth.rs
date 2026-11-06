@@ -1085,9 +1085,43 @@ pub fn tonight(
         .filter(|g| g.game_date == night)
         .collect();
     slate.sort_by_key(|g| (g.seq, g.id));
+    Some(Night {
+        date: night,
+        played,
+        games: price_slate(&slate, night, ratings, absences, home_advantage),
+    })
+}
+
+/// The regular-season games of `date`, played or not, priced at `ratings` with the
+/// absences that cover the date: a past night read as the Tonight page would have read it
+/// before its games, from the ratings and absences given for that date.
+pub fn night_of(
+    games: &[Game],
+    date: NaiveDate,
+    ratings: &HashMap<TeamId, f64>,
+    absences: &[Absence],
+    home_advantage: f64,
+) -> Vec<NightGame> {
+    let mut slate: Vec<&Game> = games
+        .iter()
+        .filter(|g| g.game_type == crate::domain::models::GameType::Regular && g.game_date == date)
+        .collect();
+    slate.sort_by_key(|g| (g.seq, g.id));
+    price_slate(&slate, date, ratings, absences, home_advantage)
+}
+
+/// The games of one night priced: each at the ratings the teams play at, the penalties of
+/// the night taken off. A team without a rating is read at the league mean.
+fn price_slate(
+    slate: &[&Game],
+    night: NaiveDate,
+    ratings: &HashMap<TeamId, f64>,
+    absences: &[Absence],
+    home_advantage: f64,
+) -> Vec<NightGame> {
     let rating = |t: TeamId| ratings.get(&t).copied().unwrap_or(elo::SEASON_MEAN);
-    let priced = slate
-        .into_iter()
+    slate
+        .iter()
         .map(|g| {
             let home_rating = rating(g.home_team_id);
             let away_rating = rating(g.away_team_id);
@@ -1119,12 +1153,7 @@ pub fn tonight(
                 away_moneyline_tonight: elo::american_odds(1.0 - p_tonight),
             }
         })
-        .collect();
-    Some(Night {
-        date: night,
-        played,
-        games: priced,
-    })
+        .collect()
 }
 
 /// The absences that cover `as_of`, each held to `until` (inclusive) when it ends before
