@@ -32,7 +32,7 @@ use crate::domain::eras::{
     MAX_FACETS,
 };
 use crate::domain::ids::{PlayerId, SeasonYear, TeamId};
-use crate::domain::models::{JobKind, SimulationJob};
+use crate::domain::models::{JobKind, SimulationJob, TeamSeasonView};
 use crate::domain::playoffs::bracket::ModelSpec;
 use crate::domain::playoffs::season::{check_regular_home_advantage, SeasonParams};
 use crate::domain::records::{league_sizes, League, TeamSeasonStat};
@@ -329,6 +329,15 @@ pub async fn franchises(State(app): State<AppState>) -> ApiResult<Value> {
 // Elo explorer
 // ---------------------------------------------------------------------------------------
 
+/// A team-season row with the games the team still has to play, which the Elo Explorer
+/// shows in place of a result for the season in progress.
+#[derive(Serialize)]
+struct TeamSeasonRow<'a> {
+    #[serde(flatten)]
+    row: &'a TeamSeasonView,
+    games_to_play: u32,
+}
+
 pub async fn season_teams(
     State(app): State<AppState>,
     Path(season): Path<SeasonYear>,
@@ -337,8 +346,22 @@ pub async fn season_teams(
     if rows.is_empty() {
         return Err(ApiError::not_found(format!("no data for season {season}")));
     }
+    let data = app.season_data(season).await?;
+    let mut to_play: HashMap<TeamId, u32> = HashMap::new();
+    for g in data.games.iter().filter(|g| !g.is_played()) {
+        for t in [g.home_team_id, g.away_team_id] {
+            *to_play.entry(t).or_default() += 1;
+        }
+    }
+    let teams: Vec<TeamSeasonRow<'_>> = rows
+        .iter()
+        .map(|r| TeamSeasonRow {
+            row: r,
+            games_to_play: to_play.get(&r.team_id).copied().unwrap_or(0),
+        })
+        .collect();
     Ok(Json(
-        json!({ "season": season, "label": season.label(), "teams": rows }),
+        json!({ "season": season, "label": season.label(), "teams": teams }),
     ))
 }
 

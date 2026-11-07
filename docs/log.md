@@ -1,7 +1,7 @@
 # Bundle update log
 
 ## 2026-11-07
-* **Update**: A team in a season whose playoffs have not started has the playoff result Current season instead of Missed playoffs, on every page that shows a team's result; migration `0010` admits the value and sets it on the stored rows of such seasons. The [Database schema](/reference/schema.md) and the term Current season follow. Noted in the changelog.
+* **Update**: A team in a season whose playoffs have not started has the playoff result Current season instead of Missed playoffs, on every page that shows a team's result, and the Elo Explorer's table says instead how many games each team has to play (`games_to_play` in the [API reference](/reference/api.md)); migration `0010` admits the value and sets it on the stored rows of such seasons. The [Database schema](/reference/schema.md), the [Application overview](/concepts/application.md) and the term Current season follow. Noted in the changelog.
 * **Update**: Elo Explorer: the shaded strip for the games not played yet is gone from the season chart; a note under the chart says the season has not ended, with the games that remain and the date of the last. The [Application overview](/concepts/application.md) follows. Noted in the changelog.
 * **Update**: Elo Explorer: every panel takes the full width of the page, the season chart in a taller card, then the team ratings table, the franchise trajectory and the matchup calculator. Noted in the changelog.
 * **Update**: Jobs page: the Parameters toggle of a job stays open. A click on it no longer redraws the table, the five-second refresh redraws only when the list has changed, and the toggles that were open are opened again after a redraw. Noted in the changelog.

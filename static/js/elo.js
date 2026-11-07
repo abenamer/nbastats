@@ -18,7 +18,8 @@
         { label: 'W', value: 'wins' }, { label: 'L', value: 'losses' }, { label: 'Start', value: r => num(r.elo_start, 0) },
         { label: 'Reg. end', value: r => num(r.elo_regular_end, 0) }, { label: 'Pre-playoffs', value: r => num(r.elo_pre_playoffs, 0) },
         { label: 'End', value: r => num(r.elo_end, 0) }, { label: 'Peak', value: r => num(r.elo_peak, 0) }, { label: 'Seed', value: r => r.seed || '' },
-        { label: 'Result', value: r => RESULT[r.playoff_result] || r.playoff_result, left: true, cls: r => r.playoff_result === 'champion' ? 'good' : '' }],
+        // The season in progress has no result yet: the cell says how many games the team has to play.
+        { label: 'Result', value: r => r.playoff_result === 'current' && r.games_to_play > 0 ? `${r.games_to_play} games to play` : RESULT[r.playoff_result] || r.playoff_result, left: true, cls: r => r.playoff_result === 'champion' ? 'good' : '' }],
         t.teams.slice().sort((a, b) => (b.elo_pre_playoffs || 0) - (a.elo_pre_playoffs || 0)));
       const sel = h.series, sched = h.schedule || {};
       // The axis covers the played games; a note under the chart says what remains.
