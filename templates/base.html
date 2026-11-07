@@ -20,8 +20,8 @@
     <a href="/alpha" class="{% if layout.active == "alpha" %}active{% endif %}">Alpha Simulator</a>
     <a href="/playoffs" class="{% if layout.active == "playoffs" %}active{% endif %}">Playoff Simulator</a>
     <div class="menu">
-      <a href="/season" class="menu-head{% if layout.active == "season" || layout.active == "tonight" || layout.active == "injuries" || layout.active == "whatif" %} active{% endif %}" aria-haspopup="true">Season ▾</a>
-      <div class="submenu">
+      <button type="button" class="menu-head{% if layout.active == "season" || layout.active == "tonight" || layout.active == "injuries" || layout.active == "whatif" %} active{% endif %}" aria-haspopup="true" aria-expanded="false" aria-controls="season-menu">Season ▾</button>
+      <div class="submenu" id="season-menu">
         <a href="/season" class="{% if layout.active == "season" %}active{% endif %}">Forecast</a>
         <a href="/season/tonight" class="{% if layout.active == "tonight" %}active{% endif %}">Tonight</a>
         <a href="/season/injuries" class="{% if layout.active == "injuries" %}active{% endif %}">Injury card</a>

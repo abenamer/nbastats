@@ -190,3 +190,15 @@ window.NBA = (() => {
   }
   return { pct, num, esc, labelOf, RESULT, getJSON, postJSON, runJob, table, bar, cards, setStatus, chart, color, dayOf, dateOf, dateScale, scoreCell, attachReports, bracketHtml, knockoutHtml };
 })();
+
+// The top bar's menus (Season): a tap or a click on the head opens and closes the list, so a
+// touch screen can reach the entries; Escape or a click elsewhere closes it. app.js is deferred,
+// so the header is parsed when this runs.
+document.querySelectorAll('.topbar .menu').forEach(menu => {
+  const head = menu.querySelector('.menu-head');
+  if (!head) return;
+  const set = (open) => { menu.classList.toggle('open', open); head.setAttribute('aria-expanded', String(open)); };
+  head.addEventListener('click', () => set(!menu.classList.contains('open')));
+  document.addEventListener('click', (e) => { if (!menu.contains(e.target)) set(false); });
+  menu.addEventListener('keydown', (e) => { if (e.key === 'Escape') { set(false); head.focus(); } });
+});

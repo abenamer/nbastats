@@ -1,6 +1,7 @@
 # Bundle update log
 
 ## 2026-11-07
+* **Update**: The Season menu opens on a tap or a click on its head, not on hover alone, so it works on a touch screen; the term Season menu says so and lists What if. Noted in the changelog.
 * **New**: The runbook [Reach the dashboard over Tailscale](/runbooks/tailscale.md) says how to open the dashboard from the devices of your tailnet through Tailscale Serve (HTTPS, port on loopback, no Funnel) and what to add to `ALLOWED_HOSTS`; the [Configuration](/reference/configuration.md) reference's `ALLOWED_HOSTS` and `APP_HOST_BIND` rows, the [Security model](/concepts/security.md)'s residual risk and the term Tailnet follow. Noted in the changelog.
 * **Update**: A team in a season whose playoffs have not started has the playoff result Current season instead of Missed playoffs, on every page that shows a team's result, and the Elo Explorer's table says instead how many games each team has to play (`games_to_play` in the [API reference](/reference/api.md)); migration `0010` admits the value and sets it on the stored rows of such seasons. The [Database schema](/reference/schema.md), the [Application overview](/concepts/application.md) and the term Current season follow. Noted in the changelog.
 * **Update**: Elo Explorer: the shaded strip for the games not played yet is gone from the season chart; a note under the chart says the season has not ended, with the games that remain and the date of the last. The [Application overview](/concepts/application.md) follows. Noted in the changelog.
