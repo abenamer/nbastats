@@ -1,5 +1,8 @@
 # Bundle update log
 
+## 2026-11-07
+* **Update**: Jobs page: the Parameters toggle of a job stays open. A click on it no longer redraws the table, the five-second refresh redraws only when the list has changed, and the toggles that were open are opened again after a redraw. Noted in the changelog.
+
 ## 2026-11-05
 * **New**: [ADR 0018](/decisions/0018-backfill-the-market-record-from-the-sportsbooks-history.md) records the backfill of the market record from The Odds API's history and the runs of the day, six seasons at a moneyline read a night and this season's missing nights at every tip-off; [Market tracking](/concepts/market-tracking.md) gains the section Backfill and a limit; the runbook [Backfill the market record](/runbooks/market-backfill.md) says how to run it and what it costs; the [Configuration](/reference/configuration.md) reference's `ODDS_API_KEY` row, the term Backfilled snapshot and a note in [ADR 0009](/decisions/0009-market-lines-from-the-odds-api.md) follow.
 * **Update**: [ADR 0014](/decisions/0014-yaxel-an-emergence-term-backtested-before-it-is-used.md) records the maintainer's run against the absence-penalized rating (the gap stays: −13 and −14 Elo at four standard errors, from −16 against Elo; the absences account for about 2 to 3 Elo of it) and two alternatives for the reading; [YAXEL](/concepts/yaxel.md) states the outcome.
