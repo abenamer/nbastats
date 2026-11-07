@@ -41,6 +41,7 @@ This project follows the [REAS engineering standard](https://github.com/abenamer
 # Runbooks
 
 * [Start the application](runbooks/start.md) - First start with Docker Compose.
+* [Reach the dashboard over Tailscale](runbooks/tailscale.md) - Open the dashboard from your other devices through Tailscale Serve, over HTTPS, with no port open to the internet.
 * [Run an alpha scenario](runbooks/alpha-scenario.md) - Ask the Alpha Simulator how often a title run happens by chance, save and compare scenarios.
 * [Upgrade the application](runbooks/upgrade.md) - Rebuild the image and keep all data.
 * [Back up and restore](runbooks/backup-restore.md) - Create, list, restore and verify database backups.

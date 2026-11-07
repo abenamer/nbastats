@@ -24,7 +24,7 @@ The project follows the [REAS engineering standard](https://github.com/abenamer/
 
        docker compose up -d --build
 
-3. Open <http://localhost:3000>.
+3. Open <http://localhost:3000>. To open the dashboard from your other devices, see [Reach the dashboard over Tailscale](docs/runbooks/tailscale.md).
 
 The first start imports the bundled game log (75,913 games, 1946-47 to 2024-25). This takes about 15 seconds.
 

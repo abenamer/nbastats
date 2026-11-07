@@ -10,3 +10,11 @@ research/papers/*.pdf
 # Local compose overrides (host networking on a developer machine, published ports)
 compose.override.yaml
 docker-compose.override.yml
+
+# TLS certificate files (Tailscale Serve keeps its own; the project needs none)
+*.crt
+*.key
+*.pem
+
+# Python bytecode from the docs checker and its tests
+__pycache__/

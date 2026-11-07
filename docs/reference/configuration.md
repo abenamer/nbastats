@@ -24,7 +24,7 @@ sources:
 | `DATA_SOURCE_URL` | Neil Paine's `nba_elo.csv` on GitHub | URL used by refresh. |
 | `MAX_ITERATIONS` | `5000000` | Upper limit for Monte Carlo iterations in one job. |
 | `MAX_WORK_UNITS` | `4000000000` | Upper limit for the estimated work of one job (iterations × per-iteration work). |
-| `ALLOWED_HOSTS` | `localhost,127.0.0.1,[::1]` | Host names accepted in the `Host` header. `*` accepts any. |
+| `ALLOWED_HOSTS` | `localhost,127.0.0.1,[::1]` | Host names accepted in the `Host` header; other names get status 421. Add the name a reverse proxy forwards, for example the machine's `<machine>.<tailnet>.ts.net` name under [Tailscale Serve](/runbooks/tailscale.md). `*` accepts any. |
 | `BALLDONTLIE_API_KEY` | none | API key for the results sync and the player data. When unset, both are unavailable. Box scores, rosters and injury reports need the ALL-STAR tier; see [Player data](/concepts/player-data.md). |
 | `BALLDONTLIE_BASE_URL` | `https://api.balldontlie.io/v1` | Base URL of the BALLDONTLIE API. |
 | `BALLDONTLIE_REQUESTS_PER_MINUTE` | `5` | Request pacing for the plan's quota: 5 on the free tier, 60 on ALL-STAR, 600 on GOAT (the API's pricing page, read 2026-10-26). |
@@ -59,7 +59,7 @@ sources:
 | `POSTGRES_USER` | `nba` | Database user. |
 | `POSTGRES_PASSWORD` | none (required) | Database password. |
 | `POSTGRES_DB` | `nba` | Database name. |
-| `APP_HOST_BIND` | `127.0.0.1` | Host interface for the published port. |
+| `APP_HOST_BIND` | `127.0.0.1` | Host interface for the published port. Loopback is enough for a reverse proxy on the same computer, Tailscale Serve included. |
 | `APP_HOST_PORT` | `3000` | Host port for the dashboard. |
 
 The database port is not published to the host. The application reaches it on the internal network `nba-internal`.

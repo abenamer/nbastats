@@ -52,6 +52,6 @@ Every response carries `Content-Security-Policy`, `X-Content-Type-Options: nosni
 
 # Residual risk
 
-* Anyone with access to the computer, or to the port when you publish it on a network, can use the full API. If you publish the port, put a reverse proxy with authentication in front of it and set `ALLOWED_HOSTS`.
+* Anyone with access to the computer, or to the port when you publish it on a network, can use the full API. If you publish the port, put a reverse proxy with authentication in front of it and set `ALLOWED_HOSTS`. [Tailscale Serve](/runbooks/tailscale.md) gives HTTPS and limits the readers to the devices of your tailnet, with the port still on loopback; it is not a login, and Tailscale Funnel, which opens the address to the internet, must not be used.
 * There is no rate limit. A local process can queue many jobs; the runner executes them one at a time.
 * The `/api/health` page shows table counts, the data directory and the masked database URL (the password masked in the user information and in a `password` query parameter alike).
