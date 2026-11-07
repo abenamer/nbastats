@@ -168,9 +168,12 @@ impl Conference {
 
 text_enum! {
     /// How far a team got in a postseason. Variants are ordered from worst to best, so
-    /// `PartialOrd` answers "did the team reach at least round X".
+    /// `PartialOrd` answers "did the team reach at least round X". `Current` is the result
+    /// of every team outside the play-in in a season whose playoffs have not started: not a
+    /// miss, since nothing is decided yet; it ranks lowest.
     #[derive(PartialOrd, Ord)]
     PlayoffResult {
+        Current => "current",
         Missed => "missed",
         PlayIn => "play_in",
         FirstRound => "first_round",

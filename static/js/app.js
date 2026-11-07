@@ -4,7 +4,7 @@ window.NBA = (() => {
   const num = (x, d = 1) => (x == null || Number.isNaN(x)) ? '–' : Number(x).toFixed(d);
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const labelOf = (season) => `${season - 1}-${String(season % 100).padStart(2, '0')}`;
-  const RESULT = { missed: 'Missed playoffs', play_in: 'Lost in play-in', first_round: 'Lost 1st round', second_round: 'Lost 2nd round', conf_finals: 'Lost conf. finals', finals: 'Lost Finals', champion: 'Champion' };
+  const RESULT = { current: 'Current season', missed: 'Missed playoffs', play_in: 'Lost in play-in', first_round: 'Lost 1st round', second_round: 'Lost 2nd round', conf_finals: 'Lost conf. finals', finals: 'Lost Finals', champion: 'Champion' };
 
   async function getJSON(url) {
     const r = await fetch(url, { headers: { Accept: 'application/json' } });

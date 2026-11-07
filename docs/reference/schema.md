@@ -20,6 +20,9 @@ sources:
   - id: cup-stage
     resource: /migrations/0008_cup_stage.sql
     title: Cup stage of a game
+  - id: current-season
+    resource: /migrations/0010_current_season_result.sql
+    title: Current season result
 ---
 
 # Reference tables
@@ -44,7 +47,7 @@ The import rebuilds these tables for every season it touches.
 | Table | Key | Content |
 |-------|-----|---------|
 | `seasons` | season | Counts (including computed and scheduled games), dates, completeness. |
-| `team_seasons` | (season, team) | Record, Elo milestones, seed, playoff result. |
+| `team_seasons` | (season, team) | Record, Elo milestones, seed, playoff result. The playoff result is `current` for a team outside the play-in in a season whose playoffs have not started (migration `0010`), else `missed`, `play_in`, `first_round`, `second_round`, `conf_finals`, `finals` or `champion`. |
 | `championships` | season | Champion, runner-up, source (`derived` or `curated`). |
 
 # Simulation data

@@ -213,6 +213,9 @@ pub async fn rebuild_seasons<S: GameStore>(
             .filter(|g| g.is_playoff())
             .flat_map(|g| [g.home_team_id, g.away_team_id])
             .collect();
+        // Until a playoff game is played nothing is decided, so a team outside the play-in
+        // has no result yet rather than a miss.
+        let playoffs_started = games.iter().any(|g| g.is_playoff() && g.is_played());
         for &tid in &team_ids {
             let Some(team) = teams.get(&tid) else {
                 continue;
@@ -225,6 +228,7 @@ pub async fn rebuild_seasons<S: GameStore>(
                 seeds: &seeds,
                 play_in_teams: &play_in_teams,
                 playoff_teams: &playoff_teams,
+                playoffs_started,
             };
             store.upsert_team_season(&team_season(team, &ctx)).await?;
         }
@@ -275,6 +279,9 @@ struct TeamSeasonInputs<'a> {
     seeds: &'a HashMap<TeamId, i32>,
     play_in_teams: &'a HashSet<TeamId>,
     playoff_teams: &'a HashSet<TeamId>,
+    /// A playoff game of the season has been played. Before that, a team outside the play-in
+    /// has the result `Current`, not `Missed`.
+    playoffs_started: bool,
 }
 
 fn team_season(team: &Team, ctx: &TeamSeasonInputs<'_>) -> TeamSeason {
@@ -314,8 +321,10 @@ fn team_season(team: &Team, ctx: &TeamSeasonInputs<'_>) -> TeamSeason {
     let made_play_in = ctx.play_in_teams.contains(&tid);
     let playoff_result = ctx.results.get(&tid).copied().unwrap_or(if made_play_in {
         PlayoffResult::PlayIn
-    } else {
+    } else if ctx.playoffs_started {
         PlayoffResult::Missed
+    } else {
+        PlayoffResult::Current
     });
     TeamSeason {
         season: ctx.season,
@@ -412,5 +421,51 @@ mod curated_tests {
             .collect();
         let missing = missing_curated(&present, &have);
         assert_eq!(missing, vec![(SeasonYear::of(1947), "PHW", "CHS")]);
+    }
+}
+
+#[cfg(test)]
+mod result_tests {
+    use super::*;
+    use crate::domain::ids::FranchiseId;
+
+    #[test]
+    fn a_team_outside_the_play_in_has_no_result_until_a_playoff_game_is_played() {
+        let team = Team {
+            id: TeamId::new(1),
+            code: "BOS".to_string(),
+            franchise_id: FranchiseId::new(1),
+            name: "Boston Celtics".to_string(),
+            first_season: None,
+            last_season: None,
+        };
+        let (alignment, results, seeds) = (HashMap::new(), HashMap::new(), HashMap::new());
+        let (play_in_teams, playoff_teams) = (HashSet::new(), HashSet::new());
+        let ctx = |playoffs_started| TeamSeasonInputs {
+            season: SeasonYear::of(2027),
+            games: &[],
+            alignment: &alignment,
+            results: &results,
+            seeds: &seeds,
+            play_in_teams: &play_in_teams,
+            playoff_teams: &playoff_teams,
+            playoffs_started,
+        };
+        assert_eq!(
+            team_season(&team, &ctx(false)).playoff_result,
+            PlayoffResult::Current
+        );
+        assert_eq!(
+            team_season(&team, &ctx(true)).playoff_result,
+            PlayoffResult::Missed
+        );
+        // The result ranks below a miss, so it never counts as a stage reached, and it
+        // round-trips through its stored form.
+        assert!(PlayoffResult::Current < PlayoffResult::Missed);
+        assert_eq!(
+            "current".parse::<PlayoffResult>(),
+            Ok(PlayoffResult::Current)
+        );
+        assert_eq!(PlayoffResult::Current.as_str(), "current");
     }
 }
