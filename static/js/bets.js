@@ -1,12 +1,15 @@
 // Bets: a pot staked on every game, as a portfolio, from the market record.
 (async () => {
-  const { num, pct, table, cards, getJSON, labelOf, setStatus, chart, color, dayOf, dateOf, dateScale } = NBA;
+  const { num, pct, esc, table, cards, getJSON, labelOf, setStatus, chart, color, dayOf, dateOf, dateScale } = NBA;
   const el = id => document.getElementById(id);
   const status = el('status');
   const money = x => x == null ? '–' : `${x < 0 ? '−' : ''}$${Math.abs(x).toLocaleString('en-US', { maximumFractionDigits: 0 })}`;
   const signed = x => x == null ? '–' : `${x > 0 ? '+' : x < 0 ? '−' : ''}$${Math.abs(x).toLocaleString('en-US', { maximumFractionDigits: 0 })}`;
-  const labels = book => ({ market_favourite: `${book} favourite`, model_favourite: 'Model favourite', model_disagreements: 'Model where it disagrees', lean_linear: 'Model lean, stake by the gap', lean_square: 'Model lean, stake by the gap squared' });
-  const sized = s => s === 'lean_linear' || s === 'lean_square';
+  const labels = book => ({
+    market_favourite: `${book} favourite`, model_favourite: 'Model favourite', model_disagreements: 'Model where it disagrees',
+    lean_linear: 'Model lean, stake by the gap', lean_square: 'Model lean, stake by the gap squared',
+    disagreements_linear: 'Model where it disagrees, stake by the gap', disagreements_square: 'Model where it disagrees, stake by the gap squared' });
+  const SIZED = ['lean_linear', 'lean_square', 'disagreements_linear', 'disagreements_square'];
   let request = 0;
   async function load() {
     const mine = ++request;
@@ -38,7 +41,7 @@
       cards(el('cards'), runs.map(x => ({
         label: label[x.run.strategy],
         value: money(x.final_value),
-        sub: `${signed(x.net)} (${pct(x.return_share)}) on ${x.bets.toLocaleString()} bets, ${money(x.staked)} staked${sized(x.run.strategy) ? `, largest ${money(x.max_stake)}` : ''} · peak ${money(x.peak)} · drawdown ${money(x.max_drawdown)} (${pct(x.max_drawdown_share)})`,
+        sub: `${signed(x.net)} (${pct(x.return_share)}) on ${x.bets.toLocaleString()} bets, ${money(x.staked)} staked${SIZED.includes(x.run.strategy) ? `, largest ${money(x.max_stake)}` : ''} · peak ${money(x.peak)} · drawdown ${money(x.max_drawdown)} (${pct(x.max_drawdown_share)})`,
       })));
       const days = p.days.map(d => dayOf(d.date));
       chart('potChart', { type: 'line', data: { datasets: runs.map((x, k) => ({
@@ -58,16 +61,18 @@
       const lines = r.providers.length ? ` Lines from ${book} on ${r.providers[0].games.toLocaleString()} games${others.length ? `, the rest from ${others.length === 1 ? others[0].name : `${others.length} other sportsbooks`} where it had none` : ''}.` : '';
       el('note').textContent = `${p.games.toLocaleString()} games bet on from ${p.first} to ${p.last}, over ${r.seasons.length} season${r.seasons.length === 1 ? '' : 's'} with a record (${r.scored.toLocaleString()} scored games in all${p.before_start ? `, ${p.before_start.toLocaleString()} before the start date` : ''}${p.unpriced ? `, ${p.unpriced} without a sportsbook price` : ''}${r.pending ? `, ${r.pending} waiting for a result` : ''}${r.unmatched ? `, ${r.unmatched} matching no stored game` : ''}). The sized strategies lay the base stake at a gap of ${num(p.settings.edge * 100, 1)} points.${lines}${margin}`;
       const at = (row, strategy) => row.runs[p.runs.findIndex(x => x.run.strategy === strategy && x.run.price === price)];
-      const net = strategy => ({ label: 'Net', value: r => signed(at(r, strategy).net), cls: r => at(r, strategy).net < 0 ? 'bad' : 'good' });
+      const net = (strategy, text) => ({ label: text, value: r => signed(at(r, strategy).net), cls: r => at(r, strategy).net < 0 ? 'bad' : 'good' });
+      // A sized strategy's net carries the money it laid as the cell's tooltip.
+      const sizedNet = (strategy, text) => ({ label: text, raw: true, value: r => { const t = at(r, strategy); return `<span title="${esc(money(t.staked))} staked over ${esc(t.bets.toLocaleString())} bets">${esc(signed(t.net))}</span>`; }, cls: r => at(r, strategy).net < 0 ? 'bad' : 'good' });
       const rows = p.seasons.map(s => ({ label: labelOf(s.season), ...s })).concat([{ label: 'All', games: p.games, runs: p.runs.map(x => ({ bets: x.bets, wins: x.wins, staked: x.staked, net: x.net })) }]);
       el('seasons').innerHTML = table([
         { label: 'Season', value: 'label', left: true }, { label: 'Games', value: r => r.games.toLocaleString() },
-        { label: `${book} fav. won`, value: r => at(r, 'market_favourite').wins.toLocaleString() }, net('market_favourite'),
-        { label: 'Model fav. won', value: r => at(r, 'model_favourite').wins.toLocaleString() }, net('model_favourite'),
-        { label: 'Disagree', value: r => at(r, 'model_disagreements').bets.toLocaleString(), title: 'Games where the model\'s favourite is not the sportsbook\'s, bet on the model\'s side' }, { label: 'Right', value: r => at(r, 'model_disagreements').wins.toLocaleString() }, net('model_disagreements'),
+        { label: `${book} fav. won`, value: r => at(r, 'market_favourite').wins.toLocaleString() }, net('market_favourite', 'Net'),
+        { label: 'Model fav. won', value: r => at(r, 'model_favourite').wins.toLocaleString() }, net('model_favourite', 'Net'),
+        { label: 'Disagree', value: r => at(r, 'model_disagreements').bets.toLocaleString(), title: 'Games where the model\'s favourite is not the sportsbook\'s, bet on the model\'s side' }, { label: 'Right', value: r => at(r, 'model_disagreements').wins.toLocaleString() }, net('model_disagreements', 'Net'),
         { label: 'Lean bets', value: r => at(r, 'lean_linear').bets.toLocaleString(), title: 'Games the model leaned on either way' },
-        { label: 'Staked, gap', value: r => money(at(r, 'lean_linear').staked), title: 'Money laid with the stake in proportion to the gap' }, net('lean_linear'),
-        { label: 'Staked, gap²', value: r => money(at(r, 'lean_square').staked), title: 'Money laid with the stake as the square of the gap' }, net('lean_square')], rows);
+        sizedNet('lean_linear', 'Lean net, gap'), sizedNet('lean_square', 'Lean net, gap²'),
+        sizedNet('disagreements_linear', 'Disagree net, gap'), sizedNet('disagreements_square', 'Disagree net, gap²')], rows);
     } catch (e) { if (mine === request) setStatus(status, e.message, true); }
   }
   for (const id of ['from', 'pot', 'stake', 'edge', 'price']) el(id).addEventListener('change', load);

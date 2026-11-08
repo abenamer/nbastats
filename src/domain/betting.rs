@@ -1,10 +1,11 @@
 //! The betting portfolio: a pot staked on every game the sportsbook priced, read as a stock
-//! portfolio is. Five strategies run side by side from a start date. Three put the same
+//! portfolio is. Seven strategies run side by side from a start date. Three put the same
 //! stake on a favourite: the sportsbook's, the model's, and the model's only where it
 //! differs from the sportsbook's (the bettor sits out the rest). Two put a stake sized by
 //! the gap between the model's chance and the sportsbook's on the model's lean, the side
 //! the model rates above the sportsbook: the stake grows with the gap, once in proportion
-//! and once as its square, with a reference gap at which the base stake is laid. Each runs
+//! and once as its square, with a reference gap at which the base stake is laid. Two more
+//! lay the same sized stakes only where the model's favourite is not the sportsbook's. Each runs
 //! at the posted prices and at the fair ones, the sportsbook's moneylines with the
 //! bookmaker's margin taken out, so the margin's cost can be read apart from the forecasts'
 //! worth. The pot is the running sum of the returns, so a run never stops for want of money:
@@ -47,6 +48,11 @@ pub enum Strategy {
     /// The same side, the base stake times the square of the gap over the reference gap:
     /// four times the stake at twice the gap.
     LeanSquare,
+    /// The lean's stake in proportion to the gap, only on the games where the model's
+    /// favourite is not the sportsbook's; no bet on the rest.
+    DisagreementsLinear,
+    /// The lean's stake as the square of the gap, only on those games.
+    DisagreementsSquare,
 }
 
 impl Strategy {
@@ -58,11 +64,14 @@ impl Strategy {
             Strategy::MarketFavourite | Strategy::ModelFavourite | Strategy::ModelDisagreements => {
                 1.0
             }
-            Strategy::LeanLinear => gap / edge,
-            Strategy::LeanSquare => (gap / edge) * (gap / edge),
+            Strategy::LeanLinear | Strategy::DisagreementsLinear => gap / edge,
+            Strategy::LeanSquare | Strategy::DisagreementsSquare => (gap / edge) * (gap / edge),
         }
     }
 }
+
+/// How many strategies there are; the runs are twice that, one per price.
+pub const STRATEGY_COUNT: usize = 7;
 
 /// The price a bet is settled at.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -83,28 +92,30 @@ pub struct Run {
 }
 
 /// The strategies, in the order the runs carry them.
-pub const STRATEGIES: [Strategy; 5] = [
+pub const STRATEGIES: [Strategy; STRATEGY_COUNT] = [
     Strategy::MarketFavourite,
     Strategy::ModelFavourite,
     Strategy::ModelDisagreements,
     Strategy::LeanLinear,
     Strategy::LeanSquare,
+    Strategy::DisagreementsLinear,
+    Strategy::DisagreementsSquare,
 ];
 
 /// Every run, in the order the paths and the season rows carry them: every strategy at the
 /// posted prices, then every strategy at the fair ones.
-pub const RUNS: [Run; 10] = {
+pub const RUNS: [Run; 2 * STRATEGY_COUNT] = {
     let mut runs = [Run {
         strategy: Strategy::MarketFavourite,
         price: Price::Posted,
-    }; 10];
+    }; 2 * STRATEGY_COUNT];
     let mut i = 0;
-    while i < 5 {
+    while i < STRATEGY_COUNT {
         runs[i] = Run {
             strategy: STRATEGIES[i],
             price: Price::Posted,
         };
-        runs[i + 5] = Run {
+        runs[i + STRATEGY_COUNT] = Run {
             strategy: STRATEGIES[i],
             price: Price::Fair,
         };
@@ -204,7 +215,7 @@ struct Bet {
 /// Each run's bet on a game, in the order of [`RUNS`]; a run that sits the game out has
 /// none. The game itself has none without a sportsbook chance or a moneyline for both
 /// sides.
-fn bets_of(g: &Scored, edge: f64) -> Option<[Option<Bet>; 10]> {
+fn bets_of(g: &Scored, edge: f64) -> Option<[Option<Bet>; 2 * STRATEGY_COUNT]> {
     let s = &g.snapshot;
     let p_home = s.p_home_market?;
     let home_pay = market::payout(s.home_moneyline?)?;
@@ -262,13 +273,18 @@ fn bets_of(g: &Scored, edge: f64) -> Option<[Option<Bet>; 10]> {
             Strategy::LeanLinear | Strategy::LeanSquare => {
                 lean.map(|(side, gap)| bet(side, strategy.stake(gap, edge)))
             }
+            // On a disagreement the lean is the model's favourite, so the same sized bet.
+            Strategy::DisagreementsLinear | Strategy::DisagreementsSquare => (market_side
+                != model_side)
+                .then(|| lean.map(|(side, gap)| bet(side, strategy.stake(gap, edge))))
+                .flatten(),
         }
     };
-    let mut out = [None; 10];
+    let mut out = [None; 2 * STRATEGY_COUNT];
     for (i, strategy) in STRATEGIES.iter().enumerate() {
         if let Some((posted, fair)) = choice(*strategy) {
             out[i] = Some(posted);
-            out[i + 5] = Some(fair);
+            out[i + STRATEGY_COUNT] = Some(fair);
         }
     }
     Some(out)
@@ -628,10 +644,26 @@ mod tests {
         assert_eq!(by(&agree, Strategy::LeanSquare, Price::Fair).bets, 0);
         let flat = by(&agree, Strategy::MarketFavourite, Price::Posted);
         assert!((flat.staked - 100.0).abs() < 1e-9 && (flat.max_stake - 100.0).abs() < 1e-9);
+        // The sized disagreement runs bet only where the favourites differ: here they agree.
+        assert_eq!(by(&p, Strategy::DisagreementsLinear, Price::Posted).bets, 0);
+        assert_eq!(by(&p, Strategy::DisagreementsSquare, Price::Fair).bets, 0);
+        // A disagreement by fifteen points, three reference gaps: three stakes in proportion
+        // and nine squared on the away side, which wins at +130; the lean is the same bet.
+        let d = portfolio(
+            &[game(day(1), 0.45, Some(0.6), (-150.0, 130.0), false)],
+            &settings(None),
+        );
+        assert!((by(&d, Strategy::DisagreementsLinear, Price::Posted).net - 390.0).abs() < 1e-9);
+        let square = by(&d, Strategy::DisagreementsSquare, Price::Posted);
+        assert!((square.net - 1170.0).abs() < 1e-9 && (square.staked - 900.0).abs() < 1e-9);
+        assert!((by(&d, Strategy::LeanLinear, Price::Posted).net - 390.0).abs() < 1e-9);
+        assert_eq!(by(&d, Strategy::ModelDisagreements, Price::Posted).bets, 1);
         // The runs come every strategy at the posted prices, then every one at the fair.
+        assert_eq!(RUNS.len(), 2 * STRATEGY_COUNT);
         assert_eq!(RUNS[3].strategy, Strategy::LeanLinear);
+        assert_eq!(RUNS[6].strategy, Strategy::DisagreementsSquare);
         assert_eq!(
-            (RUNS[9].strategy, RUNS[9].price),
+            (RUNS[11].strategy, RUNS[11].price),
             (Strategy::LeanSquare, Price::Fair)
         );
     }
