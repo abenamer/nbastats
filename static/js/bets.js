@@ -64,10 +64,10 @@
         { label: 'Season', value: 'label', left: true }, { label: 'Games', value: r => r.games.toLocaleString() },
         { label: `${book} fav. won`, value: r => at(r, 'market_favourite').wins.toLocaleString() }, net('market_favourite'),
         { label: 'Model fav. won', value: r => at(r, 'model_favourite').wins.toLocaleString() }, net('model_favourite'),
-        { label: 'Disagreements', value: r => at(r, 'model_disagreements').bets.toLocaleString() }, { label: 'Right', value: r => at(r, 'model_disagreements').wins.toLocaleString() }, net('model_disagreements'),
-        { label: 'Lean bets', value: r => at(r, 'lean_linear').bets.toLocaleString() },
-        { label: 'Staked by the gap', value: r => money(at(r, 'lean_linear').staked) }, net('lean_linear'),
-        { label: 'Staked by the gap squared', value: r => money(at(r, 'lean_square').staked) }, net('lean_square')], rows);
+        { label: 'Disagree', value: r => at(r, 'model_disagreements').bets.toLocaleString(), title: 'Games where the model\'s favourite is not the sportsbook\'s, bet on the model\'s side' }, { label: 'Right', value: r => at(r, 'model_disagreements').wins.toLocaleString() }, net('model_disagreements'),
+        { label: 'Lean bets', value: r => at(r, 'lean_linear').bets.toLocaleString(), title: 'Games the model leaned on either way' },
+        { label: 'Staked, gap', value: r => money(at(r, 'lean_linear').staked), title: 'Money laid with the stake in proportion to the gap' }, net('lean_linear'),
+        { label: 'Staked, gap²', value: r => money(at(r, 'lean_square').staked), title: 'Money laid with the stake as the square of the gap' }, net('lean_square')], rows);
     } catch (e) { if (mine === request) setStatus(status, e.message, true); }
   }
   for (const id of ['from', 'pot', 'stake', 'edge', 'price']) el(id).addEventListener('change', load);
