@@ -1,6 +1,7 @@
 //! Domain: types, invariants, mathematics and simulation engines. Nothing in this module
 //! depends on Axum, SQLx, HTTP or Docker (REAS-ARCH-002).
 pub mod backtesting;
+pub mod betting;
 pub mod bpm;
 pub mod calendar;
 pub mod cba;

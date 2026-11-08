@@ -296,6 +296,19 @@ pub async fn market(State(app): State<AppState>) -> Response {
 }
 
 #[derive(Template)]
+#[template(path = "bets.html")]
+pub struct BetsPage {
+    pub layout: Layout,
+}
+
+/// The betting portfolio: a pot staked on every game's favourite from a start date.
+pub async fn bets() -> Response {
+    render(BetsPage {
+        layout: Layout::new("Bets", "bets"),
+    })
+}
+
+#[derive(Template)]
 #[template(path = "players.html")]
 pub struct PlayersPage {
     pub layout: Layout,

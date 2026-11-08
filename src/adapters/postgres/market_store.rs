@@ -130,6 +130,14 @@ impl MarketStore for PostgresStore {
         Ok(rows.iter().map(snapshot).collect::<Result<_, _>>()?)
     }
 
+    async fn snapshot_seasons(&self) -> StoreResult<Vec<SeasonYear>> {
+        let rows: Vec<(i32,)> =
+            sqlx::query_as("SELECT DISTINCT season FROM market_snapshots ORDER BY season")
+                .fetch_all(&self.pool)
+                .await?;
+        Ok(rows.into_iter().map(|(s,)| SeasonYear::of(s)).collect())
+    }
+
     async fn save_futures(&self, snapshots: &[FuturesSnapshot]) -> StoreResult<u64> {
         let mut tx = self.pool.begin().await?;
         let mut written = 0;

@@ -1,6 +1,8 @@
 # Bundle update log
 
 ## 2026-11-07
+* **New**: Bets page (`/bets`): the betting portfolio, a pot staked on every scored game's favourite from a start date, the sportsbook's, the model's and the model's where it disagrees, at the posted and the fair prices, with the pot's path, its net in standard errors, peak and drawdown, and a row per season. [Market tracking](/concepts/market-tracking.md) gains the section The betting portfolio; the [API reference](/reference/api.md) (`GET /api/market/bets`), the [Application overview](/concepts/application.md) and the terms Betting portfolio and Fair price follow. Noted in the changelog.
+* **Update**: A chart over several seasons labels each year once on its date axis. Noted in the changelog.
 * **Update**: The Elo Explorer's team table gains the opponent ratings: the mean Elo of a team's regular-season opponents before each game, over every game, the wins and the losses (`opponents` in the [API reference](/reference/api.md)); the [Application overview](/concepts/application.md) and the term Opponent rating follow. Noted in the changelog.
 * **Update**: The Season menu opens on a tap or a click on its head, not on hover alone, so it works on a touch screen; the term Season menu says so and lists What if. Noted in the changelog.
 * **New**: The runbook [Reach the dashboard over Tailscale](/runbooks/tailscale.md) says how to open the dashboard from the devices of your tailnet through Tailscale Serve (HTTPS, port on loopback, no Funnel) and what to add to `ALLOWED_HOSTS`; the [Configuration](/reference/configuration.md) reference's `ALLOWED_HOSTS` and `APP_HOST_BIND` rows, the [Security model](/concepts/security.md)'s residual risk and the term Tailnet follow. Noted in the changelog.

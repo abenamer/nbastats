@@ -1447,6 +1447,60 @@ fn chosen_min_return(min_return: Option<&str>) -> Result<f64, ApiError> {
         })
 }
 
+#[derive(Deserialize)]
+pub struct BetsQuery {
+    /// The first date bet on, YYYY-MM-DD; empty for the record's first game.
+    #[serde(default)]
+    pub from: Option<String>,
+    #[serde(default)]
+    pub pot: Option<String>,
+    #[serde(default)]
+    pub stake: Option<String>,
+}
+
+/// A sum of money from the request: finite, above zero and at most a billion; `default`
+/// when absent.
+fn money(text: Option<&str>, default: f64, name: &str) -> Result<f64, ApiError> {
+    let Some(text) = text.map(str::trim).filter(|t| !t.is_empty()) else {
+        return Ok(default);
+    };
+    text.parse::<f64>()
+        .ok()
+        .filter(|x| x.is_finite() && *x > 0.0 && *x <= 1e9)
+        .ok_or_else(|| {
+            ApiError::bad_request(format!(
+                "{name} must be a number above 0 and at most 1,000,000,000"
+            ))
+        })
+}
+
+/// The betting portfolio over every season with a market record: a pot staked on each
+/// game's favourite from a start date, the sportsbook's, the model's and the model's where
+/// it disagrees, at the posted and at the fair prices.
+pub async fn market_bets(
+    State(app): State<AppState>,
+    Query(q): Query<BetsQuery>,
+) -> ApiResult<Value> {
+    let start = match q.from.as_deref().map(str::trim).filter(|t| !t.is_empty()) {
+        None => None,
+        Some(text) => Some(
+            text.parse::<NaiveDate>()
+                .map_err(|_| ApiError::bad_request("from must be a date written YYYY-MM-DD"))?,
+        ),
+    };
+    let settings = crate::domain::betting::Settings {
+        start,
+        pot: money(q.pot.as_deref(), crate::domain::betting::DEFAULT_POT, "pot")?,
+        stake: money(
+            q.stake.as_deref(),
+            crate::domain::betting::DEFAULT_STAKE,
+            "stake",
+        )?,
+    };
+    let report = crate::application::betting::portfolio(&app, settings).await?;
+    Ok(Json(json!(report)))
+}
+
 /// The model against the market over a season: each stored snapshot scored once its game
 /// is played, overall, per model version and per month, with the paired comparison.
 pub async fn season_market_track(

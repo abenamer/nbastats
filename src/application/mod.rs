@@ -3,6 +3,7 @@
 pub mod ask;
 pub mod ask_players;
 pub mod backfill;
+pub mod betting;
 pub mod boxscore;
 pub mod continuation;
 pub mod dashboard;

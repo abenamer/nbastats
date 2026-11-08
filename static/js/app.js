@@ -74,13 +74,15 @@ window.NBA = (() => {
   const DAY = 86400000;
   const dayOf = d => Date.parse(d + 'T00:00:00Z') / DAY;
   const dateOf = x => new Date(x * DAY).toISOString().slice(0, 10);
-  // `hideAfter` blanks the ticks past a day (the strip that stands for the rest of a season is not to scale).
   function dateScale(days, extra = {}) {
     const min = Math.min(...days), max = Math.max(...days), span = Math.max(max - min, 1), pad = Math.max(span * 0.01, 0.5);
-    const fmt = span > 800 ? x => new Date(x * DAY).getUTCFullYear()
+    const years = span > 800;
+    const fmt = years ? x => String(new Date(x * DAY).getUTCFullYear())
       : x => new Date(x * DAY).toLocaleDateString(undefined, { month: 'short', day: 'numeric', timeZone: 'UTC' });
-    // precision 0 keeps the ticks on whole days, so a short span never repeats a date.
-    return { type: 'linear', min: min - pad, max: max + pad, ticks: { maxTicksLimit: 12, precision: 0, callback: v => fmt(v) }, grid: { color: '#f1f3f6' }, ...extra };
+    // precision 0 keeps the ticks on whole days, so a short span never repeats a date; over years, a tick
+    // whose year the tick before already shows is left blank, so a span of a few seasons names each year once.
+    const label = (v, i, ticks) => { const text = fmt(v); return years && i > 0 && fmt(ticks[i - 1].value) === text ? '' : text; };
+    return { type: 'linear', min: min - pad, max: max + pad, ticks: { maxTicksLimit: 12, precision: 0, callback: label }, grid: { color: '#f1f3f6' }, ...extra };
   }
   const palette = ['#2563eb','#dc2626','#16a34a','#d97706','#7c3aed','#0891b2','#db2777','#4b5563','#65a30d','#9333ea','#ea580c','#0d9488','#1e3a8a','#991b1b','#166534','#92400e'];
   function color(i) { return palette[i % palette.length]; }

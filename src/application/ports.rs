@@ -753,6 +753,8 @@ pub trait MarketStore: Send + Sync {
         &self,
         season: SeasonYear,
     ) -> StoreResult<Vec<crate::domain::tracking::Snapshot>>;
+    /// The seasons with at least one snapshot, first to last.
+    async fn snapshot_seasons(&self) -> StoreResult<Vec<SeasonYear>>;
     /// Keep each day's title futures, replacing a stored row for the same day and team only
     /// when it was captured later, and dropping the day's older rows of teams the new field
     /// no longer lists. Returns how many rows were written.
