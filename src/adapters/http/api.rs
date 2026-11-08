@@ -33,6 +33,7 @@ use crate::domain::eras::{
 };
 use crate::domain::ids::{PlayerId, SeasonYear, TeamId};
 use crate::domain::models::{JobKind, SimulationJob, TeamSeasonView};
+use crate::domain::opponents::{self, OpponentRatings};
 use crate::domain::playoffs::bracket::ModelSpec;
 use crate::domain::playoffs::season::{check_regular_home_advantage, SeasonParams};
 use crate::domain::records::{league_sizes, League, TeamSeasonStat};
@@ -330,12 +331,14 @@ pub async fn franchises(State(app): State<AppState>) -> ApiResult<Value> {
 // ---------------------------------------------------------------------------------------
 
 /// A team-season row with the games the team still has to play, which the Elo Explorer
-/// shows in place of a result for the season in progress.
+/// shows in place of a result for the season in progress, and the mean rating of its
+/// opponents before each regular-season game: over every game, the wins and the losses.
 #[derive(Serialize)]
 struct TeamSeasonRow<'a> {
     #[serde(flatten)]
     row: &'a TeamSeasonView,
     games_to_play: u32,
+    opponents: OpponentRatings,
 }
 
 pub async fn season_teams(
@@ -353,11 +356,13 @@ pub async fn season_teams(
             *to_play.entry(t).or_default() += 1;
         }
     }
+    let opponents = opponents::by_team(&data.games);
     let teams: Vec<TeamSeasonRow<'_>> = rows
         .iter()
         .map(|r| TeamSeasonRow {
             row: r,
             games_to_play: to_play.get(&r.team_id).copied().unwrap_or(0),
+            opponents: opponents.get(&r.team_id).copied().unwrap_or_default(),
         })
         .collect();
     Ok(Json(

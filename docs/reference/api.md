@@ -33,7 +33,7 @@ sources:
 | Method and path | Function |
 |-----------------|----------|
 | `GET /api/seasons` | Season list with counts and dates. |
-| `GET /api/seasons/{season}/teams` | Team-season rows: record, Elo milestones, seed, result, and `games_to_play`, the team's games of the season not played yet (0 for a complete season). |
+| `GET /api/seasons/{season}/teams` | Team-season rows: record, Elo milestones, seed, result, `games_to_play`, the team's games of the season not played yet (0 for a complete season), and `opponents`, the mean rating of its opponents before each regular-season game played, as the rating stood that day: `faced` over every game (`games`), `beaten` over the wins (`wins`) and `lost_to` over the losses (`losses`); a mean is null when there is no such game. Play-in and playoff games do not count, as in the record. |
 | `GET /api/seasons/{season}/elo-history?teams=GSW,CLE` | Elo after each game, and the `schedule` span (first and last game, last played game, games remaining). |
 | `GET /api/seasons/{season}/bracket?home_advantage=100&scale=1` | Reconstructed bracket with exact probabilities. |
 | `GET /api/seasons/{season}/player-worth` | Every player's worth in the season, highest first: `worth_elo` and `worth_points` with `se_elo` and `se_points`, `games_played`, `absences`, the raw `with_mean` and `without_mean`, the player's `name` and `team_codes`; the table's `prior_sd_points` (and whether `prior_estimated`), `residual_sd_points`, `games`, `games_with_absence`, `players_seen` and `elo_per_point`. Status 404 for a season without games. See [Player worth](/concepts/player-worth.md). |

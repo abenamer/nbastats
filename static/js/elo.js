@@ -15,7 +15,12 @@
       document.getElementById('ratings').innerHTML = table([
         // The code only, so every column fits; the name is the tooltip. A click toggles the team in the highlight field.
         { label: 'Team', value: r => `<span class="team-pick" data-code="${esc(r.code)}" title="${esc(r.team_name)} · click to highlight">${esc(r.code)}</span>`, raw: true, left: true }, { label: 'Conf', value: r => r.conference || '', left: true },
-        { label: 'W', value: 'wins' }, { label: 'L', value: 'losses' }, { label: 'Start', value: r => num(r.elo_start, 0) },
+        { label: 'W', value: 'wins' }, { label: 'L', value: 'losses' },
+        // The strength of the schedule: the opponents' ratings before each regular-season game.
+        { label: 'Opp. faced', title: 'Mean Elo of the opponents before each regular-season game played', value: r => num(r.opponents.faced, 0) },
+        { label: 'Opp. beaten', title: 'Mean Elo, before the game, of the opponents the team beat in the regular season', value: r => num(r.opponents.beaten, 0) },
+        { label: 'Opp. lost to', title: 'Mean Elo, before the game, of the opponents the team lost to in the regular season', value: r => num(r.opponents.lost_to, 0) },
+        { label: 'Start', value: r => num(r.elo_start, 0) },
         { label: 'Reg. end', value: r => num(r.elo_regular_end, 0) }, { label: 'Pre-playoffs', value: r => num(r.elo_pre_playoffs, 0) },
         { label: 'End', value: r => num(r.elo_end, 0) }, { label: 'Peak', value: r => num(r.elo_peak, 0) }, { label: 'Seed', value: r => r.seed || '' },
         // The season in progress has no result yet: the cell says how many games the team has to play.

@@ -14,6 +14,7 @@ pub mod ids;
 pub mod keys;
 pub mod market;
 pub mod models;
+pub mod opponents;
 pub mod parity;
 pub mod players;
 pub mod playoffs;
