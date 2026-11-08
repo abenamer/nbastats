@@ -1,11 +1,14 @@
-//! The betting portfolio: a pot staked on the favourite of every game the sportsbook priced,
-//! read as a stock portfolio is. Three strategies run side by side from a start date: the
-//! sportsbook's favourite, the model's favourite, and the model's favourite only where it
-//! differs from the sportsbook's (the bettor sits out the rest). Each runs at the posted
-//! prices and at the fair ones, the sportsbook's moneylines with the bookmaker's margin taken
-//! out, so the margin's cost can be read apart from the forecasts' worth. The stake is the
-//! same on every game and the pot is the running sum of the returns, so a run never stops for
-//! want of money: the path is the running total of a flat bet.
+//! The betting portfolio: a pot staked on every game the sportsbook priced, read as a stock
+//! portfolio is. Five strategies run side by side from a start date. Three put the same
+//! stake on a favourite: the sportsbook's, the model's, and the model's only where it
+//! differs from the sportsbook's (the bettor sits out the rest). Two put a stake sized by
+//! the gap between the model's chance and the sportsbook's on the model's lean, the side
+//! the model rates above the sportsbook: the stake grows with the gap, once in proportion
+//! and once as its square, with a reference gap at which the base stake is laid. Each runs
+//! at the posted prices and at the fair ones, the sportsbook's moneylines with the
+//! bookmaker's margin taken out, so the margin's cost can be read apart from the forecasts'
+//! worth. The pot is the running sum of the returns, so a run never stops for want of money:
+//! the path is the running total of the bets.
 //!
 //! Everything here is pure: the input is the record's scored snapshots
 //! (`domain::tracking::Scored`), the output the paths, the performance of each run and a
@@ -22,18 +25,43 @@ use crate::domain::tracking::Scored;
 pub const DEFAULT_POT: f64 = 10_000.0;
 /// The stake on each game unless asked otherwise.
 pub const DEFAULT_STAKE: f64 = 100.0;
+/// The gap between the model's chance and the sportsbook's at which the sized strategies
+/// lay the base stake, unless asked otherwise: five points of chance.
+pub const DEFAULT_EDGE: f64 = 0.05;
 
-/// Whose favourite the stake goes on.
+/// What the stake goes on, and how much.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Strategy {
-    /// The side the sportsbook's margin-free chance puts at one half or above.
+    /// The base stake on the side the sportsbook's margin-free chance puts at one half or
+    /// above.
     MarketFavourite,
-    /// The side the model's chance puts at one half or above.
+    /// The base stake on the side the model's chance puts at one half or above.
     ModelFavourite,
-    /// The model's favourite on the games where it is not the sportsbook's; no bet on the
-    /// rest.
+    /// The base stake on the model's favourite on the games where it is not the
+    /// sportsbook's; no bet on the rest.
     ModelDisagreements,
+    /// On the side the model rates above the sportsbook, the base stake times the gap over
+    /// the reference gap: twice the stake at twice the gap. No bet when the two agree.
+    LeanLinear,
+    /// The same side, the base stake times the square of the gap over the reference gap:
+    /// four times the stake at twice the gap.
+    LeanSquare,
+}
+
+impl Strategy {
+    /// The stake a strategy lays on a game, in base stakes, given the gap between the
+    /// model's chance and the sportsbook's for the side bet on (positive) and the reference
+    /// gap; one for the flat strategies.
+    fn stake(self, gap: f64, edge: f64) -> f64 {
+        match self {
+            Strategy::MarketFavourite | Strategy::ModelFavourite | Strategy::ModelDisagreements => {
+                1.0
+            }
+            Strategy::LeanLinear => gap / edge,
+            Strategy::LeanSquare => (gap / edge) * (gap / edge),
+        }
+    }
 }
 
 /// The price a bet is settled at.
@@ -54,33 +82,36 @@ pub struct Run {
     pub price: Price,
 }
 
-/// Every run, in the order the paths and the season rows carry them.
-pub const RUNS: [Run; 6] = [
-    Run {
-        strategy: Strategy::MarketFavourite,
-        price: Price::Posted,
-    },
-    Run {
-        strategy: Strategy::ModelFavourite,
-        price: Price::Posted,
-    },
-    Run {
-        strategy: Strategy::ModelDisagreements,
-        price: Price::Posted,
-    },
-    Run {
-        strategy: Strategy::MarketFavourite,
-        price: Price::Fair,
-    },
-    Run {
-        strategy: Strategy::ModelFavourite,
-        price: Price::Fair,
-    },
-    Run {
-        strategy: Strategy::ModelDisagreements,
-        price: Price::Fair,
-    },
+/// The strategies, in the order the runs carry them.
+pub const STRATEGIES: [Strategy; 5] = [
+    Strategy::MarketFavourite,
+    Strategy::ModelFavourite,
+    Strategy::ModelDisagreements,
+    Strategy::LeanLinear,
+    Strategy::LeanSquare,
 ];
+
+/// Every run, in the order the paths and the season rows carry them: every strategy at the
+/// posted prices, then every strategy at the fair ones.
+pub const RUNS: [Run; 10] = {
+    let mut runs = [Run {
+        strategy: Strategy::MarketFavourite,
+        price: Price::Posted,
+    }; 10];
+    let mut i = 0;
+    while i < 5 {
+        runs[i] = Run {
+            strategy: STRATEGIES[i],
+            price: Price::Posted,
+        };
+        runs[i + 5] = Run {
+            strategy: STRATEGIES[i],
+            price: Price::Fair,
+        };
+        i += 1;
+    }
+    runs
+};
 
 /// What a portfolio is run with.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize)]
@@ -89,6 +120,8 @@ pub struct Settings {
     pub start: Option<NaiveDate>,
     pub pot: f64,
     pub stake: f64,
+    /// The gap in chance at which the sized strategies lay the base stake.
+    pub edge: f64,
 }
 
 /// The pot of every run at the end of a day, in the order of [`RUNS`]. The first day is the
@@ -105,6 +138,9 @@ pub struct Performance {
     pub run: Run,
     pub bets: usize,
     pub wins: usize,
+    /// The money laid over the run, and the largest single stake.
+    pub staked: f64,
+    pub max_stake: f64,
     /// The final pot less the starting one.
     pub net: f64,
     /// Its standard error: the sample standard deviation of the bets' returns times the
@@ -124,6 +160,7 @@ pub struct Performance {
 pub struct Tally {
     pub bets: usize,
     pub wins: usize,
+    pub staked: f64,
     pub net: f64,
 }
 
@@ -155,10 +192,19 @@ pub struct Portfolio {
     pub seasons: Vec<SeasonRow>,
 }
 
-/// Each run's bet on a game as (won, return per unit staked), in the order of [`RUNS`]; a
-/// run that sits the game out has none. The game itself has none without a sportsbook
-/// chance or a moneyline for both sides.
-fn returns_of(g: &Scored) -> Option<[Option<(bool, f64)>; 6]> {
+/// One run's bet on a game: whether it won, the stake in base stakes, and the return in
+/// base stakes at the run's price.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Bet {
+    won: bool,
+    stake: f64,
+    units: f64,
+}
+
+/// Each run's bet on a game, in the order of [`RUNS`]; a run that sits the game out has
+/// none. The game itself has none without a sportsbook chance or a moneyline for both
+/// sides.
+fn bets_of(g: &Scored, edge: f64) -> Option<[Option<Bet>; 10]> {
     let s = &g.snapshot;
     let p_home = s.p_home_market?;
     let home_pay = market::payout(s.home_moneyline?)?;
@@ -173,7 +219,17 @@ fn returns_of(g: &Scored) -> Option<[Option<(bool, f64)>; 6]> {
     } else {
         Side::Away
     };
-    let bet = |side: Side| {
+    // The lean: the side the model rates above the sportsbook, by how much.
+    let diff = s.p_home_model - p_home;
+    let lean = if diff > 0.0 {
+        Some((Side::Home, diff))
+    } else if diff < 0.0 {
+        Some((Side::Away, -diff))
+    } else {
+        None
+    };
+    // A bet on `side` of `stake` base stakes, at each price.
+    let bet = |side: Side, stake: f64| {
         let won = (side == Side::Home) == g.home_won;
         let (pay, p) = match side {
             Side::Home => (home_pay, p_home),
@@ -183,19 +239,39 @@ fn returns_of(g: &Scored) -> Option<[Option<(bool, f64)>; 6]> {
         let p = p.clamp(0.001, 0.999);
         let posted = if won { pay } else { -1.0 };
         let fair = if won { (1.0 - p) / p } else { -1.0 };
-        ((won, posted), (won, fair))
+        (
+            Bet {
+                won,
+                stake,
+                units: stake * posted,
+            },
+            Bet {
+                won,
+                stake,
+                units: stake * fair,
+            },
+        )
     };
-    let (market_posted, market_fair) = bet(market_side);
-    let (model_posted, model_fair) = bet(model_side);
-    let disagree = market_side != model_side;
-    Some([
-        Some(market_posted),
-        Some(model_posted),
-        disagree.then_some(model_posted),
-        Some(market_fair),
-        Some(model_fair),
-        disagree.then_some(model_fair),
-    ])
+    let choice = |strategy: Strategy| -> Option<(Bet, Bet)> {
+        match strategy {
+            Strategy::MarketFavourite => Some(bet(market_side, 1.0)),
+            Strategy::ModelFavourite => Some(bet(model_side, 1.0)),
+            Strategy::ModelDisagreements => {
+                (market_side != model_side).then(|| bet(model_side, 1.0))
+            }
+            Strategy::LeanLinear | Strategy::LeanSquare => {
+                lean.map(|(side, gap)| bet(side, strategy.stake(gap, edge)))
+            }
+        }
+    };
+    let mut out = [None; 10];
+    for (i, strategy) in STRATEGIES.iter().enumerate() {
+        if let Some((posted, fair)) = choice(*strategy) {
+            out[i] = Some(posted);
+            out[i + 5] = Some(fair);
+        }
+    }
+    Some(out)
 }
 
 /// The portfolio of `scored` under `settings`. The games are taken in date order whatever
@@ -221,6 +297,8 @@ pub fn portfolio(scored: &[Scored], settings: &Settings) -> Portfolio {
     let mut drawdown_share = vec![0.0; n];
     let mut bets = vec![0usize; n];
     let mut wins = vec![0usize; n];
+    let mut staked = vec![0.0_f64; n];
+    let mut max_stake = vec![0.0_f64; n];
     let mut sum = vec![0.0; n];
     let mut sum_sq = vec![0.0; n];
     let mut days: Vec<Day> = Vec::new();
@@ -234,7 +312,7 @@ pub fn portfolio(scored: &[Scored], settings: &Settings) -> Portfolio {
             before_start += 1;
             continue;
         }
-        let Some(returns) = returns_of(g) else {
+        let Some(returns) = bets_of(g, settings.edge) else {
             unpriced += 1;
             continue;
         };
@@ -265,10 +343,15 @@ pub fn portfolio(scored: &[Scored], settings: &Settings) -> Portfolio {
         };
         seasons[row].games += 1;
         for (i, r) in returns.iter().enumerate() {
-            let Some((won, units)) = r else { continue };
+            let Some(Bet { won, stake, units }) = r else {
+                continue;
+            };
             let money = units * settings.stake;
+            let laid = stake * settings.stake;
             bets[i] += 1;
             wins[i] += usize::from(*won);
+            staked[i] += laid;
+            max_stake[i] = max_stake[i].max(laid);
             sum[i] += money;
             sum_sq[i] += money * money;
             value[i] += money;
@@ -281,6 +364,7 @@ pub fn portfolio(scored: &[Scored], settings: &Settings) -> Portfolio {
             let tally = &mut seasons[row].runs[i];
             tally.bets += 1;
             tally.wins += usize::from(*won);
+            tally.staked += laid;
             tally.net += money;
         }
         match days.last_mut() {
@@ -304,6 +388,8 @@ pub fn portfolio(scored: &[Scored], settings: &Settings) -> Portfolio {
                 run: *run,
                 bets: bets[i],
                 wins: wins[i],
+                staked: staked[i],
+                max_stake: max_stake[i],
                 net: value[i] - settings.pot,
                 net_se,
                 final_value: value[i],
@@ -399,6 +485,7 @@ mod tests {
             start,
             pot: DEFAULT_POT,
             stake: DEFAULT_STAKE,
+            edge: DEFAULT_EDGE,
         }
     }
 
@@ -502,5 +589,50 @@ mod tests {
         let empty = portfolio(&[], &settings(None));
         assert!(empty.days.is_empty() && empty.runs.len() == RUNS.len());
         assert_eq!(empty.mean_margin, None);
+    }
+
+    #[test]
+    fn the_sized_strategies_stake_by_the_gap_on_the_side_the_model_rates_above_the_sportsbook() {
+        // The sportsbook has the home side at 60%, the model at 50%: the model leans to the
+        // away side by ten points, twice the reference gap, so the linear run lays two
+        // stakes and the square run four. The away side wins at +130.
+        let p = portfolio(
+            &[game(day(1), 0.5, Some(0.6), (-150.0, 130.0), false)],
+            &settings(None),
+        );
+        let linear = by(&p, Strategy::LeanLinear, Price::Posted);
+        assert_eq!((linear.bets, linear.wins), (1, 1));
+        assert!((linear.staked - 200.0).abs() < 1e-9);
+        assert!((linear.max_stake - 200.0).abs() < 1e-9);
+        assert!((linear.net - 260.0).abs() < 1e-9);
+        let square = by(&p, Strategy::LeanSquare, Price::Posted);
+        assert!((square.staked - 400.0).abs() < 1e-9);
+        assert!((square.net - 520.0).abs() < 1e-9);
+        // At the fair price the away side pays 0.6 / 0.4 = 1.5 per stake.
+        assert!((by(&p, Strategy::LeanSquare, Price::Fair).net - 600.0).abs() < 1e-9);
+        // The model's favourite is still the home side (one half counts), which lost.
+        assert!((by(&p, Strategy::ModelFavourite, Price::Posted).net + 100.0).abs() < 1e-9);
+        assert_eq!(p.seasons[0].runs[3].bets, 1);
+        assert!((p.seasons[0].runs[3].staked - 200.0).abs() < 1e-9);
+        // A loss costs the sized stake; agreement means no bet; a flat run lays one stake.
+        let lost = portfolio(
+            &[game(day(1), 0.5, Some(0.6), (-150.0, 130.0), true)],
+            &settings(None),
+        );
+        assert!((by(&lost, Strategy::LeanLinear, Price::Posted).net + 200.0).abs() < 1e-9);
+        let agree = portfolio(
+            &[game(day(1), 0.6, Some(0.6), (-150.0, 130.0), true)],
+            &settings(None),
+        );
+        assert_eq!(by(&agree, Strategy::LeanLinear, Price::Posted).bets, 0);
+        assert_eq!(by(&agree, Strategy::LeanSquare, Price::Fair).bets, 0);
+        let flat = by(&agree, Strategy::MarketFavourite, Price::Posted);
+        assert!((flat.staked - 100.0).abs() < 1e-9 && (flat.max_stake - 100.0).abs() < 1e-9);
+        // The runs come every strategy at the posted prices, then every one at the fair.
+        assert_eq!(RUNS[3].strategy, Strategy::LeanLinear);
+        assert_eq!(
+            (RUNS[9].strategy, RUNS[9].price),
+            (Strategy::LeanSquare, Price::Fair)
+        );
     }
 }

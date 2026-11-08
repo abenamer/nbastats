@@ -1456,6 +1456,10 @@ pub struct BetsQuery {
     pub pot: Option<String>,
     #[serde(default)]
     pub stake: Option<String>,
+    /// The gap between the model's chance and the sportsbook's, in points of chance, at
+    /// which the sized strategies lay the base stake.
+    #[serde(default)]
+    pub edge: Option<String>,
 }
 
 /// A sum of money from the request: finite, above zero and at most a billion; `default`
@@ -1488,6 +1492,17 @@ pub async fn market_bets(
                 .map_err(|_| ApiError::bad_request("from must be a date written YYYY-MM-DD"))?,
         ),
     };
+    let edge = match q.edge.as_deref().map(str::trim).filter(|t| !t.is_empty()) {
+        None => crate::domain::betting::DEFAULT_EDGE,
+        Some(text) => text
+            .parse::<f64>()
+            .ok()
+            .filter(|e| e.is_finite() && (0.1..=50.0).contains(e))
+            .map(|e| e / 100.0)
+            .ok_or_else(|| {
+                ApiError::bad_request("edge must be a number of points of chance from 0.1 to 50")
+            })?,
+    };
     let settings = crate::domain::betting::Settings {
         start,
         pot: money(q.pot.as_deref(), crate::domain::betting::DEFAULT_POT, "pot")?,
@@ -1496,6 +1511,7 @@ pub async fn market_bets(
             crate::domain::betting::DEFAULT_STAKE,
             "stake",
         )?,
+        edge,
     };
     let report = crate::application::betting::portfolio(&app, settings).await?;
     Ok(Json(json!(report)))
