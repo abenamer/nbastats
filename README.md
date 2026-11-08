@@ -13,6 +13,14 @@ The application answers these questions:
 
 The project follows the [REAS engineering standard](https://github.com/abenamer/reas). The documentation is an [Open Knowledge Format bundle](docs/index.md) that targets ASD-STE100 Simplified Technical English. Full STE compliance is not verified; see the [self-audit](docs/self-audit.md).
 
+## Not a betting tool
+
+This project forecasts games, playoffs and titles and measures how good the forecasts are. It is not a way to make money, and the record it keeps says so. Over six seasons and about 7,400 games, the model picks the winner of about 66 percent of regular-season games. The sportsbook's closing line picks about 68 percent, and the sportsbook was the closer forecaster in every one of those seasons. A flat $100 on the model's favourite in every game since 2020 would be down about $32,000. The same $100 on FanDuel's own favourite would be down about $30,000. Almost all of that is the sportsbook's margin, about 4 cents on every dollar; with the margin taken out, both land within a rounding error of break-even. Where the model and the sportsbook disagree about the favourite, the model is right 41 percent of the time, and a stake that grows with the size of the disagreement loses faster. The Bets page runs these portfolios so the result can be seen rather than taken on trust.
+
+The sportsbook wins not because its mathematics is better. Its line is the average of thousands of bettors, some of whom know the lineups, the late scratches and the minutes limits before tip-off, and the book moves the line when the bettors it has learned to respect place a bet. By game time the line knows everything the model knows and what happened that afternoon. About a third of NBA games are coin flips to everyone, the sportsbook included. See [Market tracking](docs/concepts/market-tracking.md) and the literature review in `research/`.
+
+The numbers are as of November 2026 and move with the record.
+
 ## Quick start
 
 1. Copy the example configuration and set a password:
@@ -54,6 +62,8 @@ The first start imports the bundled game log (75,913 games, 1946-47 to 2024-25).
 | Alpha Simulator | Engine A. Editable strengths, seasons, iterations, threshold K, seed, exact validation, saved scenarios. |
 | Playoff Simulator | Engine B. Historical bracket, Elo ratings, exact and Monte Carlo probabilities, actual results. |
 | Season Forecast | Engine C. For every team: play-in, playoffs, second round, conference finals, Finals and title probability from a chosen date. |
+| Model vs Market | Every game the sportsbook priced and the model forecast, scored after the result, and which of the two has been the more accurate. |
+| Bets | The same record read as a betting portfolio: a pot staked on every game under seven strategies, at the posted or the fair prices. It shows the loss. |
 | Dynasty Lab | Expected versus actual titles, significance under equal strength, a ticket lottery and historical Elo; the franchise's strength in Elo against the league mean, the best other team and the worst, and the titles read backwards. |
 | Validation | Backtests from 2003-04, calibration plots, Elo against baselines, rolling parameter tuning, assumptions. |
 | Data | Imports, season coverage, refresh and upload, database health, application version. |
