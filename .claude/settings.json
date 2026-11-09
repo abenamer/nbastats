@@ -1,0 +1,71 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cargo fmt:*)",
+      "Bash(cargo check:*)",
+      "Bash(cargo clippy:*)",
+      "Bash(cargo test:*)",
+      "Bash(python3 scripts/check_docs.py)",
+      "Bash(python3 -m unittest discover -s tests/docs -t .)",
+      "Bash(node --check:*)",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git show:*)",
+      "Bash(docker compose ps:*)",
+      "Bash(docker compose logs:*)",
+      "Bash(curl -s http://localhost:3000/api/health)"
+    ],
+    "ask": [
+      "Bash(git push:*)",
+      "Bash(docker compose up:*)",
+      "Bash(docker compose exec:*)"
+    ],
+    "deny": [
+      "Read(./.env)",
+      "Read(./*.key)",
+      "Read(./*.crt)",
+      "Read(./*.pem)",
+      "Read(./backups/**)",
+      "Bash(docker compose down -v*)",
+      "Bash(docker compose down --volumes*)",
+      "Bash(docker-compose down -v*)",
+      "Bash(docker-compose down --volumes*)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/guard-bash.sh"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/format.sh"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/stop-check.sh",
+            "timeout": 600
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -8,11 +8,14 @@ sources:
   - id: reas
     resource: https://github.com/abenamer/reas
     title: REAS, Rust Engineering and Architecture Standard, 1.2.0-draft
+  - id: reas-vendored
+    resource: /standards/reas/standard/index.md
+    title: The standard's text as vendored, 1.4.0-draft
 ---
 
 # Self-audit against REAS
 
-**Status:** Structural checks run locally on 2026-10-21. Formal ASD-STE100 review and remote CI execution are pending.
+**Status:** Structural checks run locally on 2026-10-21 against REAS 1.2.0-draft. Formal ASD-STE100 review and remote CI execution are pending. The standard's text is vendored at `standards/reas/` at version 1.4.0-draft (2026-11-08); the table below has not been audited again against that version. Its identifiers follow 1.2.0-draft: since 1.3.0 the standard names async and CPU work REAS-RUST-007, security properties REAS-SEC-001 and evidence reporting REAS-TEST-002 (see `standards/reas/standard/rule-identifiers.md`), and REAS-ARCH-006 (generic adapter parameters) is not audited here.
 
 | Rule | Evidence | Status |
 | --- | --- | --- |

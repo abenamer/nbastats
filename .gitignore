@@ -18,3 +18,7 @@ docker-compose.override.yml
 
 # Python bytecode from the docs checker and its tests
 __pycache__/
+
+# Personal Claude Code instructions and permissions (the shared ones are committed)
+CLAUDE.local.md
+.claude/settings.local.json

@@ -1,5 +1,8 @@
 # Bundle update log
 
+## 2026-11-08
+* **Update**: The REAS standard's text (1.4.0-draft) is vendored at `standards/reas/`, and the [self-audit](/self-audit.md) says it was made against 1.2.0-draft and names the identifiers renumbered since; the project's Claude Code setup (`.claude/`: permissions, hooks, path-scoped rules, the `/deploy` skill, a rewritten `CLAUDE.md`) follows Anthropic's published guidance. Noted in the changelog.
+
 ## 2026-11-07
 * **New**: Bets page (`/bets`): the betting portfolio, a pot bet on every scored game from a start date under seven strategies, the base stake on the sportsbook's favourite, the model's and the model's where it disagrees, a stake sized by the gap between the model and the sportsbook on the model's lean, in proportion and squared, and the same sized stakes only where the model disagrees, at the posted and the fair prices, with the pot's path, its net in standard errors, money staked, peak and drawdown, and a row per season. [Market tracking](/concepts/market-tracking.md) gains the section The betting portfolio; the [API reference](/reference/api.md) (`GET /api/market/bets`), the [Application overview](/concepts/application.md) and the terms Betting portfolio and Fair price follow. Noted in the changelog.
 * **Update**: A chart over several seasons labels each year once on its date axis. Noted in the changelog.
