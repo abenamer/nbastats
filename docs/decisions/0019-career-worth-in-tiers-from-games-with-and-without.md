@@ -3,7 +3,7 @@ type: Architecture Decision
 title: Career worth in tiers, from the box score and the games with and without a player
 description: Why the Top 100 page starts each player from what the box score of his career says and lets the gap between his teams' adjusted margins with him and without him move the number, draws the ranking many times and shows tiers instead of a sorted list, why the first version that read the games alone was rejected before it shipped, and what the runs and the half-career check say about how far the list can be trusted.
 tags: [decision, players, worth, career, ranking, tiers, box-score]
-generated: { by: "human:abenamer", at: "2026-11-11T22:00:00Z" }
+generated: { by: "human:abenamer", at: "2026-11-11T12:00:00Z" }
 sources:
   - id: code
     resource: /src/domain/career.rs

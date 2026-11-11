@@ -3,7 +3,7 @@ type: Model
 title: Career worth and the Top 100
 description: How the application ranks players over their careers, starting each player from what the box score of his career says and letting the gap between his teams' adjusted margins in the games he played and the games he missed move the number, each weighted by its precision, then draws the ranking many times and shows the first 100 in tiers on a page that is computed again after each data pull.
 tags: [players, worth, career, ranking, tiers, elo, box-score]
-generated: { by: "human:abenamer", at: "2026-11-11T22:00:00Z" }
+generated: { by: "human:abenamer", at: "2026-11-11T12:00:00Z" }
 sources:
   - id: code
     resource: /src/domain/career.rs
