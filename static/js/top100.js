@@ -58,13 +58,25 @@
     ...(half ? [{ label: 'Half-career check', value: `r = ${num(half.blend.correlation, 2)}`, sub: `the worth from half of a player's seasons against the games of the other half; the games alone give ${num(half.gap.correlation, 2)}, the box score alone ${num(half.prior.correlation, 2)}` }] : []),
   ]);
   el('note').textContent = `${r.settings.draws.toLocaleString()} draws. Model ${r.model}.`;
-  el('tiers').innerHTML = TIERS.map((text, i) => {
-    const rows = list.filter(p => p.tier === i + 1);
-    if (!rows.length) return '';
-    return `<section class="panel"><h2>Tier ${i + 1} <span class="muted small">${esc(text)} · ${rows.length} ${rows.length === 1 ? 'player' : 'players'}</span></h2><div class="table-wrap">${table(ranked, rows)}</div></section>`;
-  }).join('');
-  el('belowCount').textContent = `(${below.length})`;
-  el('below').innerHTML = table(withTier, below);
+  // The tiers and the table below the list, of every ranked player or of the active ones.
+  // A place and a tier stay those among every ranked player.
+  function draw() {
+    const only = el('activeOnly').checked;
+    const shown = only ? list.filter(p => p.active) : list;
+    const rest = only ? below.filter(p => p.active) : below;
+    el('tiers').innerHTML = TIERS.map((text, i) => {
+      const rows = shown.filter(p => p.tier === i + 1);
+      if (!rows.length) return '';
+      return `<section class="panel"><h2>Tier ${i + 1} <span class="muted small">${esc(text)} · ${rows.length} ${rows.length === 1 ? 'player' : 'players'}</span></h2><div class="table-wrap">${table(ranked, rows)}</div></section>`;
+    }).join('');
+    el('belowCount').textContent = `(${rest.length})`;
+    el('below').innerHTML = table(withTier, rest);
+    setStatus(status, only ? `${shown.length} of the ${list.length} listed players are active, and ${rest.length} more are ranked below the list. The places and the tiers are among every ranked player.` : '');
+  }
+  const query = new URLSearchParams(location.search);
+  el('activeOnly').checked = query.get('active') === '1';
+  el('activeOnly').addEventListener('change', draw);
+  draw();
 
   // Find: any ranked player by name, with where he stands.
   const place = p => p.rank <= size ? `On the list at ${p.rank}, tier ${p.tier}`
@@ -80,6 +92,6 @@
     el('foundNote').textContent = hits.length ? '' : `No ranked player has this name. A player with fewer than ${minGames} games as a regular from 1976-77 is not ranked.`;
   }
   el('find').addEventListener('input', find);
-  const asked = new URLSearchParams(location.search).get('find');
+  const asked = query.get('find');
   if (asked) { el('find').value = asked; find(); }
 })();

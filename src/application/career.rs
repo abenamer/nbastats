@@ -26,6 +26,8 @@ use super::state::{App, SeasonLoadError};
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Named<T> {
     pub name: String,
+    /// Listed on a team by the last roster refresh.
+    pub active: bool,
     #[serde(flatten)]
     pub row: T,
 }
@@ -121,7 +123,7 @@ pub async fn compute(app: &App, settings: Settings) -> Result<CareerReport, Seas
     .await
     .map_err(|e| StoreError::Query(e.to_string()))?;
     let ids: Vec<PlayerId> = ranking.players.iter().map(|r| r.career.player_id).collect();
-    let names: HashMap<PlayerId, String> = app
+    let names: HashMap<PlayerId, (String, bool)> = app
         .store
         .players_by_id(&ids)
         .await?
@@ -129,10 +131,16 @@ pub async fn compute(app: &App, settings: Settings) -> Result<CareerReport, Seas
         .map(|p| {
             // A few stored names carry a comma between a nickname and the family name.
             let name = format!("{} {}", p.first_name, p.last_name).replace(',', " ");
-            (p.id, name.split_whitespace().collect::<Vec<_>>().join(" "))
+            let name = name.split_whitespace().collect::<Vec<_>>().join(" ");
+            (p.id, (name, p.active))
         })
         .collect();
-    let name = |id: PlayerId| names.get(&id).cloned().unwrap_or_else(|| id.to_string());
+    let named = |id: PlayerId| {
+        names
+            .get(&id)
+            .cloned()
+            .unwrap_or_else(|| (id.to_string(), false))
+    };
     Ok(CareerReport {
         model: ranking.model,
         rule,
@@ -153,9 +161,9 @@ pub async fn compute(app: &App, settings: Settings) -> Result<CareerReport, Seas
         players: ranking
             .players
             .into_iter()
-            .map(|row| Named {
-                name: name(row.career.player_id),
-                row,
+            .map(|row| {
+                let (name, active) = named(row.career.player_id);
+                Named { name, active, row }
             })
             .collect(),
     })
@@ -246,7 +254,7 @@ pub fn render(r: &CareerReport) -> String {
         out.push('\n');
     }
     out.push_str("| Rank | Tier | Player | Seasons | Worth | ± | Box worth | Prior | ± | Gap | ± | Expected rank | Top 10 | Top 25 | Top 50 | Top 100 | Games | Missed | Dominant season |\n|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|\n");
-    for Named { name, row } in list {
+    for Named { name, row, .. } in list {
         let c = &row.career;
         let gap = |f: fn(&career::Gap) -> String| c.gap.as_ref().map_or(String::new(), f);
         out.push_str(&format!(

@@ -53,7 +53,7 @@ The regular-season games from 1976-77 with a result and with a box score for the
 
 The cards say how many players are ranked, the typical error against the spread of the career worths, how many of the 100 listed players are expected to be in the true best 100, the line from the box score to the games, and the half-career check. The run of 2026-11-11 gave 505 ranked players, a typical error of 23 Elo against a spread of 25, about 63 expected members, a line of 0.49 Elo of gap for each Elo of box worth, and a half-career correlation of 0.33 for the career worth against 0.21 for the games alone.
 
-A tier is a statement of chance. A tier 4 player is more likely than not one of the best 100 of the ranked players; a tier 5 player on the list is there with less than an even chance. The **Worth** column is the career worth with its error, and the ranking draws from it. The **Box score** column is the starting value. The **Games** column is the career gap, and is empty for a player with no game missed inside a stint. **Find a player** shows where any ranked player stands, on the list or below it. A player who is not found has fewer than 400 games as a regular from 1976-77.
+A tier is a statement of chance. A tier 4 player is more likely than not one of the best 100 of the ranked players; a tier 5 player on the list is there with less than an even chance. The **Worth** column is the career worth with its error, and the ranking draws from it. The **Box score** column is the starting value. The **Games** column is the career gap, and is empty for a player with no game missed inside a stint. **Find a player** shows where any ranked player stands, on the list or below it. **Active players only** keeps the [active players](/terminology.md), on the list and below it: the players the last roster refresh listed on a team. A place and a tier stay those among every ranked player. The address `/top100?active=1` opens the page with the filter on. On 2026-11-11, on the maintainer's store, 89 of the 505 ranked players were active, 30 of them on the list. A player who is not found has fewer than 400 games as a regular from 1976-77.
 
 # Limits
 
@@ -66,7 +66,8 @@ A tier is a statement of chance. A tier 4 player is more likely than not one of 
 - The seasons before 1976-77 and the playoffs are not read. A career that started earlier is read from 1976-77.
 - The rank is a place among the ranked players only.
 - The order by tier first can place a player above another with a better expected rank.
-- The last season of an active player is the current season.
+- The last season is the last season as a regular. An active player who has not yet 5 games at 24 minutes in the current season shows an earlier one.
+- The active flag is the source's roster at the last refresh. A player without a team on that day is not active.
 - The first read after an import or a player sync takes some seconds: the query, the box-score table of each season, the draws and the half-career check.
 
 # Where it shows
