@@ -1,6 +1,7 @@
 # Bundle update log
 
 ## 2026-11-11
+* **Update**: The dependency audit ignores RUSTSEC-2026-0459 (`libsqlite3-sys` 0.30.1), with the reason in `.cargo/audit.toml`. The crate is in `Cargo.lock` through the optional SQLite driver of sqlx and is not compiled: `cargo tree -i libsqlite3-sys --target all` printed nothing on 2026-11-11. The advisory failed the audit job of CI on that day. The fixed version needs sqlx 0.9. Noted in the changelog.
 * **New**: Top 100 page (`/top100`): the career worth ranking in tiers, computed again after each data pull. A player starts from what the box score of his career says, and the gap between his teams' margins in the games he played and the games he missed moves the number. [ADR 0019](/decisions/0019-career-worth-in-tiers-from-games-with-and-without.md) records the decision, the first model that read the games alone and was rejected before it shipped, the runs of the day and the half-career check; the concept [Career worth and the Top 100](/concepts/career-worth.md) is new; the [API reference](/reference/api.md) (`GET /api/players/career-worth`, the page list), the [Application overview](/concepts/application.md), the terms Career worth, Stint, Tier (career worth), Career gap and Career box worth, the [self-audit](/self-audit.md)'s test counts and the README's page table follow. Noted in the changelog.
 
 ## 2026-11-08
