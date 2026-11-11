@@ -1134,6 +1134,15 @@ pub trait PlayerStore: Send + Sync {
         &self,
         ids: &[PlayerId],
     ) -> StoreResult<HashMap<PlayerId, SeasonYear>>;
+    /// The cells of the career worth: for each stint the rule admits, the regular-season
+    /// games of the team that have box scores, split by whether the player played, with the
+    /// count, the sum and the sum of squares of the team's adjusted margins. A season with
+    /// one team counts the team's whole season; a season with several counts, for each team,
+    /// the games from the player's first to his last for it.
+    async fn career_cells(
+        &self,
+        rule: &crate::domain::career::CellRule,
+    ) -> StoreResult<Vec<crate::domain::career::Cell>>;
     async fn player_coverage(&self) -> StoreResult<PlayerCoverage>;
 }
 

@@ -1,5 +1,8 @@
 # Bundle update log
 
+## 2026-11-11
+* **New**: Top 100 page (`/top100`): the career worth ranking in tiers, computed again after each data pull. A player starts from what the box score of his career says, and the gap between his teams' margins in the games he played and the games he missed moves the number. [ADR 0019](/decisions/0019-career-worth-in-tiers-from-games-with-and-without.md) records the decision, the first model that read the games alone and was rejected before it shipped, the runs of the day and the half-career check; the concept [Career worth and the Top 100](/concepts/career-worth.md) is new; the [API reference](/reference/api.md) (`GET /api/players/career-worth`, the page list), the [Application overview](/concepts/application.md), the terms Career worth, Stint, Tier (career worth), Career gap and Career box worth, the [self-audit](/self-audit.md)'s test counts and the README's page table follow. Noted in the changelog.
+
 ## 2026-11-08
 * **Update**: The REAS standard's text (1.4.0-draft) is vendored at `standards/reas/`, and the [self-audit](/self-audit.md) says it was made against 1.2.0-draft and names the identifiers renumbered since; the project's Claude Code setup (`.claude/`: permissions, hooks, path-scoped rules, the `/deploy` skill, a rewritten `CLAUDE.md`) follows Anthropic's published guidance. Noted in the changelog.
 

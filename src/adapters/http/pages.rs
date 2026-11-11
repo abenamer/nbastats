@@ -309,6 +309,20 @@ pub async fn bets() -> Response {
 }
 
 #[derive(Template)]
+#[template(path = "top100.html")]
+pub struct Top100Page {
+    pub layout: Layout,
+}
+
+/// The career worth ranking: the 100 players whose teams' results changed most with them,
+/// in tiers.
+pub async fn top100() -> Response {
+    render(Top100Page {
+        layout: Layout::new("Top 100 players", "top100"),
+    })
+}
+
+#[derive(Template)]
 #[template(path = "players.html")]
 pub struct PlayersPage {
     pub layout: Layout,

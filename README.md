@@ -64,6 +64,7 @@ The first start imports the bundled game log (75,913 games, 1946-47 to 2024-25).
 | Season Forecast | Engine C. For every team: play-in, playoffs, second round, conference finals, Finals and title probability from a chosen date. |
 | Model vs Market | Every game the sportsbook priced and the model forecast, scored after the result, and which of the two has been the more accurate. |
 | Bets | The same record read as a betting portfolio: a pot staked on every game under seven strategies, at the posted or the fair prices. It shows the loss. |
+| Top 100 | The 100 players since 1976-77 with the largest career worth, in tiers of chance: each player starts from what the box score of his career says, and his teams' results in the games he played and the games he missed move the number. Computed again after each data pull. A noisy measure, and the page says how noisy. |
 | Dynasty Lab | Expected versus actual titles, significance under equal strength, a ticket lottery and historical Elo; the franchise's strength in Elo against the league mean, the best other team and the worst, and the titles read backwards. |
 | Validation | Backtests from 2003-04, calibration plots, Elo against baselines, rolling parameter tuning, assumptions. |
 | Data | Imports, season coverage, refresh and upload, database health, application version. |

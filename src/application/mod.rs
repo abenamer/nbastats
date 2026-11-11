@@ -5,6 +5,7 @@ pub mod ask_players;
 pub mod backfill;
 pub mod betting;
 pub mod boxscore;
+pub mod career;
 pub mod continuation;
 pub mod dashboard;
 pub mod dynasty;

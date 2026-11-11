@@ -37,6 +37,7 @@ This project follows the [REAS engineering standard](https://github.com/abenamer
 * [Question box](concepts/question-box.md) - How the dashboard answers a question from the stored data through a language model with read-only tools, and what it refuses.
 * [Market tracking](concepts/market-tracking.md) - How each game's model numbers and sportsbook lines are saved before tip-off and scored after the result, per model version.
 * [YAXEL, the emergence term](concepts/yaxel.md) - How a player's recent box scores could move his team's rating before the results do, and how the rule is backtested before it is used.
+* [Career worth and the Top 100](concepts/career-worth.md) - How players are ranked over their careers: each player starts from what the box score of his career says, the gap between his teams' results with him and without him moves the number, and the first 100 are shown in tiers.
 
 # Runbooks
 
@@ -78,6 +79,7 @@ This project follows the [REAS engineering standard](https://github.com/abenamer
 * [ADR 0016 — Track the model's title chances against the sportsbook's futures](decisions/0016-track-the-title-chances-against-the-sportsbooks-futures.md) - Why the application saves, once a day through the regular season, the sportsbook's outright prices on the title beside the model's title chance of the same day, how the prices become chances, and how the days are scored against the champion.
 * [ADR 0018 — Backfill the market record from the sportsbook's history](decisions/0018-backfill-the-market-record-from-the-sportsbooks-history.md) - Why the nights before the tracking was on, and the seasons before, are filled from The Odds API's stored snapshots of the lines read before the tip-off, beside the stored pre-game Elo alone under its own model version, and how the plan's credits are spent.
 * [ADR 0017 — A What if page runs counterfactuals through the season engine](decisions/0017-a-what-if-page-runs-counterfactuals-through-the-season-engine.md) - Why a real season can be run again with a team's rating set by hand, a team barred from the postseason, another era's playoff format, players out or a player's worth changed, as a second run of the season engine beside the plain one, and what the engine takes as parameters for it.
+* [ADR 0019 — Career worth in tiers, from the box score and the games with and without a player](decisions/0019-career-worth-in-tiers-from-games-with-and-without.md) - Why the Top 100 page starts each player from his career box score and lets the games with and without him move the number, shows tiers of chance instead of a sorted list, why the first version that read the games alone was rejected, and what the runs say about how far the list can be trusted.
 
 # History
 

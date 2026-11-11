@@ -22,7 +22,7 @@ use crate::application::ports::{
 };
 use crate::application::reports::{self, Fetching, PlayedGame, ReportError};
 use crate::application::state::SeasonLoadError;
-use crate::application::{boxscore, dashboard, dynasty, recovery, worth};
+use crate::application::{boxscore, career, dashboard, dynasty, recovery, worth};
 use crate::application::{results_sync, scheduler, update};
 use crate::config::APP_VERSION;
 use crate::domain::backtesting::BacktestParams;
@@ -1559,6 +1559,14 @@ pub async fn injury_card(
         .map_err(season_load_error)?
         .ok_or_else(|| ApiError::not_found(format!("{code} is not in the {season} season")))?;
     Ok(Json(json!(card)))
+}
+
+/// The career worth ranking: every ranked player with his tier, his worth, the box worth and
+/// the gap it comes from, and his chances of each group. Computed from the stored games and
+/// box scores on the first read after an import or a player sync.
+pub async fn career_worth(State(app): State<AppState>) -> ApiResult<Value> {
+    let report = career::report(&app).await?;
+    Ok(Json(json!(*report)))
 }
 
 /// A player's worth in every season he has one.

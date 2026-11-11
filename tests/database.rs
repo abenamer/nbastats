@@ -2237,6 +2237,140 @@ mod players {
         let _ = app_worth::WORTH_LOOKBACK;
     }
 
+    /// The career cells: a regular's team games split into the games he played and the games
+    /// he missed, each margin adjusted for the opponent and the court; a reserve has no stint.
+    #[sqlx::test(migrations = "./migrations")]
+    async fn career_cells_split_a_stint_into_games_with_and_without(pool: PgPool) {
+        use nba_elo_simulator::domain::career::{self, CellRule};
+        let (store, teams) = common::setup(pool).await;
+        imports::import_bytes(
+            &store,
+            common::FIXTURE.as_bytes(),
+            prov("mini_2016.csv"),
+            false,
+        )
+        .await
+        .unwrap();
+        let gsw = teams["GSW"].id;
+        let mut games: Vec<_> = store
+            .season_games(S2016)
+            .await
+            .unwrap()
+            .into_iter()
+            .filter(|g| g.is_played() && g.involves(gsw))
+            .collect();
+        games.sort_by_key(|g| (g.game_date, g.seq));
+        // A star who sat games 30 to 49, a reserve at ten minutes in every game, and a
+        // regular whose season ended after game 39.
+        let star = person(30, "Stephen", "Curry");
+        let reserve = person(31, "Ian", "Clark");
+        let shut_down = person(32, "Shaun", "Livingston");
+        for (i, g) in games.iter().enumerate() {
+            let date = g.game_date.to_string();
+            let seconds = if (30..50).contains(&i) { 0 } else { 2100 };
+            let mut lines = vec![
+                line(&date, "GSW", star.clone(), seconds, 25),
+                line(&date, "GSW", reserve.clone(), 600, 4),
+            ];
+            if i < 40 {
+                lines.push(line(&date, "GSW", shut_down.clone(), 1800, 8));
+            }
+            store
+                .save_box_scores(g.game_date, "fake-players", &lines)
+                .await
+                .unwrap();
+        }
+        let rule = CellRule::default();
+        // The same sums from the games: the margin seen from the Warriors, plus the
+        // opponent's pre-game Elo over 1500, less the court, in points.
+        let mut want = [(0u32, 0.0f64, 0.0f64); 2];
+        for (i, g) in games.iter().enumerate() {
+            if g.game_type != GameType::Regular {
+                continue;
+            }
+            let home = g.home_team_id == gsw;
+            let (own, other) = (g.home_score.unwrap(), g.away_score.unwrap());
+            let margin = f64::from(if home { own - other } else { other - own });
+            let opponent = if home { g.away_elo_pre } else { g.home_elo_pre };
+            let court = match (g.neutral, home) {
+                (true, _) => 0.0,
+                (false, true) => rule.home_advantage,
+                (false, false) => -rule.home_advantage,
+            };
+            let adjusted = margin + (opponent - 1500.0 - court) / rule.elo_per_point;
+            let w = &mut want[usize::from(!(30..50).contains(&i))];
+            w.0 += 1;
+            w.1 += adjusted;
+            w.2 += adjusted * adjusted;
+        }
+        assert_eq!(want[0].0, 20, "the block he sat is in the regular season");
+        let all = store.career_cells(&rule).await.unwrap();
+        let mut ids: Vec<_> = all.iter().map(|c| c.player_id).collect();
+        ids.dedup();
+        let names: std::collections::HashMap<_, _> = store
+            .players_by_id(&ids)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|p| (p.id, p.last_name))
+            .collect();
+        let of = |name: &str| -> Vec<career::Cell> {
+            all.iter()
+                .filter(|c| names[&c.player_id] == name)
+                .copied()
+                .collect()
+        };
+        assert!(of("Clark").is_empty(), "a reserve has no stint");
+        // The team's games after his last game are not absences: one cell, the games played.
+        let ended = of("Livingston");
+        assert_eq!(ended.len(), 1, "no cell without him");
+        let before_40 = games[..40]
+            .iter()
+            .filter(|g| g.game_type == GameType::Regular)
+            .count();
+        assert_eq!(
+            (ended[0].played, ended[0].games as usize),
+            (true, before_40)
+        );
+        let cells = of("Curry");
+        assert_eq!(cells.len(), 2, "one stint, without and with");
+        assert_eq!(all.len(), 3);
+        let id = cells[0].player_id;
+        for (cell, (played, w)) in cells.iter().zip([false, true].into_iter().zip(want)) {
+            assert_eq!(
+                (cell.player_id, cell.season, cell.team_id, cell.played),
+                (id, S2016, gsw, played)
+            );
+            assert_eq!(cell.games, w.0);
+            assert!((cell.sum - w.1).abs() < 1e-6, "{} {}", cell.sum, w.1);
+            assert!((cell.sum_sq - w.2).abs() < 1e-6, "{} {}", cell.sum_sq, w.2);
+        }
+        assert_eq!(
+            store.players_by_id(&[id]).await.unwrap()[0].last_name,
+            "Curry"
+        );
+        // The domain reads the two cells as one player with 20 games missed.
+        let measured = career::measure(&cells, rule.elo_per_point);
+        assert_eq!(measured.len(), 1);
+        // The player whose season ended has a career and no gap.
+        let no_gap = career::measure(&ended, rule.elo_per_point);
+        assert_eq!(
+            (no_gap[0].career_games as usize, no_gap[0].gap),
+            (before_40, None)
+        );
+        let m = measured[0].gap.expect("games on both sides");
+        assert_eq!((m.missed, m.played), (20, want[1].0));
+        assert_eq!(measured[0].career_games, want[1].0);
+        let gap = want[1].1 / f64::from(want[1].0) - want[0].1 / 20.0;
+        assert!((m.worth - rule.elo_per_point * gap).abs() < 1e-6);
+        // A later first season leaves nothing to read.
+        let later = CellRule {
+            first_season: SeasonYear::of(2017),
+            ..rule
+        };
+        assert!(store.career_cells(&later).await.unwrap().is_empty());
+    }
+
     #[sqlx::test(migrations = "./migrations")]
     async fn injury_reports_are_kept_day_by_day(pool: PgPool) {
         let (store, _teams) = common::setup(pool).await;

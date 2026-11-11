@@ -123,6 +123,8 @@ pub struct App {
     /// full-strength rating; cleared with the player caches.
     pub(crate) played_absences:
         RwLock<HashMap<SeasonYear, Arc<crate::domain::full_strength::MissingElo>>>,
+    /// The career worth ranking under the default settings; cleared with the player caches.
+    pub(crate) career: RwLock<Option<Arc<super::career::CareerReport>>>,
     /// The sportsbook lines read per date, kept a while, one read at a time.
     pub(crate) market_lines: super::market::LinesCache,
     /// What the capture task remembers between runs.
@@ -194,6 +196,7 @@ impl App {
             status_samples: RwLock::new(HashMap::new()),
             draft_tables: RwLock::new(HashMap::new()),
             played_absences: RwLock::new(HashMap::new()),
+            career: RwLock::new(None),
             market_lines: super::market::LinesCache::default(),
             tracking: std::sync::Mutex::new(super::tracking::Progress::default()),
             futures: std::sync::Mutex::new(super::futures::Progress::default()),
@@ -361,6 +364,7 @@ impl App {
             .write()
             .unwrap_or_else(|e| e.into_inner())
             .clear();
+        *self.career.write().unwrap_or_else(|e| e.into_inner()) = None;
         *self.teams.write().unwrap_or_else(|e| e.into_inner()) = None;
     }
 
@@ -397,6 +401,7 @@ impl App {
             .write()
             .unwrap_or_else(|e| e.into_inner())
             .clear();
+        *self.career.write().unwrap_or_else(|e| e.into_inner()) = None;
     }
 
     pub fn cancel_flag(&self, id: Uuid) -> Arc<AtomicBool> {

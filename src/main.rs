@@ -94,6 +94,26 @@ enum Command {
         #[arg(long)]
         json: Option<std::path::PathBuf>,
     },
+    /// Rank the players since 1976-77 by career worth, from the box score of their career
+    /// and their teams' games with them and without them, and print the report (read-only:
+    /// no rating or page changes)
+    CareerWorth {
+        /// The games as a regular a player needs to be ranked
+        #[arg(long)]
+        min_games: Option<u32>,
+        /// How many times the ranking is drawn
+        #[arg(long)]
+        draws: Option<u32>,
+        /// The seed of the draws
+        #[arg(long)]
+        seed: Option<u64>,
+        /// How many players the list holds
+        #[arg(long)]
+        listed: Option<usize>,
+        /// Also write the full report as JSON to this path
+        #[arg(long)]
+        json: Option<std::path::PathBuf>,
+    },
     /// Backfill the market record from The Odds API's history: for each night in the range
     /// with stored games and no snapshot, the sportsbook's lines as they stood before the
     /// tip-off, beside the stored pre-game Elo (needs ODDS_API_KEY on a paid plan; costs
@@ -351,6 +371,44 @@ async fn main() -> anyhow::Result<()> {
                 eprintln!("report written to {}", path.display());
             }
             println!("{}", yaxel::render(&answer));
+            Ok(())
+        }
+        Command::CareerWorth {
+            min_games,
+            draws,
+            seed,
+            listed,
+            json,
+        } => {
+            use nba_elo_simulator::application::career;
+            use nba_elo_simulator::domain::career::Settings;
+            let d = Settings::default();
+            let settings = Settings {
+                min_games: min_games.unwrap_or(d.min_games),
+                draws: draws.unwrap_or(d.draws),
+                seed: seed.unwrap_or(d.seed),
+                listed: listed.unwrap_or(d.listed),
+            };
+            career::check(&settings).map_err(|m| anyhow::anyhow!(m))?;
+            let app = App::new(
+                config,
+                store,
+                source,
+                Outbound {
+                    results: None,
+                    sync_schedule: None,
+                    model: None,
+                    keys: None,
+                    reports: None,
+                    odds: None,
+                },
+            );
+            let report = career::compute(&app, settings).await?;
+            if let Some(path) = json {
+                std::fs::write(&path, serde_json::to_string_pretty(&report)?)?;
+                eprintln!("report written to {}", path.display());
+            }
+            println!("{}", career::render(&report));
             Ok(())
         }
         Command::MarketBackfill {

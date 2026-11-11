@@ -9,9 +9,11 @@ use sqlx::{FromRow, PgConnection, Row};
 
 use crate::application::ports::{
     Appearance, BoxScoreCounts, BoxScoreFetch, BoxScoreLine, InjuryLine, InjuryRecord, Player,
-    PlayerCoverage, PlayerRecord, PlayerSeason, PlayerStore, SeasonBackfill, StoreResult,
+    PlayerCoverage, PlayerRecord, PlayerSeason, PlayerStore, SeasonBackfill, StoreError,
+    StoreResult,
 };
 use crate::domain::bpm::BoxLine;
+use crate::domain::career::{Cell, CellRule};
 use crate::domain::ids::{PlayerId, SeasonYear, TeamId};
 use crate::domain::status::ReportedStatus;
 use crate::domain::worth::{AbsenceStatus, Line};
@@ -662,6 +664,79 @@ impl PlayerStore for PostgresStore {
         .fetch_all(&self.pool)
         .await?;
         Ok(rows.into_iter().collect())
+    }
+
+    async fn career_cells(&self, rule: &CellRule) -> StoreResult<Vec<Cell>> {
+        // `line`: the games a player played, as `season_lines` reads "played". `stint`: one
+        // player, team and season, from his first game for the team to his last: a team game
+        // before or after is not an absence, so a season that a team ends without him (a
+        // trade, a shutdown, an injury that ends the season) adds nothing. `team_game`: one row per team and game
+        // with a box score for that team; the margin is seen from the team, with the
+        // opponent's pre-game Elo added and the home court taken out, in points. The 1500 is
+        // a constant that leaves every gap inside a stint unchanged and keeps the sums small.
+        let rows: Vec<(PlayerId, SeasonYear, TeamId, bool, i64, f64, f64)> = sqlx::query_as(
+            "WITH line AS (
+                 SELECT a.game_id, a.player_id, a.team_id, a.seconds, g.season, g.game_date
+                 FROM appearances a JOIN games g ON g.id = a.game_id
+                 WHERE g.game_type = 'regular' AND g.season >= $1 AND g.home_score IS NOT NULL
+                   AND (COALESCE(a.seconds, 0) > 0 OR (a.seconds IS NULL AND
+                        COALESCE(a.pts, 0) + COALESCE(a.fga, 0) + COALESCE(a.fta, 0)
+                        + COALESCE(a.reb, 0) + COALESCE(a.ast, 0) > 0))
+             ),
+             stint AS (
+                 SELECT * FROM (
+                     SELECT player_id, season, team_id, count(*) AS games,
+                            avg(seconds) FILTER (WHERE seconds > 0) / 60.0 AS minutes,
+                            min(game_date) AS first_game, max(game_date) AS last_game
+                     FROM line GROUP BY player_id, season, team_id
+                 ) s WHERE games >= $2 AND minutes >= $3
+             ),
+             team_game AS (
+                 SELECT g.id AS game_id, g.season, g.game_date, t.team_id,
+                        (CASE WHEN t.home THEN g.home_score - g.away_score
+                              ELSE g.away_score - g.home_score END)
+                        + ((CASE WHEN t.home THEN g.away_elo_pre ELSE g.home_elo_pre END) - 1500
+                           - (CASE WHEN g.neutral THEN 0 WHEN t.home THEN $4 ELSE -$4 END)) / $5
+                        AS adjusted
+                 FROM games g
+                 CROSS JOIN LATERAL (VALUES (g.home_team_id, TRUE), (g.away_team_id, FALSE))
+                      AS t(team_id, home)
+                 WHERE g.game_type = 'regular' AND g.season >= $1 AND g.home_score IS NOT NULL
+                   AND EXISTS (SELECT 1 FROM appearances a
+                               WHERE a.game_id = g.id AND a.team_id = t.team_id)
+             )
+             SELECT s.player_id, s.season, s.team_id, (l.player_id IS NOT NULL) AS played,
+                    count(*), sum(tg.adjusted)::float8, sum(tg.adjusted * tg.adjusted)::float8
+             FROM stint s
+             JOIN team_game tg ON tg.team_id = s.team_id AND tg.season = s.season
+                  AND tg.game_date BETWEEN s.first_game AND s.last_game
+             LEFT JOIN line l ON l.game_id = tg.game_id AND l.player_id = s.player_id
+                  AND l.team_id = s.team_id
+             GROUP BY 1, 2, 3, 4
+             ORDER BY 1, 2, 3, 4",
+        )
+        .bind(rule.first_season)
+        .bind(i64::from(rule.min_games))
+        .bind(rule.min_minutes)
+        .bind(rule.home_advantage)
+        .bind(rule.elo_per_point)
+        .fetch_all(&self.pool)
+        .await?;
+        rows.into_iter()
+            .map(|(player_id, season, team_id, played, games, sum, sum_sq)| {
+                Ok(Cell {
+                    player_id,
+                    season,
+                    team_id,
+                    played,
+                    games: u32::try_from(games).map_err(|_| {
+                        StoreError::InvalidData(format!("a career cell of {games} games"))
+                    })?,
+                    sum,
+                    sum_sq,
+                })
+            })
+            .collect()
     }
 
     async fn backfill_progress(&self) -> StoreResult<Vec<SeasonBackfill>> {

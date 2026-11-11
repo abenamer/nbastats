@@ -4,6 +4,7 @@ pub mod backtesting;
 pub mod betting;
 pub mod bpm;
 pub mod calendar;
+pub mod career;
 pub mod cba;
 pub mod continuation;
 pub mod cup;
