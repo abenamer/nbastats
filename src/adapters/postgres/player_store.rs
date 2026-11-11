@@ -670,10 +670,21 @@ impl PlayerStore for PostgresStore {
         // `line`: the games a player played, as `season_lines` reads "played". `stint`: one
         // player, team and season, from his first game for the team to his last: a team game
         // before or after is not an absence, so a season that a team ends without him (a
-        // trade, a shutdown, an injury that ends the season) adds nothing. `team_game`: one row per team and game
-        // with a box score for that team; the margin is seen from the team, with the
-        // opponent's pre-game Elo added and the home court taken out, in points. The 1500 is
-        // a constant that leaves every gap inside a stint unchanged and keeps the sums small.
+        // trade, a shutdown, an injury that ends the season) adds nothing. `team_game`: one
+        // row per team and game with a box score for that team; the margin is seen from the
+        // team, with the opponent's pre-game Elo added and the home court taken out, in
+        // points. The 1500 is a constant that leaves every gap inside a stint unchanged and
+        // keeps the sums small.
+        // `declared`: the rule's declared absences, with the player and the team found by
+        // their keys. `span`: the games of each stint, those of its window and, for a
+        // declared absence, every game the team played in the declared season; a game in
+        // both is read once.
+        let declared = rule.declared;
+        let sources: Vec<&str> = declared.iter().map(|d| d.source).collect();
+        let source_ids: Vec<i64> = declared.iter().map(|d| d.source_id).collect();
+        let team_codes: Vec<&str> = declared.iter().map(|d| d.team_code).collect();
+        let stint_seasons: Vec<i32> = declared.iter().map(|d| d.stint_season.end_year()).collect();
+        let seasons: Vec<i32> = declared.iter().map(|d| d.season.end_year()).collect();
         let rows: Vec<(PlayerId, SeasonYear, TeamId, bool, i64, f64, f64)> = sqlx::query_as(
             "WITH line AS (
                  SELECT a.game_id, a.player_id, a.team_id, a.seconds, g.season, g.game_date
@@ -704,14 +715,33 @@ impl PlayerStore for PostgresStore {
                  WHERE g.game_type = 'regular' AND g.season >= $1 AND g.home_score IS NOT NULL
                    AND EXISTS (SELECT 1 FROM appearances a
                                WHERE a.game_id = g.id AND a.team_id = t.team_id)
+             ),
+             declared AS (
+                 SELECT DISTINCT p.id AS player_id, t.id AS team_id, d.stint_season, d.season
+                 FROM unnest($6::text[], $7::int8[], $8::text[], $9::int4[], $10::int4[])
+                      AS d(source, source_id, team_code, stint_season, season)
+                 JOIN players p ON p.source = d.source AND p.source_id = d.source_id
+                 JOIN teams t ON t.code = d.team_code
+             ),
+             span AS (
+                 SELECT s.player_id, s.season, s.team_id, tg.game_id, tg.adjusted
+                 FROM stint s
+                 JOIN team_game tg ON tg.team_id = s.team_id AND tg.season = s.season
+                      AND tg.game_date BETWEEN s.first_game AND s.last_game
+                 UNION ALL
+                 SELECT s.player_id, s.season, s.team_id, tg.game_id, tg.adjusted
+                 FROM declared d
+                 JOIN stint s ON s.player_id = d.player_id AND s.team_id = d.team_id
+                      AND s.season = d.stint_season
+                 JOIN team_game tg ON tg.team_id = d.team_id AND tg.season = d.season
+                      AND NOT (tg.season = s.season
+                               AND tg.game_date BETWEEN s.first_game AND s.last_game)
              )
-             SELECT s.player_id, s.season, s.team_id, (l.player_id IS NOT NULL) AS played,
-                    count(*), sum(tg.adjusted)::float8, sum(tg.adjusted * tg.adjusted)::float8
-             FROM stint s
-             JOIN team_game tg ON tg.team_id = s.team_id AND tg.season = s.season
-                  AND tg.game_date BETWEEN s.first_game AND s.last_game
-             LEFT JOIN line l ON l.game_id = tg.game_id AND l.player_id = s.player_id
-                  AND l.team_id = s.team_id
+             SELECT sp.player_id, sp.season, sp.team_id, (l.player_id IS NOT NULL) AS played,
+                    count(*), sum(sp.adjusted)::float8, sum(sp.adjusted * sp.adjusted)::float8
+             FROM span sp
+             LEFT JOIN line l ON l.game_id = sp.game_id AND l.player_id = sp.player_id
+                  AND l.team_id = sp.team_id
              GROUP BY 1, 2, 3, 4
              ORDER BY 1, 2, 3, 4",
         )
@@ -720,6 +750,11 @@ impl PlayerStore for PostgresStore {
         .bind(rule.min_minutes)
         .bind(rule.home_advantage)
         .bind(rule.elo_per_point)
+        .bind(sources)
+        .bind(source_ids)
+        .bind(team_codes)
+        .bind(stint_seasons)
+        .bind(seasons)
         .fetch_all(&self.pool)
         .await?;
         rows.into_iter()

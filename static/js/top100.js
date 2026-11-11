@@ -12,8 +12,12 @@
   ];
   const seasons = p => `${labelOf(p.first_season)}–${labelOf(p.last_season)}`;
   const pm = (x, e) => `${num(x, 0)} ± ${num(e, 0)}`;
-  const note = p => !p.gap ? 'No game missed inside a stint: the box score alone'
-    : p.gap.dominant_season ? `${labelOf(p.gap.dominant_season)} carries over a third of the weight of the gap` : '';
+  // A declared absence comes first: it says the row is not read by the stint rule alone.
+  const note = p => [
+    p.declared_absence ? `${p.declared_absence}, by a declaration for him alone` : '',
+    !p.gap ? 'No game missed inside a stint: the box score alone'
+      : p.gap.dominant_season ? `${labelOf(p.gap.dominant_season)} carries over a third of the weight of the gap` : '',
+  ].filter(Boolean).join('. ');
   const who = [
     { label: 'Player', value: 'name', left: true },
     { label: 'Career', value: seasons, left: true, title: 'First and last season as a regular, from 1976-77' },
@@ -36,7 +40,7 @@
     { label: 'Top 50', value: p => pct(p.top50, 0), title: 'The share of the draws that put him in the best 50' },
     { label: 'Top 100', value: p => pct(p.top100, 0), title: 'The share of the draws that put him in the best 100' },
     ...evidence,
-    { label: 'Note', value: note, left: true },
+    { label: 'Note', value: note, left: true, cls: () => 'wrap' },
   ];
   const withTier = [ranked[0], { label: 'Tier', value: 'tier', title: 'The smallest group he is more likely than not to belong to; 5 is none of them' }, ...ranked.slice(1)];
   setStatus(status, 'Computing from the stored games…');
@@ -88,7 +92,7 @@
     const hits = r.players.filter(p => p.name.toLowerCase().includes(q)).slice(0, 25);
     el('found').innerHTML = hits.length ? table([...who, { label: 'Where', value: place, left: true }, ...parts,
       { label: 'Box worth', value: p => num(p.box_worth, 0), title: 'Elo: the box-score worth of his seasons, weighted by their minutes' },
-      ...evidence, { label: 'Note', value: note, left: true }], hits) : '';
+      ...evidence, { label: 'Note', value: note, left: true, cls: () => 'wrap' }], hits) : '';
     el('foundNote').textContent = hits.length ? '' : `No ranked player has this name. A player with fewer than ${minGames} games as a regular from 1976-77 is not ranked.`;
   }
   el('find').addEventListener('input', find);

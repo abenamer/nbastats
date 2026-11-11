@@ -2284,6 +2284,7 @@ mod players {
         // The same sums from the games: the margin seen from the Warriors, plus the
         // opponent's pre-game Elo over 1500, less the court, in points.
         let mut want = [(0u32, 0.0f64, 0.0f64); 2];
+        let mut after_40 = (0u32, 0.0f64, 0.0f64);
         for (i, g) in games.iter().enumerate() {
             if g.game_type != GameType::Regular {
                 continue;
@@ -2302,6 +2303,11 @@ mod players {
             w.0 += 1;
             w.1 += adjusted;
             w.2 += adjusted * adjusted;
+            if i >= 40 {
+                after_40.0 += 1;
+                after_40.1 += adjusted;
+                after_40.2 += adjusted * adjusted;
+            }
         }
         assert_eq!(want[0].0, 20, "the block he sat is in the regular season");
         let all = store.career_cells(&rule).await.unwrap();
@@ -2369,6 +2375,83 @@ mod players {
             ..rule
         };
         assert!(store.career_cells(&later).await.unwrap().is_empty());
+        // A declared absence: every game the team played in the season is read inside his
+        // stint, so the games after his last game become the games he missed. A game inside
+        // the stint's window is read once. A declaration for a player the store does not
+        // have, or for a season in which he has no stint, adds nothing.
+        const DECLARED: &[career::DeclaredAbsence] = &[
+            career::DeclaredAbsence {
+                source: "fake-players",
+                source_id: 32,
+                team_code: "GSW",
+                stint_season: S2016,
+                season: S2016,
+                note: "His shutdown counts as games missed",
+            },
+            career::DeclaredAbsence {
+                source: "fake-players",
+                source_id: 999,
+                team_code: "GSW",
+                stint_season: S2016,
+                season: S2016,
+                note: "No such player",
+            },
+            career::DeclaredAbsence {
+                source: "fake-players",
+                source_id: 30,
+                team_code: "GSW",
+                stint_season: SeasonYear::of(2017),
+                season: S2016,
+                note: "No such stint",
+            },
+            career::DeclaredAbsence {
+                source: "another-source",
+                source_id: 31,
+                team_code: "GSW",
+                stint_season: S2016,
+                season: S2016,
+                note: "The key of another source",
+            },
+        ];
+        let with_declared = CellRule {
+            declared: DECLARED,
+            ..rule
+        };
+        let all = store.career_cells(&with_declared).await.unwrap();
+        assert_eq!(all.len(), 4, "one more cell: the games he missed");
+        let of = |name: &str| -> Vec<career::Cell> {
+            all.iter()
+                .filter(|c| names[&c.player_id] == name)
+                .copied()
+                .collect()
+        };
+        let counts = |cells: &[career::Cell]| -> Vec<(bool, u32)> {
+            cells.iter().map(|c| (c.played, c.games)).collect()
+        };
+        assert_eq!(
+            counts(&of("Curry")),
+            counts(&cells),
+            "no declaration for him has a stint"
+        );
+        let declared = of("Livingston");
+        assert_eq!(declared.len(), 2, "without and with");
+        assert_eq!(
+            counts(&declared[1..]),
+            counts(&ended),
+            "the games he played are unchanged"
+        );
+        let missed = declared[0];
+        assert!(after_40.0 > 0);
+        assert_eq!(
+            (missed.season, missed.team_id, missed.played, missed.games),
+            (S2016, gsw, false, after_40.0)
+        );
+        assert!((missed.sum - after_40.1).abs() < 1e-6);
+        assert!((missed.sum_sq - after_40.2).abs() < 1e-6);
+        let m = career::measure(&declared, rule.elo_per_point)[0]
+            .gap
+            .expect("the declaration gives him games on both sides");
+        assert_eq!((m.missed, m.played as usize), (after_40.0, before_40));
     }
 
     #[sqlx::test(migrations = "./migrations")]

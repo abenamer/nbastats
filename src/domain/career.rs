@@ -9,6 +9,9 @@
 //! it adapts while he is out. The career gap pools the stints' gaps, each weighted by its
 //! effective number of games, at [`ELO_PER_POINT`]. An absence is a team game between his
 //! first and his last game of the stint, the same absence the season's player worth reads.
+//! The store has no rosters for past seasons, so the rule cannot see a season a player sat
+//! out in whole; a [`DeclaredAbsence`] says by hand what the store cannot, and
+//! [`DECLARED_ABSENCES`] is the whole list.
 //!
 //! The gap alone is too noisy to rank by, and it says nothing of a player who never missed a
 //! game. The second reading is the career box worth: the box-score worth of his seasons,
@@ -31,7 +34,7 @@ use super::elo::DEFAULT_HOME_ADVANTAGE;
 use super::ids::{PlayerId, SeasonYear, TeamId};
 use super::worth::{self, ELO_PER_POINT};
 
-pub const CAREER_MODEL_VERSION: &str = "career-gap-box-2.0";
+pub const CAREER_MODEL_VERSION: &str = "career-gap-box-2.1";
 
 /// One season that carries more than this share of a player's gap is named beside him.
 pub const DOMINANT_SEASON_SHARE: f64 = 1.0 / 3.0;
@@ -43,6 +46,54 @@ pub const MIN_CALIBRATION_PLAYERS: usize = 30;
 /// The least error of a prior, in Elo. A box score cannot say a worth exactly; without the
 /// floor a residual spread that comes out at zero would let the prior silence every gap.
 pub const MIN_PRIOR_ERROR: f64 = 5.0;
+
+/// Team games a player sat out that the stint rule cannot see, declared by hand: every game
+/// his team played in `season` is read as inside his stint of `stint_season` with that
+/// team. The games he missed become absences of that stint, against the games he played in
+/// it. A declaration is a judgement that he was that team's player the whole time and that
+/// the team around him was near enough the same; the rule makes neither for any other
+/// player, so a declared player is measured with more evidence than his peers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct DeclaredAbsence {
+    /// The player's key at the player source: a store keeps it across loads, and the
+    /// database key is its own.
+    pub source: &'static str,
+    pub source_id: i64,
+    pub team_code: &'static str,
+    /// The stint that receives the games; without it the declaration adds nothing.
+    pub stint_season: SeasonYear,
+    /// The season whose team games are all read as inside that stint.
+    pub season: SeasonYear,
+    /// What the declaration is, for the page.
+    pub note: &'static str,
+}
+
+const JORDAN_RETIREMENT: &str =
+    "His retirement from October 1993 to March 1995 counts as games missed";
+
+/// Every declared absence: Michael Jordan's first retirement, and no other. He left the
+/// Bulls on 6 October 1993 and played again on 19 March 1995. The 82 games of 1993-94 are
+/// read against the games he played in 1992-93, the season before, and the 65 games of
+/// 1994-95 before his return against the 17 he played after it. ADR 0020 has the reason
+/// and the runs.
+pub const DECLARED_ABSENCES: &[DeclaredAbsence] = &[
+    DeclaredAbsence {
+        source: "balldontlie",
+        source_id: 2931,
+        team_code: "CHI",
+        stint_season: SeasonYear::of(1993),
+        season: SeasonYear::of(1994),
+        note: JORDAN_RETIREMENT,
+    },
+    DeclaredAbsence {
+        source: "balldontlie",
+        source_id: 2931,
+        team_code: "CHI",
+        stint_season: SeasonYear::of(1995),
+        season: SeasonYear::of(1995),
+        note: JORDAN_RETIREMENT,
+    },
+];
 
 /// Which games make a stint, and how a margin is adjusted. The store applies it.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize)]
@@ -57,6 +108,8 @@ pub struct CellRule {
     /// The home side's advantage taken out of a margin, in Elo.
     pub home_advantage: f64,
     pub elo_per_point: f64,
+    /// The absences declared by hand, read on top of the stints.
+    pub declared: &'static [DeclaredAbsence],
 }
 
 impl Default for CellRule {
@@ -68,6 +121,7 @@ impl Default for CellRule {
             min_minutes: 24.0,
             home_advantage: DEFAULT_HOME_ADVANTAGE,
             elo_per_point: ELO_PER_POINT,
+            declared: DECLARED_ABSENCES,
         }
     }
 }
@@ -823,6 +877,32 @@ mod tests {
 
     fn season(year: i32) -> SeasonYear {
         SeasonYear::try_new(year).unwrap()
+    }
+
+    /// The list of declared absences is one player's, and each row can be read: the stint
+    /// is in the season of the games or before it, inside the seasons the rule reads, and no
+    /// season of a team is declared twice.
+    #[test]
+    fn the_declared_absences_are_michael_jordans_retirement_and_no_other() {
+        let rule = CellRule::default();
+        assert_eq!(rule.declared, DECLARED_ABSENCES);
+        assert_eq!(DECLARED_ABSENCES.len(), 2);
+        for (i, d) in DECLARED_ABSENCES.iter().enumerate() {
+            assert_eq!(
+                (d.source, d.source_id, d.team_code),
+                ("balldontlie", 2931, "CHI")
+            );
+            assert!(rule.first_season <= d.stint_season && d.stint_season <= d.season);
+            assert!(d.note.contains("1993") && d.note.contains("1995"));
+            assert!(DECLARED_ABSENCES[..i].iter().all(|e| e.season != d.season));
+        }
+        assert_eq!(
+            DECLARED_ABSENCES
+                .iter()
+                .map(|d| d.season)
+                .collect::<Vec<_>>(),
+            [season(1994), season(1995)]
+        );
     }
 
     /// Both cells of a stint from the adjusted margins of the games played and missed.

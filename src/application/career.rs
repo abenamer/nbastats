@@ -28,6 +28,9 @@ pub struct Named<T> {
     pub name: String,
     /// Listed on a team by the last roster refresh.
     pub active: bool,
+    /// What the rule's declared absences read as games he missed, when it declares one for
+    /// him.
+    pub declared_absence: Option<&'static str>,
     #[serde(flatten)]
     pub row: T,
 }
@@ -123,7 +126,7 @@ pub async fn compute(app: &App, settings: Settings) -> Result<CareerReport, Seas
     .await
     .map_err(|e| StoreError::Query(e.to_string()))?;
     let ids: Vec<PlayerId> = ranking.players.iter().map(|r| r.career.player_id).collect();
-    let names: HashMap<PlayerId, (String, bool)> = app
+    let names: HashMap<PlayerId, (String, bool, Option<&'static str>)> = app
         .store
         .players_by_id(&ids)
         .await?
@@ -132,14 +135,19 @@ pub async fn compute(app: &App, settings: Settings) -> Result<CareerReport, Seas
             // A few stored names carry a comma between a nickname and the family name.
             let name = format!("{} {}", p.first_name, p.last_name).replace(',', " ");
             let name = name.split_whitespace().collect::<Vec<_>>().join(" ");
-            (p.id, (name, p.active))
+            let declared = rule
+                .declared
+                .iter()
+                .find(|d| d.source == p.source && d.source_id == p.source_id)
+                .map(|d| d.note);
+            (p.id, (name, p.active, declared))
         })
         .collect();
     let named = |id: PlayerId| {
         names
             .get(&id)
             .cloned()
-            .unwrap_or_else(|| (id.to_string(), false))
+            .unwrap_or_else(|| (id.to_string(), false, None))
     };
     Ok(CareerReport {
         model: ranking.model,
@@ -162,8 +170,13 @@ pub async fn compute(app: &App, settings: Settings) -> Result<CareerReport, Seas
             .players
             .into_iter()
             .map(|row| {
-                let (name, active) = named(row.career.player_id);
-                Named { name, active, row }
+                let (name, active, declared_absence) = named(row.career.player_id);
+                Named {
+                    name,
+                    active,
+                    declared_absence,
+                    row,
+                }
             })
             .collect(),
     })
@@ -216,6 +229,19 @@ pub fn render(r: &CareerReport) -> String {
             first.label(),
             last.label()
         ));
+    }
+    for d in r.rule.declared {
+        out.push_str(&format!(
+            "Declared absence: player {} of {}, team {}: the team games of {} are read inside the stint of {}.\n",
+            d.source_id,
+            d.source,
+            d.team_code,
+            d.season.label(),
+            d.stint_season.label(),
+        ));
+    }
+    if !r.rule.declared.is_empty() {
+        out.push('\n');
     }
     let list = &r.players[..r.players.len().min(r.settings.listed)];
     out.push_str(&format!(
