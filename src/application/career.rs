@@ -13,8 +13,8 @@ use rand_chacha::ChaCha8Rng;
 use serde::Serialize;
 
 use crate::domain::career::{
-    self, BoxSeason, Calibration, Career, CellRule, HalfCheck, Ranked, Ranking, Score, Settings,
-    GROUPS,
+    self, BoxSeason, Calibration, Career, CellRule, DeclaredAbsence, HalfCheck, Ranked, Ranking,
+    Score, Settings, GROUPS,
 };
 use crate::domain::ids::{PlayerId, SeasonYear};
 
@@ -28,9 +28,9 @@ pub struct Named<T> {
     pub name: String,
     /// Listed on a team by the last roster refresh.
     pub active: bool,
-    /// What the rule's declared absences read as games he missed, when it declares one for
-    /// him.
-    pub declared_absence: Option<&'static str>,
+    /// The seasons the rule's declared absences read as games he missed, with their
+    /// causes, when it declares one for him.
+    pub declared_absence: Option<String>,
     #[serde(flatten)]
     pub row: T,
 }
@@ -126,7 +126,7 @@ pub async fn compute(app: &App, settings: Settings) -> Result<CareerReport, Seas
     .await
     .map_err(|e| StoreError::Query(e.to_string()))?;
     let ids: Vec<PlayerId> = ranking.players.iter().map(|r| r.career.player_id).collect();
-    let names: HashMap<PlayerId, (String, bool, Option<&'static str>)> = app
+    let names: HashMap<PlayerId, (String, bool, Option<String>)> = app
         .store
         .players_by_id(&ids)
         .await?
@@ -135,11 +135,7 @@ pub async fn compute(app: &App, settings: Settings) -> Result<CareerReport, Seas
             // A few stored names carry a comma between a nickname and the family name.
             let name = format!("{} {}", p.first_name, p.last_name).replace(',', " ");
             let name = name.split_whitespace().collect::<Vec<_>>().join(" ");
-            let declared = rule
-                .declared
-                .iter()
-                .find(|d| d.source == p.source && d.source_id == p.source_id)
-                .map(|d| d.note);
+            let declared = declared_note(rule.declared, &p.source, p.source_id);
             (p.id, (name, p.active, declared))
         })
         .collect();
@@ -180,6 +176,29 @@ pub async fn compute(app: &App, settings: Settings) -> Result<CareerReport, Seas
             })
             .collect(),
     })
+}
+
+/// A player's declared seasons with their causes, for the page: the seasons of one cause
+/// together, in the order of the list.
+fn declared_note(declared: &[DeclaredAbsence], source: &str, source_id: i64) -> Option<String> {
+    let mut causes: Vec<(&str, Vec<String>)> = Vec::new();
+    for d in declared
+        .iter()
+        .filter(|d| d.source == source && d.source_id == source_id)
+    {
+        match causes.iter_mut().find(|(cause, _)| *cause == d.cause) {
+            Some((_, seasons)) => seasons.push(d.season.label()),
+            None => causes.push((d.cause, vec![d.season.label()])),
+        }
+    }
+    if causes.is_empty() {
+        return None;
+    }
+    let parts: Vec<String> = causes
+        .iter()
+        .map(|(cause, seasons)| format!("{} ({cause})", seasons.join(", ")))
+        .collect();
+    Some(format!("Declared absence: {}", parts.join("; ")))
 }
 
 /// The report under the default settings, kept until the next import or player sync.
@@ -230,17 +249,23 @@ pub fn render(r: &CareerReport) -> String {
             last.label()
         ));
     }
-    for d in r.rule.declared {
-        out.push_str(&format!(
-            "Declared absence: player {} of {}, team {}: the team games of {} are read inside the stint of {}.\n",
-            d.source_id,
-            d.source,
-            d.team_code,
-            d.season.label(),
-            d.stint_season.label(),
-        ));
-    }
     if !r.rule.declared.is_empty() {
+        out.push_str(&format!(
+            "Declared absences, {}: the team games of the season are read inside the stint in brackets.\n\n",
+            r.rule.declared.len()
+        ));
+        for d in r.rule.declared {
+            out.push_str(&format!(
+                "* {} ({} {}), {} {} [{}]: {}\n",
+                d.player,
+                d.source,
+                d.source_id,
+                d.team_code,
+                d.season.label(),
+                d.stint_season.label(),
+                d.cause,
+            ));
+        }
         out.push('\n');
     }
     let list = &r.players[..r.players.len().min(r.settings.listed)];
@@ -307,4 +332,29 @@ pub fn render(r: &CareerReport) -> String {
         ));
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::career::DECLARED_ABSENCES;
+
+    #[test]
+    fn a_declared_note_names_the_seasons_of_each_cause_and_no_other_player() {
+        let note = |source_id| declared_note(DECLARED_ABSENCES, "balldontlie", source_id);
+        assert_eq!(
+            note(2931).as_deref(),
+            Some("Declared absence: 1993-94, 1994-95 (retirement)")
+        );
+        assert_eq!(
+            note(443).as_deref(),
+            Some("Declared absence: 2019-20 (torn knee ligament); 2020-21 (torn Achilles tendon)")
+        );
+        // A key of another source is another player, and a player without a row has no note.
+        assert_eq!(
+            declared_note(DECLARED_ABSENCES, "another-source", 2931),
+            None
+        );
+        assert_eq!(note(-1), None);
+    }
 }

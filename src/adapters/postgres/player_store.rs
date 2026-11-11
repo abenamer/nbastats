@@ -13,7 +13,7 @@ use crate::application::ports::{
     StoreResult,
 };
 use crate::domain::bpm::BoxLine;
-use crate::domain::career::{Cell, CellRule};
+use crate::domain::career::{Cell, CellRule, Side};
 use crate::domain::ids::{PlayerId, SeasonYear, TeamId};
 use crate::domain::status::ReportedStatus;
 use crate::domain::worth::{AbsenceStatus, Line};
@@ -678,14 +678,19 @@ impl PlayerStore for PostgresStore {
         // `declared`: the rule's declared absences, with the player and the team found by
         // their keys. `span`: the games of each stint, those of its window and, for a
         // declared absence, every game the team played in the declared season; a game in
-        // both is read once.
+        // both is read once. A game of another season than the stint is marked, because the
+        // domain counts it as less than a game; the few games he played in such a season
+        // are under the stint rule and are not read on either side.
         let declared = rule.declared;
         let sources: Vec<&str> = declared.iter().map(|d| d.source).collect();
         let source_ids: Vec<i64> = declared.iter().map(|d| d.source_id).collect();
         let team_codes: Vec<&str> = declared.iter().map(|d| d.team_code).collect();
         let stint_seasons: Vec<i32> = declared.iter().map(|d| d.stint_season.end_year()).collect();
         let seasons: Vec<i32> = declared.iter().map(|d| d.season.end_year()).collect();
-        let rows: Vec<(PlayerId, SeasonYear, TeamId, bool, i64, f64, f64)> = sqlx::query_as(
+        /// A stint, whether he played, whether the games are of another season, the count,
+        /// the sum and the sum of squares of the adjusted margins.
+        type CellRow = (PlayerId, SeasonYear, TeamId, bool, bool, i64, f64, f64);
+        let rows: Vec<CellRow> = sqlx::query_as(
             "WITH line AS (
                  SELECT a.game_id, a.player_id, a.team_id, a.seconds, g.season, g.game_date
                  FROM appearances a JOIN games g ON g.id = a.game_id
@@ -724,12 +729,14 @@ impl PlayerStore for PostgresStore {
                  JOIN teams t ON t.code = d.team_code
              ),
              span AS (
-                 SELECT s.player_id, s.season, s.team_id, tg.game_id, tg.adjusted
+                 SELECT s.player_id, s.season, s.team_id, tg.game_id, tg.adjusted,
+                        FALSE AS other_season
                  FROM stint s
                  JOIN team_game tg ON tg.team_id = s.team_id AND tg.season = s.season
                       AND tg.game_date BETWEEN s.first_game AND s.last_game
                  UNION ALL
-                 SELECT s.player_id, s.season, s.team_id, tg.game_id, tg.adjusted
+                 SELECT s.player_id, s.season, s.team_id, tg.game_id, tg.adjusted,
+                        tg.season <> s.season
                  FROM declared d
                  JOIN stint s ON s.player_id = d.player_id AND s.team_id = d.team_id
                       AND s.season = d.stint_season
@@ -738,12 +745,14 @@ impl PlayerStore for PostgresStore {
                                AND tg.game_date BETWEEN s.first_game AND s.last_game)
              )
              SELECT sp.player_id, sp.season, sp.team_id, (l.player_id IS NOT NULL) AS played,
-                    count(*), sum(sp.adjusted)::float8, sum(sp.adjusted * sp.adjusted)::float8
+                    sp.other_season, count(*), sum(sp.adjusted)::float8,
+                    sum(sp.adjusted * sp.adjusted)::float8
              FROM span sp
              LEFT JOIN line l ON l.game_id = sp.game_id AND l.player_id = sp.player_id
                   AND l.team_id = sp.team_id
-             GROUP BY 1, 2, 3, 4
-             ORDER BY 1, 2, 3, 4",
+             WHERE NOT (sp.other_season AND l.player_id IS NOT NULL)
+             GROUP BY 1, 2, 3, 4, 5
+             ORDER BY 1, 2, 3, 4, 5",
         )
         .bind(rule.first_season)
         .bind(i64::from(rule.min_games))
@@ -758,19 +767,27 @@ impl PlayerStore for PostgresStore {
         .fetch_all(&self.pool)
         .await?;
         rows.into_iter()
-            .map(|(player_id, season, team_id, played, games, sum, sum_sq)| {
-                Ok(Cell {
-                    player_id,
-                    season,
-                    team_id,
-                    played,
-                    games: u32::try_from(games).map_err(|_| {
-                        StoreError::InvalidData(format!("a career cell of {games} games"))
-                    })?,
-                    sum,
-                    sum_sq,
-                })
-            })
+            .map(
+                |(player_id, season, team_id, played, other_season, games, sum, sum_sq)| {
+                    Ok(Cell {
+                        player_id,
+                        season,
+                        team_id,
+                        // The query drops the games he played in another season, so a
+                        // game of another season is a game he missed.
+                        side: match (played, other_season) {
+                            (true, _) => Side::Played,
+                            (false, false) => Side::Missed,
+                            (false, true) => Side::MissedInAnotherSeason,
+                        },
+                        games: u32::try_from(games).map_err(|_| {
+                            StoreError::InvalidData(format!("a career cell of {games} games"))
+                        })?,
+                        sum,
+                        sum_sq,
+                    })
+                },
+            )
             .collect()
     }
 

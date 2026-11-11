@@ -8,6 +8,7 @@ pub mod career;
 pub mod cba;
 pub mod continuation;
 pub mod cup;
+pub mod declared_absences;
 pub mod elo;
 pub mod eras;
 pub mod full_strength;

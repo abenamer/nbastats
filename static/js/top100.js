@@ -14,7 +14,8 @@
   const pm = (x, e) => `${num(x, 0)} ± ${num(e, 0)}`;
   // A declared absence comes first: it says the row is not read by the stint rule alone.
   const note = p => [
-    p.declared_absence ? `${p.declared_absence}, by a declaration for him alone` : '',
+    p.declared_absence || '',
+    p.gap && p.gap.missed_other_season ? `${p.gap.missed_other_season} of the games missed are of another season and count for less` : '',
     !p.gap ? 'No game missed inside a stint: the box score alone'
       : p.gap.dominant_season ? `${labelOf(p.gap.dominant_season)} carries over a third of the weight of the gap` : '',
   ].filter(Boolean).join('. ');
@@ -29,7 +30,7 @@
   ];
   const evidence = [
     { label: 'Played', value: p => p.career_games.toLocaleString(), title: 'Games played as a regular, over every stint' },
-    { label: 'Missed', value: p => p.gap ? p.gap.missed : 0, title: 'Team games missed between his first game and his last of a stint' },
+    { label: 'Missed', value: p => p.gap ? p.gap.missed : 0, title: 'Team games missed between his first game and his last of a stint, and the team games of a declared absence' },
   ];
   const ranked = [
     { label: '#', value: 'rank', title: 'The place among the ranked players: by tier, then by expected rank' },
@@ -62,6 +63,8 @@
     ...(half ? [{ label: 'Half-career check', value: `r = ${num(half.blend.correlation, 2)}`, sub: `the worth from half of a player's seasons against the games of the other half; the games alone give ${num(half.gap.correlation, 2)}, the box score alone ${num(half.prior.correlation, 2)}` }] : []),
   ]);
   el('note').textContent = `${r.settings.draws.toLocaleString()} draws. Model ${r.model}.`;
+  const declared = r.rule.declared;
+  el('declared').textContent = `${declared.length} seasons of ${new Set(declared.map(d => `${d.source} ${d.source_id}`)).size} players`;
   // The tiers and the table below the list, of every ranked player or of the active ones.
   // A place and a tier stay those among every ranked player.
   function draw() {

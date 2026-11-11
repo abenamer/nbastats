@@ -7,7 +7,13 @@ generated: { by: "human:abenamer", at: "2026-11-11T13:38:00Z" }
 sources:
   - id: code
     resource: /src/domain/career.rs
-    title: Career worth module, the list of declared absences
+    title: Career worth module
+  - id: list
+    resource: /src/domain/declared_absences.rs
+    title: The list of declared absences, moved here by ADR 0021
+  - id: after
+    resource: /docs/decisions/0021-declared-absences-for-long-injuries-and-retirements.md
+    title: ADR 0021, which makes the declaration general
   - id: query
     resource: /src/adapters/postgres/player_store.rs
     title: The career cells query
@@ -20,6 +26,8 @@ sources:
 ---
 
 # ADR 0020 — A declared absence for Michael Jordan's retirement
+
+**Amended on 2026-11-11 by [ADR 0021](/decisions/0021-declared-absences-for-long-injuries-and-retirements.md).** The list is no longer for one player. ADR 0021 declares each season that meets one criterion, for 107 players, and it replaces the part "No other player" of the decision below and the alternative "A general rule". The list moved to `domain::declared_absences`. The two rows for Michael Jordan stay. His 1993-94 row is read inside a stint of another season, and under ADR 0021 it counts as fewer games, so the numbers of `career-gap-box-2.1` below are not those of the page. The text below is the decision as it was made.
 
 ## Context
 

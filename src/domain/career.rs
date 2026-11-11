@@ -10,8 +10,11 @@
 //! effective number of games, at [`ELO_PER_POINT`]. An absence is a team game between his
 //! first and his last game of the stint, the same absence the season's player worth reads.
 //! The store has no rosters for past seasons, so the rule cannot see a season a player sat
-//! out in whole; a [`DeclaredAbsence`] says by hand what the store cannot, and
-//! [`DECLARED_ABSENCES`] is the whole list.
+//! out in whole, or the part of a season before his first game or after his last; a
+//! [`DeclaredAbsence`] says by hand what the store cannot, and [`DECLARED_ABSENCES`] is the
+//! whole list. A declared season in which he has no stint is read against the games he
+//! played in the season beside it: the team changed between the two seasons, so those games
+//! count as fewer games ([`BETWEEN_SEASON_POINTS`]).
 //!
 //! The gap alone is too noisy to rank by, and it says nothing of a player who never missed a
 //! game. The second reading is the career box worth: the box-score worth of his seasons,
@@ -30,11 +33,12 @@ use std::collections::BTreeMap;
 use rand::Rng;
 use serde::Serialize;
 
+pub use super::declared_absences::{DeclaredAbsence, DECLARED_ABSENCES};
 use super::elo::DEFAULT_HOME_ADVANTAGE;
 use super::ids::{PlayerId, SeasonYear, TeamId};
 use super::worth::{self, ELO_PER_POINT};
 
-pub const CAREER_MODEL_VERSION: &str = "career-gap-box-2.1";
+pub const CAREER_MODEL_VERSION: &str = "career-gap-box-2.2";
 
 /// One season that carries more than this share of a player's gap is named beside him.
 pub const DOMINANT_SEASON_SHARE: f64 = 1.0 / 3.0;
@@ -47,53 +51,14 @@ pub const MIN_CALIBRATION_PLAYERS: usize = 30;
 /// floor a residual spread that comes out at zero would let the prior silence every gap.
 pub const MIN_PRIOR_ERROR: f64 = 5.0;
 
-/// Team games a player sat out that the stint rule cannot see, declared by hand: every game
-/// his team played in `season` is read as inside his stint of `stint_season` with that
-/// team. The games he missed become absences of that stint, against the games he played in
-/// it. A declaration is a judgement that he was that team's player the whole time and that
-/// the team around him was near enough the same; the rule makes neither for any other
-/// player, so a declared player is measured with more evidence than his peers.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-pub struct DeclaredAbsence {
-    /// The player's key at the player source: a store keeps it across loads, and the
-    /// database key is its own.
-    pub source: &'static str,
-    pub source_id: i64,
-    pub team_code: &'static str,
-    /// The stint that receives the games; without it the declaration adds nothing.
-    pub stint_season: SeasonYear,
-    /// The season whose team games are all read as inside that stint.
-    pub season: SeasonYear,
-    /// What the declaration is, for the page.
-    pub note: &'static str,
-}
-
-const JORDAN_RETIREMENT: &str =
-    "His retirement from October 1993 to March 1995 counts as games missed";
-
-/// Every declared absence: Michael Jordan's first retirement, and no other. He left the
-/// Bulls on 6 October 1993 and played again on 19 March 1995. The 82 games of 1993-94 are
-/// read against the games he played in 1992-93, the season before, and the 65 games of
-/// 1994-95 before his return against the 17 he played after it. ADR 0020 has the reason
-/// and the runs.
-pub const DECLARED_ABSENCES: &[DeclaredAbsence] = &[
-    DeclaredAbsence {
-        source: "balldontlie",
-        source_id: 2931,
-        team_code: "CHI",
-        stint_season: SeasonYear::of(1993),
-        season: SeasonYear::of(1994),
-        note: JORDAN_RETIREMENT,
-    },
-    DeclaredAbsence {
-        source: "balldontlie",
-        source_id: 2931,
-        team_code: "CHI",
-        stint_season: SeasonYear::of(1995),
-        season: SeasonYear::of(1995),
-        note: JORDAN_RETIREMENT,
-    },
-];
+/// How far a team's mean adjusted margin moves from one season to the next with the same
+/// player in its games, in points, beyond what the scatter of the games explains. Measured
+/// on 2026-11-11 over the 4,747 pairs of stints of one player with one team in two seasons
+/// in a row (ADR 0021): the mean squared change, 3.90² points, less the part the scatter of
+/// the games gives, 2.36², is 3.11². A game missed in another season carries this change on
+/// top of its own scatter, the same change for every game of that season, so more games do
+/// not take it away.
+pub const BETWEEN_SEASON_POINTS: f64 = 3.1;
 
 /// Which games make a stint, and how a margin is adjusted. The store applies it.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize)]
@@ -126,14 +91,26 @@ impl Default for CellRule {
     }
 }
 
-/// The games of one stint that the player played, or those he missed: their count and the
-/// sum and sum of squares of the team's adjusted margins, in points.
+/// Which games of a stint a cell holds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Side {
+    /// Games he missed in the season of the stint.
+    Missed,
+    /// Games he missed in another season, read inside the stint by a declared absence.
+    MissedInAnotherSeason,
+    /// Games he played in the season of the stint.
+    Played,
+}
+
+/// The games of one stint that the player played, or those he missed in its season or in
+/// another: their count and the sum and sum of squares of the team's adjusted margins, in
+/// points. `season` is the season of the stint, also for the games of another season.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Cell {
     pub player_id: PlayerId,
     pub season: SeasonYear,
     pub team_id: TeamId,
-    pub played: bool,
+    pub side: Side,
     pub games: u32,
     pub sum: f64,
     pub sum_sq: f64,
@@ -224,6 +201,9 @@ pub struct Gap {
     /// Games played and team games missed in the stints that have both.
     pub played: u32,
     pub missed: u32,
+    /// Of the games missed, those of another season than the stint that reads them. They
+    /// count as fewer games ([`BETWEEN_SEASON_POINTS`]).
+    pub missed_other_season: u32,
     /// The season that carries more than [`DOMINANT_SEASON_SHARE`] of the evidence, if one
     /// does.
     pub dominant_season: Option<SeasonYear>,
@@ -375,8 +355,11 @@ impl Moments {
     fn mean(self) -> f64 {
         self.sum / f64::from(self.games)
     }
-    /// The sum of squared distances from the mean.
+    /// The sum of squared distances from the mean; zero without a game.
     fn scatter(self) -> f64 {
+        if self.games == 0 {
+            return 0.0;
+        }
         (self.sum_sq - self.sum * self.sum / f64::from(self.games)).max(0.0)
     }
 }
@@ -385,6 +368,21 @@ impl Moments {
 struct Stint {
     with: Moments,
     without: Moments,
+    /// Games missed in another season, by a declared absence.
+    elsewhere: Moments,
+}
+
+/// What `games` missed in another season are worth in games missed in the season of the
+/// stint. Their mean is off by the scatter of the games, which more games shrink, and by
+/// the change of the team between the seasons, which they do not: its variance is that of
+/// `1 / (1 / games + between² / variance)` games of the stint's own season, where
+/// `variance` is the scatter of one game. A whole season counts as about 14 games.
+fn other_season_games(games: u32, variance: f64) -> f64 {
+    if games == 0 || variance <= 0.0 {
+        return 0.0;
+    }
+    let between = BETWEEN_SEASON_POINTS * BETWEEN_SEASON_POINTS;
+    1.0 / (1.0 / f64::from(games) + between / variance)
 }
 
 /// Each player's career from the cells, in player order: every player with a stint, with
@@ -395,10 +393,10 @@ pub fn measure(cells: &[Cell], elo_per_point: f64) -> Vec<Career> {
         let stint = stints
             .entry((cell.player_id, cell.season, cell.team_id))
             .or_default();
-        let side = if cell.played {
-            &mut stint.with
-        } else {
-            &mut stint.without
+        let side = match cell.side {
+            Side::Played => &mut stint.with,
+            Side::Missed => &mut stint.without,
+            Side::MissedInAnotherSeason => &mut stint.elsewhere,
         };
         side.games += cell.games;
         side.sum += cell.sum;
@@ -422,29 +420,53 @@ pub fn measure(cells: &[Cell], elo_per_point: f64) -> Vec<Career> {
         .collect()
 }
 
+/// The career gap over the stints with games on both sides. The games he missed in the
+/// season of a stint and those of another season make one mean without him, the second
+/// kind at the weight of [`other_season_games`]; a stint then weighs by its effective
+/// number of games, and the error comes from the scatter of the margins inside the stints.
 fn gap(stints: &[(SeasonYear, Stint)], elo_per_point: f64) -> Option<Gap> {
-    let (mut weight, mut weighted_gap, mut scatter) = (0.0, 0.0, 0.0);
-    let (mut played, mut missed, mut freedom) = (0u32, 0u32, 0u32);
-    let mut by_season: BTreeMap<SeasonYear, f64> = BTreeMap::new();
-    for (season, stint) in stints {
-        let (with, without) = (stint.with, stint.without);
-        if with.games == 0 || without.games == 0 {
-            continue;
-        }
-        let (n_with, n_without) = (f64::from(with.games), f64::from(without.games));
-        let h = n_with * n_without / (n_with + n_without);
-        weight += h;
-        weighted_gap += h * (with.mean() - without.mean());
-        scatter += with.scatter() + without.scatter();
-        freedom += with.games + without.games - 2;
-        played += with.games;
-        missed += without.games;
-        *by_season.entry(*season).or_insert(0.0) += h;
+    let two_sided = |s: &&(SeasonYear, Stint)| {
+        s.1.with.games > 0 && s.1.without.games + s.1.elsewhere.games > 0
+    };
+    // The scatter of one game first: the weight of a game of another season needs it.
+    let (mut scatter, mut freedom) = (0.0, 0u32);
+    for (_, stint) in stints.iter().filter(two_sided) {
+        let (with, without, elsewhere) = (stint.with, stint.without, stint.elsewhere);
+        scatter += with.scatter() + without.scatter() + elsewhere.scatter();
+        let sides = 1 + u32::from(without.games > 0) + u32::from(elsewhere.games > 0);
+        freedom += with.games + without.games + elsewhere.games - sides;
     }
-    if weight <= 0.0 || freedom == 0 {
+    if freedom == 0 {
         return None;
     }
     let variance = scatter / f64::from(freedom);
+    let (mut weight, mut weighted_gap) = (0.0, 0.0);
+    let (mut played, mut missed, mut missed_other_season) = (0u32, 0u32, 0u32);
+    let mut by_season: BTreeMap<SeasonYear, f64> = BTreeMap::new();
+    for (season, stint) in stints.iter().filter(two_sided) {
+        let (with, without, elsewhere) = (stint.with, stint.without, stint.elsewhere);
+        let n_with = f64::from(with.games);
+        let n_elsewhere = other_season_games(elsewhere.games, variance);
+        let n_without = f64::from(without.games) + n_elsewhere;
+        if n_without <= 0.0 {
+            continue;
+        }
+        let sum_without = if elsewhere.games > 0 {
+            without.sum + n_elsewhere * elsewhere.mean()
+        } else {
+            without.sum
+        };
+        let h = n_with * n_without / (n_with + n_without);
+        weight += h;
+        weighted_gap += h * (with.mean() - sum_without / n_without);
+        played += with.games;
+        missed += without.games + elsewhere.games;
+        missed_other_season += elsewhere.games;
+        *by_season.entry(*season).or_insert(0.0) += h;
+    }
+    if weight <= 0.0 {
+        return None;
+    }
     let dominant_season = by_season
         .iter()
         .find(|(_, h)| **h > DOMINANT_SEASON_SHARE * weight)
@@ -455,6 +477,7 @@ fn gap(stints: &[(SeasonYear, Stint)], elo_per_point: f64) -> Option<Gap> {
         error: elo_per_point * (variance / weight).sqrt(),
         played,
         missed,
+        missed_other_season,
         dominant_season,
     })
 }
@@ -879,47 +902,37 @@ mod tests {
         SeasonYear::try_new(year).unwrap()
     }
 
-    /// The list of declared absences is one player's, and each row can be read: the stint
-    /// is in the season of the games or before it, inside the seasons the rule reads, and no
-    /// season of a team is declared twice.
-    #[test]
-    fn the_declared_absences_are_michael_jordans_retirement_and_no_other() {
-        let rule = CellRule::default();
-        assert_eq!(rule.declared, DECLARED_ABSENCES);
-        assert_eq!(DECLARED_ABSENCES.len(), 2);
-        for (i, d) in DECLARED_ABSENCES.iter().enumerate() {
-            assert_eq!(
-                (d.source, d.source_id, d.team_code),
-                ("balldontlie", 2931, "CHI")
-            );
-            assert!(rule.first_season <= d.stint_season && d.stint_season <= d.season);
-            assert!(d.note.contains("1993") && d.note.contains("1995"));
-            assert!(DECLARED_ABSENCES[..i].iter().all(|e| e.season != d.season));
-        }
-        assert_eq!(
-            DECLARED_ABSENCES
-                .iter()
-                .map(|d| d.season)
-                .collect::<Vec<_>>(),
-            [season(1994), season(1995)]
-        );
-    }
-
     /// Both cells of a stint from the adjusted margins of the games played and missed.
     fn stint(player: i32, year: i32, team: i32, with: &[f64], without: &[f64]) -> Vec<Cell> {
-        [(true, with), (false, without)]
-            .into_iter()
-            .filter(|(_, margins)| !margins.is_empty())
-            .map(|(played, margins)| Cell {
-                player_id: PlayerId::new(player),
-                season: season(year),
-                team_id: TeamId::new(team),
-                played,
-                games: margins.len() as u32,
-                sum: margins.iter().sum(),
-                sum_sq: margins.iter().map(|m| m * m).sum(),
-            })
-            .collect()
+        declared_stint(player, year, team, with, without, &[])
+    }
+
+    /// The cells of a stint that also reads games missed in another season.
+    fn declared_stint(
+        player: i32,
+        year: i32,
+        team: i32,
+        with: &[f64],
+        without: &[f64],
+        elsewhere: &[f64],
+    ) -> Vec<Cell> {
+        [
+            (Side::Played, with),
+            (Side::Missed, without),
+            (Side::MissedInAnotherSeason, elsewhere),
+        ]
+        .into_iter()
+        .filter(|(_, margins)| !margins.is_empty())
+        .map(|(side, margins)| Cell {
+            player_id: PlayerId::new(player),
+            season: season(year),
+            team_id: TeamId::new(team),
+            side,
+            games: margins.len() as u32,
+            sum: margins.iter().sum(),
+            sum_sq: margins.iter().map(|m| m * m).sum(),
+        })
+        .collect()
     }
 
     fn career(player: i32, gap: Option<(f64, f64)>) -> Career {
@@ -933,6 +946,7 @@ mod tests {
                 error,
                 played: 400,
                 missed: 100,
+                missed_other_season: 0,
                 dominant_season: None,
             }),
         }
@@ -986,6 +1000,54 @@ mod tests {
         assert!((gap.error - error).abs() < 1e-9);
         assert_eq!((gap.played, gap.missed, m[0].career_games), (3, 2, 3));
         assert_eq!(gap.dominant_season, None);
+    }
+
+    #[test]
+    fn games_missed_in_another_season_count_as_fewer_games() {
+        // With: 6, 8, 10 (mean 8). No game missed in the season; 1 and 3 in another one
+        // (mean 2). Scatter 8 + 2 over 3 + 2 − 2 degrees of freedom: 10 / 3 for one game.
+        let cells = declared_stint(1, 2010, 1, &[6.0, 8.0, 10.0], &[], &[1.0, 3.0]);
+        let gap = measure(&cells, 28.0)[0].gap.unwrap();
+        assert!((gap.worth - 168.0).abs() < 1e-9);
+        // The two games count as 1 / (1/2 + 3.1² × 3 / 10) games.
+        let between = BETWEEN_SEASON_POINTS * BETWEEN_SEASON_POINTS;
+        let counted = 1.0 / (0.5 + between * 0.3);
+        assert!((other_season_games(2, 10.0 / 3.0) - counted).abs() < 1e-12);
+        let h = 3.0 * counted / (3.0 + counted);
+        assert!((gap.error - 28.0 * (10.0 / 3.0 / h).sqrt()).abs() < 1e-9);
+        // The same two games in the season of the stint give the weight 1.2 and a smaller
+        // error: the season between them is an error of its own.
+        let same = measure(&stint(1, 2010, 1, &[6.0, 8.0, 10.0], &[1.0, 3.0]), 28.0)[0]
+            .gap
+            .unwrap();
+        assert!(gap.error > 2.0 * same.error);
+        assert_eq!((gap.played, gap.missed, gap.missed_other_season), (3, 2, 2));
+        assert_eq!((same.missed, same.missed_other_season), (2, 0));
+        // A whole season of another season counts as about 14 games at the scatter of a
+        // usual game, 12.5 points; no number of games counts as more than 12.5² / 3.1².
+        let season_out = other_season_games(82, 12.5 * 12.5);
+        assert!((season_out - 1.0 / (1.0 / 82.0 + between / 156.25)).abs() < 1e-12);
+        assert!(season_out > 13.5 && season_out < 14.0);
+        assert!(other_season_games(100_000, 156.25) < 156.25 / between);
+        assert_eq!(other_season_games(0, 156.25), 0.0);
+        assert_eq!(other_season_games(82, 0.0), 0.0);
+    }
+
+    #[test]
+    fn a_stint_reads_both_kinds_of_games_missed_as_one_mean_without_him() {
+        // With: 9, 11 (mean 10). Missed in the season: 3, 5 (mean 4). Missed in another
+        // season: 0, 2, 4, 6 (mean 3). Scatter 2 + 2 + 20 over 8 − 3 degrees of freedom.
+        let cells = declared_stint(1, 2010, 1, &[9.0, 11.0], &[3.0, 5.0], &[0.0, 2.0, 4.0, 6.0]);
+        let gap = measure(&cells, 1.0)[0].gap.unwrap();
+        let variance: f64 = 24.0 / 5.0;
+        let counted = 1.0 / (0.25 + BETWEEN_SEASON_POINTS * BETWEEN_SEASON_POINTS / variance);
+        let without = (8.0 + counted * 3.0) / (2.0 + counted);
+        assert!((gap.worth - (10.0 - without)).abs() < 1e-9);
+        let h = 2.0 * (2.0 + counted) / (4.0 + counted);
+        assert!((gap.error - (variance / h).sqrt()).abs() < 1e-9);
+        assert_eq!((gap.played, gap.missed, gap.missed_other_season), (2, 6, 4));
+        // The mean without him lies between the two means, nearer the season's own.
+        assert!(without > 3.5 && without < 4.0);
     }
 
     #[test]

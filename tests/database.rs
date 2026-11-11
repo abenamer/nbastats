@@ -2241,7 +2241,7 @@ mod players {
     /// he missed, each margin adjusted for the opponent and the court; a reserve has no stint.
     #[sqlx::test(migrations = "./migrations")]
     async fn career_cells_split_a_stint_into_games_with_and_without(pool: PgPool) {
-        use nba_elo_simulator::domain::career::{self, CellRule};
+        use nba_elo_simulator::domain::career::{self, CellRule, Side};
         let (store, teams) = common::setup(pool).await;
         imports::import_bytes(
             &store,
@@ -2311,6 +2311,7 @@ mod players {
         }
         assert_eq!(want[0].0, 20, "the block he sat is in the regular season");
         let all = store.career_cells(&rule).await.unwrap();
+        let all_plain = all.clone();
         let mut ids: Vec<_> = all.iter().map(|c| c.player_id).collect();
         ids.dedup();
         let names: std::collections::HashMap<_, _> = store
@@ -2335,17 +2336,18 @@ mod players {
             .filter(|g| g.game_type == GameType::Regular)
             .count();
         assert_eq!(
-            (ended[0].played, ended[0].games as usize),
-            (true, before_40)
+            (ended[0].side, ended[0].games as usize),
+            (Side::Played, before_40)
         );
         let cells = of("Curry");
         assert_eq!(cells.len(), 2, "one stint, without and with");
         assert_eq!(all.len(), 3);
         let id = cells[0].player_id;
-        for (cell, (played, w)) in cells.iter().zip([false, true].into_iter().zip(want)) {
+        let sides = [Side::Missed, Side::Played];
+        for (cell, (side, w)) in cells.iter().zip(sides.into_iter().zip(want)) {
             assert_eq!(
-                (cell.player_id, cell.season, cell.team_id, cell.played),
-                (id, S2016, gsw, played)
+                (cell.player_id, cell.season, cell.team_id, cell.side),
+                (id, S2016, gsw, side)
             );
             assert_eq!(cell.games, w.0);
             assert!((cell.sum - w.1).abs() < 1e-6, "{} {}", cell.sum, w.1);
@@ -2383,34 +2385,38 @@ mod players {
             career::DeclaredAbsence {
                 source: "fake-players",
                 source_id: 32,
+                player: "Shaun Livingston",
                 team_code: "GSW",
                 stint_season: S2016,
                 season: S2016,
-                note: "His shutdown counts as games missed",
+                cause: "a shutdown",
             },
             career::DeclaredAbsence {
                 source: "fake-players",
                 source_id: 999,
+                player: "Nobody",
                 team_code: "GSW",
                 stint_season: S2016,
                 season: S2016,
-                note: "No such player",
+                cause: "no such player",
             },
             career::DeclaredAbsence {
                 source: "fake-players",
                 source_id: 30,
+                player: "Stephen Curry",
                 team_code: "GSW",
                 stint_season: SeasonYear::of(2017),
                 season: S2016,
-                note: "No such stint",
+                cause: "no such stint",
             },
             career::DeclaredAbsence {
                 source: "another-source",
                 source_id: 31,
+                player: "Ian Clark",
                 team_code: "GSW",
                 stint_season: S2016,
                 season: S2016,
-                note: "The key of another source",
+                cause: "the key of another source",
             },
         ];
         let with_declared = CellRule {
@@ -2425,8 +2431,8 @@ mod players {
                 .copied()
                 .collect()
         };
-        let counts = |cells: &[career::Cell]| -> Vec<(bool, u32)> {
-            cells.iter().map(|c| (c.played, c.games)).collect()
+        let counts = |cells: &[career::Cell]| -> Vec<(Side, u32)> {
+            cells.iter().map(|c| (c.side, c.games)).collect()
         };
         assert_eq!(
             counts(&of("Curry")),
@@ -2443,8 +2449,8 @@ mod players {
         let missed = declared[0];
         assert!(after_40.0 > 0);
         assert_eq!(
-            (missed.season, missed.team_id, missed.played, missed.games),
-            (S2016, gsw, false, after_40.0)
+            (missed.season, missed.team_id, missed.side, missed.games),
+            (S2016, gsw, Side::Missed, after_40.0)
         );
         assert!((missed.sum - after_40.1).abs() < 1e-6);
         assert!((missed.sum_sq - after_40.2).abs() < 1e-6);
@@ -2452,6 +2458,84 @@ mod players {
             .gap
             .expect("the declaration gives him games on both sides");
         assert_eq!((m.missed, m.played as usize), (after_40.0, before_40));
+        assert_eq!(
+            m.missed_other_season, 0,
+            "the games are of the stint's season"
+        );
+
+        // A declared season in which he has no stint is read inside the stint of the season
+        // beside it. Three games of 2016-17: the star plays the first, which is under the
+        // stint rule, and the reserve plays all three, so the team has a box score.
+        let next_csv = "date,season,neutral,playoff,team1,team2,elo1_pre,elo2_pre,elo_prob1,elo_prob2,elo1_post,elo2_post,score1,score2,is_home\n\
+2016-10-25,2017,0,,GSW,SAS,1700,1650,0.7,0.3,1690,1660,100,129,1\n\
+2016-10-28,2017,0,,NOP,GSW,1450,1690,0.3,0.7,1445,1695,114,122,1\n\
+2016-10-30,2017,0,,PHO,GSW,1400,1695,0.2,0.8,1395,1700,100,106,1\n";
+        imports::import_bytes(&store, next_csv.as_bytes(), prov("mini_2017.csv"), false)
+            .await
+            .unwrap();
+        for (i, date) in ["2016-10-25", "2016-10-28", "2016-10-30"]
+            .iter()
+            .enumerate()
+        {
+            let mut lines = vec![line(date, "GSW", reserve.clone(), 600, 4)];
+            if i == 0 {
+                lines.push(line(date, "GSW", star.clone(), 2100, 25));
+            }
+            store
+                .save_box_scores(super::date(date), "fake-players", &lines)
+                .await
+                .unwrap();
+        }
+        // Without a declaration the three games add nothing: one game is no stint.
+        assert_eq!(store.career_cells(&rule).await.unwrap(), all_plain);
+        const ANOTHER_SEASON: &[career::DeclaredAbsence] = &[career::DeclaredAbsence {
+            source: "fake-players",
+            source_id: 30,
+            player: "Stephen Curry",
+            team_code: "GSW",
+            stint_season: S2016,
+            season: SeasonYear::of(2017),
+            cause: "a season out",
+        }];
+        let across = CellRule {
+            declared: ANOTHER_SEASON,
+            ..rule
+        };
+        let all = store.career_cells(&across).await.unwrap();
+        assert_eq!(all.len(), all_plain.len() + 1, "one more cell");
+        let curry: Vec<career::Cell> = all.iter().filter(|c| c.player_id == id).copied().collect();
+        assert_eq!(
+            counts(&curry),
+            vec![
+                (Side::Missed, 20),
+                (Side::MissedInAnotherSeason, 2),
+                (Side::Played, want[1].0)
+            ],
+            "the game he played in 2016-17 is on no side"
+        );
+        // The cell is of the stint, the season before. The two games he missed are both
+        // away, won by 8 and by 6: each margin plus the home team's pre-game Elo in the
+        // store over 1500, plus the court, in points.
+        let elsewhere = curry[1];
+        assert_eq!((elsewhere.season, elsewhere.team_id), (S2016, gsw));
+        let next = store.season_games(SeasonYear::of(2017)).await.unwrap();
+        let away: Vec<f64> = next
+            .iter()
+            .filter(|g| g.away_team_id == gsw)
+            .map(|g| {
+                f64::from(g.away_score.unwrap() - g.home_score.unwrap())
+                    + (g.home_elo_pre - 1500.0 + rule.home_advantage) / rule.elo_per_point
+            })
+            .collect();
+        assert_eq!(away.len(), 2);
+        let (sum, sum_sq) = (away[0] + away[1], away[0].powi(2) + away[1].powi(2));
+        assert!((elsewhere.sum - sum).abs() < 1e-6, "{}", elsewhere.sum);
+        assert!((elsewhere.sum_sq - sum_sq).abs() < 1e-6);
+        assert!((sum - 14.0).abs() < 3.0, "near the two margins, 8 and 6");
+        let m = career::measure(&curry, rule.elo_per_point)[0]
+            .gap
+            .expect("games on both sides");
+        assert_eq!((m.missed, m.missed_other_season), (22, 2));
     }
 
     #[sqlx::test(migrations = "./migrations")]
